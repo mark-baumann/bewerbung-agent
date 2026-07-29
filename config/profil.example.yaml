@@ -1,0 +1,71 @@
+# Kopieren nach config/profil.yaml und ausfuellen.
+# Diese Datei enthaelt KEINE Passwoerter - Zugangsdaten kommen aus der Umgebung
+# (siehe .env.example).
+
+person:
+  vorname: Max
+  nachname: Mustermann
+  email: max.mustermann@example.de
+  telefon: "+49 151 23456789"
+  strasse: Musterstrasse 12
+  plz: "10115"
+  ort: Berlin
+  land: Deutschland
+  geburtsdatum: "1990-05-17"
+  linkedin: https://www.linkedin.com/in/mustermann
+  github: https://github.com/mustermann
+  website: ""
+
+# Freitext. Geht in Bewertung und Anschreiben ein - je konkreter, desto besser.
+kurzprofil: >
+  Softwareentwickler mit sechs Jahren Erfahrung im Backend, Schwerpunkt Python
+  und verteilte Systeme. Zuletzt Teamlead fuer eine Zahlungsplattform mit
+  40.000 Transaktionen taeglich. Erfahrung mit Kubernetes, PostgreSQL und
+  Event-Streaming. Sucht eine Rolle mit technischer Tiefe und Homeoffice-Anteil.
+
+suche:
+  was:
+    - Softwareentwickler Python
+    - Backend Entwickler
+    - Site Reliability Engineer
+  wo: Berlin
+  umkreis: 30                      # km
+  veroeffentlicht_seit_tagen: 14   # API kennt 0, 7, 14, 30, 100
+  nur_vollzeit: true
+  nur_homeoffice: false
+  max_pro_query: 40
+
+bewertung:
+  # Pflicht-Skills: bestimmen die fachliche Passung
+  skills:
+    - Python
+    - PostgreSQL
+    - Docker
+    - Kubernetes
+    - REST
+    - CI/CD
+    - Git
+  # Wunschthemen: geben Bonuspunkte
+  wunsch:
+    - Homeoffice
+    - Kafka
+    - Terraform
+    - unbefristet
+  # Harte Ausschlusskriterien: Stelle wird sofort verworfen
+  ausschluss:
+    - Zeitarbeit
+    - Arbeitnehmerueberlassung
+    - Praktikum
+    - Ausbildung
+    - Provisionsbasis
+  min_score: 60
+  modell: claude-opus-5
+  effort: medium                   # low | medium | high | xhigh | max
+
+unterlagen:
+  lebenslauf: unterlagen/lebenslauf.pdf
+  zeugnisse:
+    - unterlagen/zeugnisse.pdf
+  anschreiben_stil: >
+    sachlich und konkret, ohne Werbefloskeln, maximal 250 Woerter,
+    Sie-Anrede, ein Absatz zur Motivation und einer zu den passenden Faehigkeiten
