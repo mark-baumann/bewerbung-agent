@@ -10,3 +10,6 @@ dist/
 build/
 unterlagen/*
 !unterlagen/README.md
+wandb_runs/
+checkpoints/
+*.jsonl
