@@ -13,3 +13,4 @@ unterlagen/*
 wandb_runs/
 checkpoints/
 *.jsonl
+.venv
