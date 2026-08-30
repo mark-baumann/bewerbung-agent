@@ -50,7 +50,7 @@ COPY bewerbungsagent ./bewerbungsagent
 RUN pip install --no-cache-dir -e ".[browser]"
 
 # Chromium für Playwright installieren (headless-fähig)
-RUN playwright install chromium
+RUN python -m playwright install chromium
 
 # Konfiguration & Unterlagen werden zur Laufzeit gemountet (nicht ins Image).
 # Standard-Arbeitsverzeichnis für SQLite-Daten.
