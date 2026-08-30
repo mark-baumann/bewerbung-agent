@@ -1,0 +1,15 @@
+# Docker
+__pycache__/
+*.pyc
+.venv/
+daten/
+config/profil.yaml
+.env
+unterlagen/*
+!unterlagen/README.md
+.git/
+.gitignore
+.github/
+wandb_runs/
+checkpoints/
+*.jsonl
