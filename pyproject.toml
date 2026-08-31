@@ -16,6 +16,9 @@ browser = [
     "browser-use>=0.7",
     "playwright>=1.40",
 ]
+ui = [
+    "streamlit>=1.30",
+]
 dev = [
     "pytest>=8.0",
 ]

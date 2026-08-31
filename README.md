@@ -21,6 +21,7 @@ suchen  ──►  bewerten  ──►  top / zeigen  ──►  anschreiben  �
 - **📊 Intelligente Bewertung:** Skill-Matching + Sentiment-Analyse speziell für deutsche Stellenanzeigen
 - **🤖 LLM-unterstützt:** Claude bewertet semantische Passung und generiert Anschreiben
 - **🌐 Browser-Automation:** browser-use füllt Bewerbungsformulare automatisch aus
+- **🖥️ Web-UI:** Moderne Streamlit-Oberfläche als Alternative zum CLI
 - **🛡️ Sicherheitsnetze:** Probelauf-Standard, Domain-Schranke, keine erfundenen Angaben
 - **💾 SQLite-Speicher:** Alle Jobs, Scores und Bewerbungen persistent
 - **📋 Pipeline-Modus:** `suchen → bewerten → top` in einem Befehl
@@ -48,6 +49,24 @@ $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüss
 ---
 
 ## 🖥️ Nutzung
+
+### 🌐 Web UI (NEU!)
+
+```bash
+# UI installieren
+pip install -e ".[ui]"
+
+# Starten
+streamlit run app.py
+# oder
+./start-ui.sh
+```
+
+Öffne `http://localhost:8501` im Browser für die interaktive Web-Oberfläche!
+
+Siehe [UI_README.md](UI_README.md) für Details zur Web-UI.
+
+### 💻 CLI (Kommandozeile)
 
 ```bash
 # 1. Stellen suchen
