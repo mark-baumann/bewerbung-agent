@@ -219,73 +219,73 @@ with tab2:
 with tab3:
     st.subheader("📊 Bewerbungsübersicht")
 
-    with Speicher(str(db_path)) as db:
-        alle_jobs = db.jobs(limit=10000)
-        alle_bewerbungen = []
+    try:
+        with Speicher(str(db_path)) as db:
+            alle_jobs = db.jobs(limit=10000)
+            alle_bewerbungen = []
 
-        for job in alle_jobs:
-            bewerbungen = db.bewerbungen(job.ref)
-            for bew in bewerbungen:
-                alle_bewerbungen.append({
-                    "job": job,
-                    "bewerbung": bew
-                })
+            for job in alle_jobs:
+                bewerbungen = db.bewerbungen(job.ref)
+                for bew in bewerbungen:
+                    alle_bewerbungen.append({
+                        "job": job,
+                        "bewerbung": bew
+                    })
 
-        if alle_bewerbungen:
-            st.success(f"✅ {len(alle_bewerbungen)} Bewerbungen gefunden")
+            if alle_bewerbungen:
+                st.success(f"✅ {len(alle_bewerbungen)} Bewerbungen gefunden")
 
-            # Statistiken
-            col1, col2, col3, col4 = st.columns(4)
+                # Statistiken
+                col1, col2, col3, col4 = st.columns(4)
 
-            with col1:
-                st.metric("Gesamt", len(alle_bewerbungen))
-            with col2:
-                abgeschickt = sum(1 for b in alle_bewerbungen if b["bewerbung"]["status"] == "abgeschickt")
-                st.metric("Abgeschickt", abgeschickt)
-            with col3:
-                probelauf = sum(1 for b in alle_bewerbungen if b["bewerbung"]["status"] == "probelauf")
-                st.metric("Probelauf", probelauf)
-            with col4:
-                fehlgeschlagen = sum(1 for b in alle_bewerbungen if b["bewerbung"]["status"] == "fehlgeschlagen")
-                st.metric("Fehlgeschlagen", fehlgeschlagen)
+                with col1:
+                    st.metric("Gesamt", len(alle_bewerbungen))
+                with col2:
+                    abgeschickt = sum(1 for b in alle_bewerbungen if b["bewerbung"]["status"] == "abgeschickt")
+                    st.metric("Abgeschickt", abgeschickt)
+                with col3:
+                    probelauf = sum(1 for b in alle_bewerbungen if b["bewerbung"]["status"] == "probelauf")
+                    st.metric("Probelauf", probelauf)
+                with col4:
+                    fehlgeschlagen = sum(1 for b in alle_bewerbungen if b["bewerbung"]["status"] == "fehlgeschlagen")
+                    st.metric("Fehlgeschlagen", fehlgeschlagen)
 
-            st.markdown("---")
+                st.markdown("---")
 
-            # Liste
-            for item in sorted(alle_bewerbungen, key=lambda x: x["bewerbung"]["zeitpunkt"], reverse=True)[:20]:
-                job = item["job"]
-                bew = item["bewerbung"]
+                # Liste
+                for item in sorted(alle_bewerbungen, key=lambda x: x["bewerbung"]["zeitpunkt"], reverse=True)[:20]:
+                    job = item["job"]
+                    bew = item["bewerbung"]
 
-                status_icon = {
-                    "abgeschickt": "✅",
-                    "probelauf": "🔵",
-                    "fehlgeschlagen": "❌",
-                    "manuell_beworben": "🖐️",
-                    "vorbereitet": "⏳"
-                }.get(bew["status"], "❓")
+                    status_icon = {
+                        "abgeschickt": "✅",
+                        "probelauf": "🔵",
+                        "fehlgeschlagen": "❌",
+                        "manuell_beworben": "🖐️",
+                        "vorbereitet": "⏳"
+                    }.get(bew["status"], "❓")
 
-                with st.expander(f"{status_icon} {job.titel} - {job.arbeitgeber} ({bew['zeitpunkt']})"):
-                    col1, col2 = st.columns(2)
+                    with st.expander(f"{status_icon} {job.titel} - {job.arbeitgeber} ({bew['zeitpunkt']})"):
+                        col1, col2 = st.columns(2)
 
-                    with col1:
-                        st.write(f"**Job:** {job.titel}")
-                        st.write(f"**Arbeitgeber:** {job.arbeitgeber}")
-                        st.write(f"**Ort:** {job.ort or 'Unbekannt'}")
-                        st.write(f"**Ref:** `{job.ref}`")
+                        with col1:
+                            st.write(f"**Job:** {job.titel}")
+                            st.write(f"**Arbeitgeber:** {job.arbeitgeber}")
+                            st.write(f"**Ort:** {job.ort or 'Unbekannt'}")
+                            st.write(f"**Ref:** `{job.ref}`")
 
-                    with col2:
-                        st.write(f"**Status:** {bew['status']}")
-                        st.write(f"**Zeitpunkt:** {bew['zeitpunkt']}")
-                        st.write(f"**Schritte:** {bew['schritte']}")
-                        st.write(f"**Dry Run:** {'Ja' if bew.get('dry_run', True) else 'Nein'}")
+                        with col2:
+                            st.write(f"**Status:** {bew['status']}")
+                            st.write(f"**Zeitpunkt:** {bew['zeitpunkt']}")
+                            st.write(f"**Schritte:** {bew['schritte']}")
+                            st.write(f"**Dry Run:** {'Ja' if bew.get('dry_run', True) else 'Nein'}")
 
-                    if bew['ergebnis']:
-                        st.text_area("Ergebnis", value=bew['ergebnis'], disabled=True, height=80, label_visibility="collapsed")
+                        if bew['ergebnis']:
+                            st.text_area("Ergebnis", value=bew['ergebnis'], disabled=True, height=80, label_visibility="collapsed")
 
-        else:
-            st.info("📭 Noch keine Bewerbungen vorhanden. Starte deine erste Bewerbung!")
-
-except Exception as e:
-    st.error(f"Fehler: {e}")
-    import traceback
-    st.code(traceback.format_exc())
+            else:
+                st.info("📭 Noch keine Bewerbungen vorhanden. Starte deine erste Bewerbung!")
+    except Exception as e:
+        st.error(f"Fehler: {e}")
+        import traceback
+        st.code(traceback.format_exc())
