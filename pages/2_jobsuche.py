@@ -163,7 +163,7 @@ if submitted:
                     st.code(f"Referenz: {job.ref}", language=None)
 
             if len(alle_jobs) > 10:
-                st.info(f"... und {len(alle_jobs) - 10} weitere Jobs. Gehe zu 'Top Jobs' nach der Bewertung.")
+                st.info(f"... und {len(alle_jobs) - 10} weitere Jobs. Bewerte die Jobs, um die besten Treffer zu sehen.")
 
             # Next steps
             st.markdown("---")

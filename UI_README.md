@@ -7,7 +7,6 @@ Eine moderne Streamlit-basierte Web-Oberfläche für den Bewerbungsagenten.
 - **📊 Dashboard** - Übersicht über Jobs, Bewertungen und Bewerbungen
 - **🔍 Jobsuche** - Interaktive Suche mit Filtern
 - **📊 Bewertung** - Jobs bewerten mit Heuristik und/oder LLM
-- **⭐ Top Jobs** - Bestenliste mit detaillierten Informationen
 - **✉️ Bewerbungen** - Anschreiben generieren und Bewerbungen verwalten
 - **⚙️ Einstellungen** - Profil und Konfiguration verwalten
 
@@ -37,8 +36,7 @@ Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
 1. **Dashboard** aufrufen für Übersicht
 2. **Jobsuche** - Neue Jobs suchen
 3. **Bewertung** - Jobs bewerten lassen
-4. **Top Jobs** - Beste Treffer ansehen
-5. **Bewerbungen** - Anschreiben generieren und bewerben
+4. **Bewerbungen** - Anschreiben generieren und bewerben
 
 ## 📋 Voraussetzungen
 
@@ -74,7 +72,6 @@ Die Web-UI nutzt dieselbe SQLite-Datenbank wie das CLI:
 ### 1. Dashboard
 - Metriken: Gefundene Jobs, Bewertungen, Bewerbungen
 - Neueste Jobs
-- Top bewertete Jobs
 - Schnellaktionen
 
 ### 2. Jobsuche
@@ -97,17 +94,7 @@ Die Web-UI nutzt dieselbe SQLite-Datenbank wie das CLI:
 - Ergebnisvorschau mit Top-Jobs
 - Statistiken
 
-### 4. Top Jobs
-- Filter nach Score
-- Detaillierte Job-Karten mit:
-  - Score-Metriken (Gesamt, Passung, Ton)
-  - Job-Details
-  - Bewertungs-Details
-  - Stellenbeschreibung
-  - Direktlinks zu Bewerbung
-- Aktionen: Anschreiben generieren, Bewerben
-
-### 5. Bewerbungen
+### 4. Bewerbungen
 Drei Tabs:
 
 **Anschreiben generieren:**
@@ -124,7 +111,7 @@ Drei Tabs:
 - Statistiken (Gesamt, Abgeschickt, Probelauf, Fehlgeschlagen)
 - Bewerbungsverlauf
 
-### 6. Einstellungen
+### 5. Einstellungen
 - Profil-Übersicht
 - Suchparameter
 - API-Keys
@@ -179,7 +166,6 @@ bewerbung-agent/
 │   ├── 1_dashboard.py       # Dashboard
 │   ├── 2_jobsuche.py        # Jobsuche
 │   ├── 3_bewertung.py       # Bewertung
-│   ├── 4_top_jobs.py        # Top Jobs
 │   ├── 5_bewerbungen.py     # Bewerbungen
 │   └── 6_einstellungen.py   # Einstellungen
 └── bewerbungsagent/         # Python-Package (unverändert)

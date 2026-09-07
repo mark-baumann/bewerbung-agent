@@ -23,8 +23,7 @@ def main():
 
     1. **🔍 Jobsuche** - Stellen von der Bundesagentur für Arbeit suchen
     2. **📊 Bewertung** - Jobs automatisch bewerten (Skill-Match + Sentiment)
-    3. **⭐ Top Jobs** - Beste Treffer ansehen und Details prüfen
-    4. **✉️ Bewerbungen** - Anschreiben generieren und bewerben
+    3. **✉️ Bewerbungen** - Anschreiben generieren und bewerben
 
     ## 🚀 Los geht's
 
@@ -42,8 +41,8 @@ def main():
             st.switch_page("pages/2_jobsuche.py")
 
     with col3:
-        if st.button("⭐ Top Jobs", use_container_width=True):
-            st.switch_page("pages/4_top_jobs.py")
+        if st.button("✉️ Bewerbungen", use_container_width=True):
+            st.switch_page("pages/5_bewerbungen.py")
 
     with col4:
         if st.button("⚙️ Einstellungen", use_container_width=True):

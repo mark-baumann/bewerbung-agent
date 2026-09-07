@@ -171,9 +171,6 @@ if submitted:
 
                                 st.code(f"Referenz: {job.ref}", language=None)
 
-                        if len(top_jobs) > 10:
-                            st.info(f"... und {len(top_jobs) - 10} weitere Jobs. Gehe zu 'Top Jobs' für die vollständige Liste.")
-
                     # Ausgeschlossene Jobs (Beispiele)
                     if ausgeschlossen > 0:
                         st.markdown("---")
@@ -190,13 +187,8 @@ if submitted:
                     # Next steps
                     st.markdown("---")
                     st.subheader("✅ Nächste Schritte")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("⭐ Top Jobs ansehen", use_container_width=True):
-                            st.switch_page("pages/4_top_jobs.py")
-                    with col2:
-                        if st.button("📋 Zurück zum Dashboard", use_container_width=True):
-                            st.switch_page("pages/1_dashboard.py")
+                    if st.button("📋 Zurück zum Dashboard", use_container_width=True):
+                        st.switch_page("pages/1_dashboard.py")
         except Exception as e:
             st.error(f"Fehler: {e}")
             st.info("Möglicherweise existiert die Datenbank noch nicht. Führe zuerst eine Jobsuche durch!")
