@@ -82,7 +82,7 @@ with st.form("bewertung_form"):
 
 if submitted:
     if not profil:
-        st.error("❌ Profil konnte nicht geladen werden. Bitte Profil in Einstellungen konfigurieren.")
+        st.error("❌ Profil konnte nicht geladen werden. Bitte Profil unter 👤 Profil konfigurieren.")
     else:
         try:
             with Speicher(str(db_path)) as db:

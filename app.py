@@ -45,8 +45,8 @@ def main():
             st.switch_page("pages/5_bewerbungen.py")
 
     with col4:
-        if st.button("⚙️ Einstellungen", use_container_width=True):
-            st.switch_page("pages/6_einstellungen.py")
+        if st.button("👤 Profil", use_container_width=True):
+            st.switch_page("pages/6_profil.py")
 
     st.markdown("---")
 
@@ -57,8 +57,8 @@ def main():
         st.info("""
         ### ℹ️ Erste Schritte
 
-        1. **Konfiguration prüfen** in den Einstellungen
-        2. **Profil erstellen** (`config/profil.yaml`)
+        1. **Profil ausfüllen** unter 👤 Profil
+        2. **Unterlagen hochladen** (Lebenslauf, Zeugnisse)
         3. **API-Key setzen** (`.env` Datei)
         4. **Jobsuche starten** und Jobs finden
         5. **Bewerten** und die besten Jobs ansehen

@@ -115,3 +115,24 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
     if not profil.suche.was:
         raise ValueError("suche.was ist leer - mindestens ein Suchbegriff noetig.")
     return profil
+
+
+def _to_dict(obj: Any) -> dict[str, Any]:
+    return {f: getattr(obj, f) for f in obj.__dataclass_fields__}
+
+
+def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
+    p = Path(pfad or STANDARD_PFAD)
+    daten = {
+        "person": _to_dict(profil.person),
+        "kurzprofil": profil.kurzprofil,
+        "suche": _to_dict(profil.suche),
+        "bewertung": _to_dict(profil.bewertung),
+        "unterlagen": _to_dict(profil.unterlagen),
+    }
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        yaml.safe_dump(daten, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return p

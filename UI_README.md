@@ -8,7 +8,7 @@ Eine moderne Streamlit-basierte Web-Oberfläche für den Bewerbungsagenten.
 - **🔍 Jobsuche** - Interaktive Suche mit Filtern
 - **📊 Bewertung** - Jobs bewerten mit Heuristik und/oder LLM
 - **✉️ Bewerbungen** - Anschreiben generieren und Bewerbungen verwalten
-- **⚙️ Einstellungen** - Profil und Konfiguration verwalten
+- **👤 Profil** - Persönliche Daten, Sucheinstellungen und Unterlagen verwalten
 
 ## 🚀 Installation
 
@@ -111,12 +111,11 @@ Drei Tabs:
 - Statistiken (Gesamt, Abgeschickt, Probelauf, Fehlgeschlagen)
 - Bewerbungsverlauf
 
-### 5. Einstellungen
-- Profil-Übersicht
-- Suchparameter
-- API-Keys
-- Unterlagen-Status
-- Datenbank-Informationen
+### 5. Profil
+- Persönliche Daten bearbeiten
+- Suchparameter anpassen
+- Unterlagen (Lebenslauf, Zeugnisse) direkt hochladen
+- API-Keys und Datenbank-Informationen
 
 ## 🔄 CLI vs. Web-UI
 
@@ -167,7 +166,7 @@ bewerbung-agent/
 │   ├── 2_jobsuche.py        # Jobsuche
 │   ├── 3_bewertung.py       # Bewertung
 │   ├── 5_bewerbungen.py     # Bewerbungen
-│   └── 6_einstellungen.py   # Einstellungen
+│   └── 6_profil.py          # Profil
 └── bewerbungsagent/         # Python-Package (unverändert)
 ```
 
