@@ -8,7 +8,12 @@ import streamlit as st
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from bewerbungsagent.config import lade_profil, speichere_profil
+from bewerbungsagent.config import (
+    lade_profil,
+    speichere_profil,
+    ermittle_profil_pfad,
+    erstelle_profil,
+)
 
 st.set_page_config(page_title="Profil", page_icon="👤", layout="wide")
 
@@ -20,9 +25,7 @@ Verwalte dein Bewerbungsprofil, Sucheinstellungen und lade deine Unterlagen
 """)
 
 # Profil-Pfad
-profil_pfad = Path("config/profil.yaml")
-if not profil_pfad.exists():
-    profil_pfad = Path.home() / ".config" / "bewerbungsagent" / "profil.yaml"
+profil_pfad = ermittle_profil_pfad()
 
 unterlagen_dir = Path("unterlagen")
 unterlagen_dir.mkdir(exist_ok=True)
@@ -42,15 +45,10 @@ with tab1:
     try:
         profil = _lade()
     except Exception as e:
-        st.error(f"Fehler beim Laden des Profils: {e}")
-        st.markdown("""
-        ⚠️ **Profil nicht gefunden**
-
-        Erstelle eine Profil-Datei:
-        ```bash
-        cp config/profil.example.yaml config/profil.yaml
-        ```
-        """)
+        st.info("Noch kein Profil angelegt. Du kannst es jetzt direkt hier einrichten.")
+        if st.button("✨ Profil über die UI anlegen", type="primary"):
+            erstelle_profil(profil_pfad)
+            st.rerun()
         profil = None
 
     if profil is not None:

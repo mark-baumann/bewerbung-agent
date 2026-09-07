@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 STANDARD_PFAD = Path("config/profil.yaml")
+BENUTZER_PFAD = Path.home() / ".config" / "bewerbungsagent" / "profil.yaml"
 
 
 @dataclass
@@ -98,11 +99,11 @@ def _fill(cls, daten: dict[str, Any] | None):
 
 
 def lade_profil(pfad: str | Path | None = None) -> Profil:
-    p = Path(pfad or STANDARD_PFAD)
+    p = ermittle_profil_pfad(pfad)
     if not p.exists():
         raise FileNotFoundError(
-            f"Profil {p} nicht gefunden. Kopiere config/profil.example.yaml nach {p} "
-            "und trage deine Daten ein."
+            "Noch kein Profil angelegt. Öffne die Seite '👤 Profil' und lege dort "
+            "dein Profil über die Oberfläche an."
         )
     roh = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     profil = Profil(
@@ -115,6 +116,23 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
     if not profil.suche.was:
         raise ValueError("suche.was ist leer - mindestens ein Suchbegriff noetig.")
     return profil
+
+
+def ermittle_profil_pfad(pfad: str | Path | None = None) -> Path:
+    """Liefert den expliziten oder den vorhandenen Standardpfad für das Profil."""
+    if pfad is not None:
+        return Path(pfad)
+    if STANDARD_PFAD.exists():
+        return STANDARD_PFAD
+    if BENUTZER_PFAD.exists():
+        return BENUTZER_PFAD
+    return STANDARD_PFAD
+
+
+def erstelle_profil(pfad: str | Path | None = None) -> Path:
+    """Legt ein bearbeitbares Basisprofil für die UI an."""
+    profil = Profil(suche=Suche(was=["Softwareentwickler Python"]))
+    return speichere_profil(profil, ermittle_profil_pfad(pfad))
 
 
 def _to_dict(obj: Any) -> dict[str, Any]:

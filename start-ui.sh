@@ -19,9 +19,7 @@ fi
 if [ ! -f "config/profil.yaml" ] && [ ! -f "$HOME/.config/bewerbungsagent/profil.yaml" ]; then
     echo "⚠️  Profil nicht gefunden!"
     echo ""
-    echo "Erstelle zuerst ein Profil:"
-    echo "  cp config/profil.example.yaml config/profil.yaml"
-    echo "  # Bearbeite config/profil.yaml mit deinen Daten"
+    echo "Öffne nach dem Start die Seite 👤 Profil und lege es dort über die UI an."
     echo ""
 fi
 

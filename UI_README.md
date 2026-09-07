@@ -44,11 +44,9 @@ Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
 
 Die Web-UI nutzt dieselbe Konfiguration wie das CLI:
 
-1. **Profil erstellen:**
-   ```bash
-   cp config/profil.example.yaml config/profil.yaml
-   # Bearbeite config/profil.yaml mit deinen Daten
-   ```
+1. **Profil erstellen:** Öffne in der Web-UI die Seite **👤 Profil** und klicke
+   auf **✨ Profil über die UI anlegen**. Anschließend kannst du alle Daten
+   direkt in den Formularen ausfüllen und speichern.
 
 2. **API-Key setzen:**
    ```bash
@@ -58,7 +56,7 @@ Die Web-UI nutzt dieselbe Konfiguration wie das CLI:
 
 3. **Unterlagen:**
    - Lege Lebenslauf, Zeugnisse etc. im Ordner `unterlagen/` ab
-   - Konfiguriere Pfade in `config/profil.yaml`
+   - Lade die Unterlagen auf der Seite **👤 Profil** hoch
 
 ### Datenbank
 
@@ -189,7 +187,7 @@ Die Nummerierung bestimmt die Reihenfolge.
 → Setze den Key in `.env` oder als Umgebungsvariable
 
 ### "Profil konnte nicht geladen werden"
-→ Erstelle `config/profil.yaml` nach Vorlage
+→ Öffne die Seite **👤 Profil** und lege das Profil über die UI an
 
 ### Browser-Automation funktioniert nicht
 → Nutze das CLI für Browser-Automation: `bewerbungsagent bewerben <ref>`
