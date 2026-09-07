@@ -20,7 +20,8 @@ db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
 try:
     profil = lade_profil()
 except Exception as e:
-    st.error(f"Profil konnte nicht geladen werden: {e}")
+    st.warning(f"Profil konnte nicht geladen werden: {e}")
+    st.page_link("pages/6_profil.py", label="👤 Profil jetzt über die UI einrichten", icon="👤")
     st.stop()
 
 # Session State für ausgewählten Job

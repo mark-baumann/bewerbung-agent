@@ -28,6 +28,7 @@ try:
     nur_vollzeit_default = profil.suche.nur_vollzeit
 except Exception as e:
     st.warning(f"Profil konnte nicht geladen werden: {e}")
+    st.page_link("pages/6_profil.py", label="👤 Profil jetzt über die UI einrichten", icon="👤")
     default_begriffe = ["Python Developer"]
     default_ort = ""
     default_umkreis = 50
