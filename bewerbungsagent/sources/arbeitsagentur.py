@@ -1,8 +1,8 @@
 """Client fuer die oeffentliche Jobsuche-API der Bundesagentur fuer Arbeit.
 
 Endpunkte (oeffentlich, fester API-Key der Jobboerse-Webanwendung):
-  GET /pc/v4/jobs                  Suche
-  GET /pc/v3/jobdetails/{base64}   Detail inkl. Volltext-Beschreibung
+  GET /pc/v6/jobs                  Suche
+  GET /pc/v4/jobdetails/{base64}   Detail inkl. Volltext-Beschreibung
 """
 
 from __future__ import annotations
@@ -74,11 +74,11 @@ class ArbeitsagenturClient:
             if nur_vollzeit:
                 params["arbeitszeit"] = "vz"
 
-            r = self.http.get(f"{BASIS}/v4/jobs", params=params)
+            r = self.http.get(f"{BASIS}/v6/jobs", params=params)
             if r.status_code == 404:  # keine Treffer
                 return
             r.raise_for_status()
-            angebote = r.json().get("stellenangebote") or []
+            angebote = r.json().get("ergebnisliste") or []
             if not angebote:
                 return
             for a in angebote:
@@ -93,7 +93,7 @@ class ArbeitsagenturClient:
 
     def detail(self, refnr: str) -> dict[str, Any] | None:
         kodiert = base64.b64encode(refnr.encode()).decode()
-        r = self.http.get(f"{BASIS}/v3/jobdetails/{kodiert}")
+        r = self.http.get(f"{BASIS}/v4/jobdetails/{kodiert}")
         if r.status_code in (404, 410):
             return None
         r.raise_for_status()
@@ -135,21 +135,23 @@ class ArbeitsagenturClient:
 
 
 def _job_aus_treffer(roh: dict[str, Any]) -> Job:
+    lokationen = roh.get("stellenlokationen") or []
+    adresse = (lokationen[0] or {}).get("adresse") or {} if lokationen else {}
     ort = roh.get("arbeitsort") or {}
-    ref = roh.get("refnr", "")
-    entfernung = ort.get("entfernung")
+    ref = roh.get("referenznummer") or roh.get("refnr", "")
+    entfernung = roh.get("entfernung", ort.get("entfernung"))
     return Job(
         ref=ref,
-        titel=(roh.get("titel") or roh.get("beruf") or "").strip(),
-        arbeitgeber=(roh.get("arbeitgeber") or "").strip(),
-        beruf=roh.get("beruf"),
-        ort=_saeubern(ort.get("ort")),
-        plz=_saeubern(ort.get("plz")),
-        region=_saeubern(ort.get("region")),
+        titel=(roh.get("stellenangebotsTitel") or roh.get("titel") or roh.get("hauptberuf") or roh.get("beruf") or "").strip(),
+        arbeitgeber=(roh.get("firma") or roh.get("arbeitgeber") or "").strip(),
+        beruf=roh.get("hauptberuf") or roh.get("beruf"),
+        ort=_saeubern(adresse.get("ort") or ort.get("ort")),
+        plz=_saeubern(adresse.get("plz") or ort.get("plz")),
+        region=_saeubern(adresse.get("region") or ort.get("region")),
         entfernung_km=float(entfernung) if entfernung not in (None, "") else None,
-        veroeffentlicht=roh.get("aktuelleVeroeffentlichungsdatum"),
-        eintrittsdatum=roh.get("eintrittsdatum"),
-        externe_url=_saeubern(roh.get("externeUrl")),
+        veroeffentlicht=roh.get("datumErsteVeroeffentlichung") or roh.get("aktuelleVeroeffentlichungsdatum"),
+        eintrittsdatum=(roh.get("eintrittszeitraum") or {}).get("von") or roh.get("eintrittsdatum"),
+        externe_url=_saeubern(roh.get("externeURL") or roh.get("externeUrl")),
         detail_url=f"{JOBDETAIL_WEB}{ref}" if ref else None,
     )
 
@@ -173,7 +175,7 @@ def _detail_anreichern(job: Job, d: dict[str, Any]) -> None:
     if dauer == "BEFRISTET":
         monate = d.get("befristungInMonaten")
         job.befristung = f"befristet ({monate} Monate)" if monate else "befristet"
-    elif dauer:
+    elif dauer == "UNBEFRISTET":
         job.befristung = "unbefristet"
     verg = d.get("verguetungsangabe")
     job.verguetung = None if verg in (None, "KEINE_ANGABEN") else str(verg)
