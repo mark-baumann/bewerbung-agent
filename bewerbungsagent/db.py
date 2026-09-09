@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
 from .models import Application, Job, Score
 
-STANDARD_DB = Path("daten/bewerbungen.sqlite3")
+# "daten/" ist der einzige Pfad, der in Dockerfile/ONBOARDING als Volume-Mount
+# dokumentiert ist (`-v $PWD/daten:/app/daten`) und im Deployment-Stack persistent
+# gehalten wird. CLI und UI muessen denselben Pfad verwenden, sonst gehen in der
+# UI gefundene Jobs bei jedem Container-Neustart verloren (AUG-378).
+STANDARD_DB = Path(os.environ.get("BEWERBUNGSAGENT_DB", "daten/bewerbungen.sqlite3"))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
