@@ -163,7 +163,7 @@ with tab2:
         if gespeichert:
             profil.suche.was = [w.strip() for w in was_text.splitlines() if w.strip()]
             profil.suche.wo = wo
-            profil.suche.umkreis = umkreis
+            profil.suche.umkreis = int(umkreis)
             profil.suche.veroeffentlicht_seit_tagen = int(veroeffentlicht_seit_tagen)
             profil.suche.max_pro_query = int(max_pro_query)
             profil.suche.nur_vollzeit = nur_vollzeit

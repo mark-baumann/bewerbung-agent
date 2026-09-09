@@ -24,6 +24,43 @@ JOBDETAIL_WEB = "https://www.arbeitsagentur.de/jobsuche/jobdetail/"
 log = logging.getLogger(__name__)
 
 
+def _api_int(wert: Any, default: int) -> int:
+    if wert is None or wert is False:
+        return default
+    try:
+        return int(float(wert))
+    except (TypeError, ValueError):
+        return default
+
+
+def suchparameter(
+    was: str,
+    wo: str | None = "",
+    umkreis: Any = 25,
+    veroeffentlicht_seit_tagen: Any = 30,
+    nur_vollzeit: bool = False,
+    seite: Any = 1,
+    size: Any = 50,
+) -> dict[str, Any]:
+    """Baut Query-Parameter. Die API lehnt Floats (HTTP 400) ab."""
+    tage = _api_int(veroeffentlicht_seit_tagen, 30)
+    seit = min([0, 7, 14, 30, 100], key=lambda t: abs(t - tage))
+    params: dict[str, Any] = {
+        "was": was,
+        "page": max(1, _api_int(seite, 1)),
+        "size": max(1, min(100, _api_int(size, 50))),
+        "veroeffentlichtseit": seit,
+        "angebotsart": 1,
+    }
+    ort = (wo or "").strip()
+    if ort:
+        params["wo"] = ort
+        params["umkreis"] = max(0, _api_int(umkreis, 25))
+    if nur_vollzeit:
+        params["arbeitszeit"] = "vz"
+    return params
+
+
 class ArbeitsagenturClient:
     def __init__(self, timeout: float = 30.0, pause: float = 0.3):
         self.pause = pause
@@ -50,33 +87,35 @@ class ArbeitsagenturClient:
     def suche(
         self,
         was: str,
-        wo: str = "",
-        umkreis: int = 25,
-        veroeffentlicht_seit_tagen: int = 30,
+        wo: str | None = "",
+        umkreis: Any = 25,
+        veroeffentlicht_seit_tagen: Any = 30,
         nur_vollzeit: bool = False,
-        max_treffer: int = 50,
+        max_treffer: Any = 50,
     ) -> Iterator[dict[str, Any]]:
         """Blaettert durch die Trefferliste und liefert rohe Angebots-Dicts."""
         seite, geliefert = 1, 0
-        # API akzeptiert 0/7/14/30/100 Tage
-        seit = min([0, 7, 14, 30, 100], key=lambda t: abs(t - veroeffentlicht_seit_tagen))
-        while geliefert < max_treffer:
-            params: dict[str, Any] = {
-                "was": was,
-                "page": seite,
-                "size": min(100, max_treffer - geliefert),
-                "veroeffentlichtseit": seit,
-                "angebotsart": 1,  # 1 = Arbeit (keine Ausbildung/Praktikum)
-            }
-            if wo:
-                params["wo"] = wo
-                params["umkreis"] = umkreis
-            if nur_vollzeit:
-                params["arbeitszeit"] = "vz"
-
+        limit = max(1, _api_int(max_treffer, 50))
+        while geliefert < limit:
+            params = suchparameter(
+                was=was,
+                wo=wo,
+                umkreis=umkreis,
+                veroeffentlicht_seit_tagen=veroeffentlicht_seit_tagen,
+                nur_vollzeit=nur_vollzeit,
+                seite=seite,
+                size=min(100, limit - geliefert),
+            )
             r = self.http.get(f"{BASIS}/v6/jobs", params=params)
-            if r.status_code == 404:  # keine Treffer
+            if r.status_code == 404:
                 return
+            if r.status_code == 400:
+                raise httpx.HTTPStatusError(
+                    f"Jobsuche-API 400 bei Ort={params.get('wo')!r} "
+                    f"Umkreis={params.get('umkreis')!r}",
+                    request=r.request,
+                    response=r,
+                )
             r.raise_for_status()
             angebote = r.json().get("ergebnisliste") or []
             if not angebote:
@@ -84,7 +123,7 @@ class ArbeitsagenturClient:
             for a in angebote:
                 yield a
                 geliefert += 1
-                if geliefert >= max_treffer:
+                if geliefert >= limit:
                     return
             seite += 1
             time.sleep(self.pause)
@@ -104,8 +143,8 @@ class ArbeitsagenturClient:
     def hole_jobs(
         self,
         was: str,
-        wo: str = "",
-        umkreis: int = 25,
+        wo: str | None = "",
+        umkreis: Any = 25,
         veroeffentlicht_seit_tagen: int = 30,
         nur_vollzeit: bool = False,
         max_treffer: int = 50,
@@ -136,10 +175,16 @@ class ArbeitsagenturClient:
 
 def _job_aus_treffer(roh: dict[str, Any]) -> Job:
     lokationen = roh.get("stellenlokationen") or []
-    adresse = (lokationen[0] or {}).get("adresse") or {} if lokationen else {}
-    ort = roh.get("arbeitsort") or {}
+    erste = lokationen[0] if isinstance(lokationen, list) and lokationen else {}
+    if not isinstance(erste, dict):
+        erste = {}
+    adresse = erste.get("adresse") if isinstance(erste.get("adresse"), dict) else {}
+    ort = roh.get("arbeitsort") if isinstance(roh.get("arbeitsort"), dict) else {}
+    zeitraum = roh.get("eintrittszeitraum") if isinstance(roh.get("eintrittszeitraum"), dict) else {}
     ref = roh.get("referenznummer") or roh.get("refnr", "")
-    entfernung = roh.get("entfernung", ort.get("entfernung"))
+    entfernung = roh.get("entfernung")
+    if entfernung in (None, "") and ort:
+        entfernung = ort.get("entfernung")
     return Job(
         ref=ref,
         titel=(roh.get("stellenangebotsTitel") or roh.get("titel") or roh.get("hauptberuf") or roh.get("beruf") or "").strip(),
@@ -148,9 +193,9 @@ def _job_aus_treffer(roh: dict[str, Any]) -> Job:
         ort=_saeubern(adresse.get("ort") or ort.get("ort")),
         plz=_saeubern(adresse.get("plz") or ort.get("plz")),
         region=_saeubern(adresse.get("region") or ort.get("region")),
-        entfernung_km=float(entfernung) if entfernung not in (None, "") else None,
+        entfernung_km=_als_float(entfernung),
         veroeffentlicht=roh.get("datumErsteVeroeffentlichung") or roh.get("aktuelleVeroeffentlichungsdatum"),
-        eintrittsdatum=(roh.get("eintrittszeitraum") or {}).get("von") or roh.get("eintrittsdatum"),
+        eintrittsdatum=zeitraum.get("von") or roh.get("eintrittsdatum"),
         externe_url=_saeubern(roh.get("externeURL") or roh.get("externeUrl")),
         detail_url=f"{JOBDETAIL_WEB}{ref}" if ref else None,
     )
@@ -185,6 +230,15 @@ def _detail_anreichern(job: Job, d: dict[str, Any]) -> None:
         adr = (lokationen[0] or {}).get("adresse") or {}
         job.ort = _saeubern(adr.get("ort"))
         job.plz = _saeubern(adr.get("plz"))
+
+
+def _als_float(wert: Any) -> float | None:
+    if wert in (None, "", "null"):
+        return None
+    try:
+        return float(wert)
+    except (TypeError, ValueError):
+        return None
 
 
 def _saeubern(wert: Any) -> str | None:
