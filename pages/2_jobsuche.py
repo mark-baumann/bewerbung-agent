@@ -175,7 +175,7 @@ if submitted:
                     st.switch_page("pages/3_bewertung.py")
             with col2:
                 if st.button("📋 Zurück zum Dashboard", use_container_width=True):
-                    st.switch_page("pages/1_dashboard.py")
+                    st.switch_page("app.py")
 
         else:
             st.warning("⚠️ Keine Jobs gefunden. Versuche andere Suchbegriffe oder erweitere den Suchradius.")

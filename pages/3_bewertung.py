@@ -188,7 +188,7 @@ if submitted:
                     st.markdown("---")
                     st.subheader("✅ Nächste Schritte")
                     if st.button("📋 Zurück zum Dashboard", use_container_width=True):
-                        st.switch_page("pages/1_dashboard.py")
+                        st.switch_page("app.py")
         except Exception as e:
             st.error(f"Fehler: {e}")
             st.info("Möglicherweise existiert die Datenbank noch nicht. Führe zuerst eine Jobsuche durch!")
