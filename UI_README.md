@@ -33,7 +33,7 @@ Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
 
 ### Workflow
 
-1. **Dashboard** aufrufen für Übersicht
+1. **Dashboard** (Startseite `/`) für die Übersicht
 2. **Jobsuche** - Neue Jobs suchen
 3. **Bewertung** - Jobs bewerten lassen
 4. **Bewerbungen** - Anschreiben generieren und bewerben
@@ -67,12 +67,14 @@ Die Web-UI nutzt dieselbe SQLite-Datenbank wie das CLI:
 
 ## 🎨 Seitenübersicht
 
-### 1. Dashboard
-- Metriken: Gefundene Jobs, Bewertungen, Bewerbungen
+### 🏠 Dashboard (Startseite / Root)
+Das Dashboard ist die Startseite (Root `/`) der Web-UI:
+- Metriken: Gefundene Jobs, Bewertungen, Bewerbungen, Abgeschickt
 - Neueste Jobs
 - Schnellaktionen
+- Onboarding-Hinweis bei leerer Datenbank
 
-### 2. Jobsuche
+### 1. Jobsuche
 - Suchformular mit Filtern:
   - Was (Suchbegriffe)
   - Wo (Ort)
@@ -83,7 +85,7 @@ Die Web-UI nutzt dieselbe SQLite-Datenbank wie das CLI:
 - Vorschau der Ergebnisse
 - Automatisches Speichern in DB
 
-### 3. Bewertung
+### 2. Bewertung
 - Optionen:
   - Nur unbewertete Jobs
   - Mit/ohne LLM (Claude)
@@ -92,7 +94,7 @@ Die Web-UI nutzt dieselbe SQLite-Datenbank wie das CLI:
 - Ergebnisvorschau mit Top-Jobs
 - Statistiken
 
-### 4. Bewerbungen
+### 3. Bewerbungen
 Drei Tabs:
 
 **Anschreiben generieren:**
@@ -109,7 +111,7 @@ Drei Tabs:
 - Statistiken (Gesamt, Abgeschickt, Probelauf, Fehlgeschlagen)
 - Bewerbungsverlauf
 
-### 5. Profil
+### 4. Profil
 - Persönliche Daten bearbeiten
 - Suchparameter anpassen
 - Unterlagen (Lebenslauf, Zeugnisse) direkt hochladen
@@ -158,9 +160,8 @@ CMD ["streamlit", "run", "app.py", "--server.port=8501"]
 ### Struktur
 ```
 bewerbung-agent/
-├── app.py                    # Hauptseite (aktuell Platzhalter)
+├── app.py                    # Dashboard / Startseite (Root)
 ├── pages/
-│   ├── 1_dashboard.py       # Dashboard
 │   ├── 2_jobsuche.py        # Jobsuche
 │   ├── 3_bewertung.py       # Bewertung
 │   ├── 5_bewerbungen.py     # Bewerbungen
