@@ -1,0 +1,10 @@
+# Laufzeit-Abhaengigkeiten fuer Streamlit Community Cloud.
+# Community Cloud priorisiert requirements.txt (pip) gegenueber pyproject.toml
+# (Poetry) — siehe https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies
+# Die Streamlit-UI nutzt NUR diese Pakete; browser-use/playwright (CLI-Bewerbung)
+# wird in der Cloud-Umgebung nicht benoetigt und daher nicht installiert.
+streamlit>=1.30
+httpx>=0.27
+pyyaml>=6.0
+rich>=13.7
+anthropic>=0.69

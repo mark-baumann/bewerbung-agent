@@ -59,7 +59,7 @@ with st.form("bewertung_form"):
             "Max. Anzahl zu bewerten",
             min_value=1,
             max_value=1000,
-            value=min(len(jobs_ohne_score) if nur_neue else len(alle_jobs), 50),
+            value=max(min(len(jobs_ohne_score) if nur_neue else len(alle_jobs), 50), 1),
             step=10
         )
 
