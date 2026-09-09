@@ -22,9 +22,9 @@ try:
     profil = lade_profil()
     default_begriffe = profil.suche.was
     default_ort = profil.suche.wo or ""
-    default_umkreis = profil.suche.umkreis
-    default_tage = profil.suche.veroeffentlicht_seit_tagen
-    default_max = profil.suche.max_pro_query
+    default_umkreis = int(profil.suche.umkreis)
+    default_tage = int(profil.suche.veroeffentlicht_seit_tagen)
+    default_max = int(profil.suche.max_pro_query)
     nur_vollzeit_default = profil.suche.nur_vollzeit
 except Exception as e:
     st.warning(f"Profil konnte nicht geladen werden: {e}")
@@ -111,11 +111,11 @@ if submitted:
                 try:
                     jobs = client.hole_jobs(
                         was=begriff,
-                        wo=wo if wo else None,
-                        umkreis=umkreis,
-                        veroeffentlicht_seit_tagen=tage,
+                        wo=(wo or "").strip(),
+                        umkreis=int(umkreis),
+                        veroeffentlicht_seit_tagen=int(tage),
                         nur_vollzeit=nur_vollzeit,
-                        max_treffer=max_treffer,
+                        max_treffer=int(max_treffer),
                         mit_details=mit_details,
                     )
 

@@ -6,7 +6,11 @@ from bewerbungsagent.config import lade_profil
 from bewerbungsagent.db import Speicher
 from bewerbungsagent.models import Application, Job
 from bewerbungsagent.scoring import heuristik, sentiment
-from bewerbungsagent.sources.arbeitsagentur import _detail_anreichern, _job_aus_treffer
+from bewerbungsagent.sources.arbeitsagentur import (
+    _detail_anreichern,
+    _job_aus_treffer,
+    suchparameter,
+)
 
 BEISPIEL_TREFFER = {
     "beruf": "Softwareentwickler/in",
@@ -41,6 +45,79 @@ def profil(tmp_path: Path):
     ziel = tmp_path / "profil.yaml"
     ziel.write_text(quelle, encoding="utf-8")
     return lade_profil(ziel)
+
+
+def test_suchparameter_ohne_ort_laesst_umkreis_weg():
+    params = suchparameter("Python", wo="", umkreis=25.0)
+    assert "wo" not in params
+    assert "umkreis" not in params
+    assert params["angebotsart"] == 1
+    assert type(params["page"]) is int
+    assert type(params["size"]) is int
+    assert type(params["veroeffentlichtseit"]) is int
+
+
+def test_suchparameter_mit_ort_zwingt_zahlen_auf_int():
+    params = suchparameter(
+        "Python",
+        wo="  Berlin  ",
+        umkreis=25.0,
+        veroeffentlicht_seit_tagen=7.0,
+        seite=1.0,
+        size=5.0,
+    )
+    assert params["wo"] == "Berlin"
+    assert params["umkreis"] == 25
+    assert type(params["umkreis"]) is int
+    assert type(params["page"]) is int
+    assert type(params["size"]) is int
+    assert type(params["veroeffentlichtseit"]) is int
+    assert params["veroeffentlichtseit"] == 7
+
+
+def test_suchparameter_umkreis_aus_string():
+    params = suchparameter("Python", wo="Hamburg", umkreis="50")
+    assert params["umkreis"] == 50
+    assert type(params["umkreis"]) is int
+
+
+def test_suchparameter_httpx_query_ohne_floatpunkte():
+    import httpx
+
+    params = suchparameter(
+        "Python",
+        wo="Berlin",
+        umkreis=25.0,
+        veroeffentlicht_seit_tagen=7.0,
+        seite=1.0,
+        size=5.0,
+    )
+    qs = str(httpx.Request("GET", "https://example.com/", params=params).url)
+    assert "25.0" not in qs
+    assert "5.0" not in qs
+    assert "7.0" not in qs
+    assert "umkreis=25" in qs
+    assert "wo=Berlin" in qs
+
+
+def test_v6_treffer_mit_standort_und_entfernung():
+    job = _job_aus_treffer(
+        {
+            "stellenangebotsTitel": "Python Dev",
+            "firma": "Beispiel GmbH",
+            "referenznummer": "13644-236954-S",
+            "stellenlokationen": [
+                {"adresse": {"ort": "Berlin", "plz": "10115", "region": "BERLIN"}}
+            ],
+            "entfernung": 2,
+            "eintrittszeitraum": {"von": "2026-09-01"},
+            "externeURL": "https://karriere.beispiel.de/job/42",
+        }
+    )
+    assert job.ort == "Berlin"
+    assert job.plz == "10115"
+    assert job.entfernung_km == 2.0
+    assert job.eintrittsdatum == "2026-09-01"
 
 
 def test_treffer_normalisierung():
