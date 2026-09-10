@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import lade_profil
-from bewerbungsagent.db import Speicher
+from bewerbungsagent.db import STANDARD_DB, Speicher
 from bewerbungsagent.sources.arbeitsagentur import ArbeitsagenturClient
 from bewerbungsagent.models import Job
 
@@ -14,8 +14,9 @@ st.set_page_config(page_title="Jobsuche", page_icon="🔍", layout="wide")
 
 st.title("🔍 Jobsuche")
 
-# Datenbank-Pfad
-db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
+# Datenbank-Pfad (identisch mit der CLI, damit Daten den Container-Neustart
+# ueberleben, siehe AUG-378)
+db_path = STANDARD_DB
 
 # Lade Profil für Defaults
 try:

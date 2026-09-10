@@ -19,7 +19,10 @@
 #     bewerbungsagent suchen --was "Data Engineer" --wo Berlin
 #
 #   # UI-Nutzung (keine Argumente -> startet Streamlit auf $PORT, Default 8501):
-#   docker run --rm -p 8501:8501 bewerbungsagent
+#   # WICHTIG: /app/daten ebenfalls mounten, sonst gehen Jobs/Bewertungen/
+#   # Bewerbungen bei jedem Container-Neustart verloren (AUG-378) — die UI
+#   # nutzt dieselbe SQLite-Datei wie die CLI (bewerbungsagent/db.py).
+#   docker run --rm -p 8501:8501 -v "$PWD/daten:/app/daten" bewerbungsagent
 #
 # browser-use startet Chromium als root nicht mit aktivierter Sandbox; der
 # Code erkennt das automatisch (chromium_sandbox=False im Container).

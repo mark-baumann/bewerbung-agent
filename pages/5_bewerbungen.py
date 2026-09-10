@@ -7,7 +7,7 @@ import asyncio
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import lade_profil
-from bewerbungsagent.db import Speicher
+from bewerbungsagent.db import STANDARD_DB, Speicher
 from bewerbungsagent.anschreiben import erzeuge as erzeuge_anschreiben
 from bewerbungsagent.models import Application
 
@@ -15,7 +15,9 @@ st.set_page_config(page_title="Bewerbungen", page_icon="✉️", layout="wide")
 
 st.title("✉️ Bewerbungen")
 
-db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
+# Datenbank-Pfad (identisch mit der CLI, damit Daten den Container-Neustart
+# ueberleben, siehe AUG-378)
+db_path = STANDARD_DB
 
 try:
     profil = lade_profil()
