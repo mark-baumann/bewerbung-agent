@@ -36,6 +36,15 @@ class Job:
     befristung: str | None = None
     verguetung: str | None = None
     geholt_am: str = field(default_factory=_now)
+    
+    # --- Neue strukturierte Details (extrahiert vom LLM) ---
+    anforderungen: str | None = None  # Skills, Erfahrung (JSON-String oder Text)
+    team_info: str | None = None      # Team-Größe, Abteilung, Hierarchie
+    tech_stack: str | None = None     # Verwendete Technologien (JSON-Array oder Text)
+    aufgaben: str | None = None       # Top 3-5 Verantwortungen (JSON-Array oder Text)
+    benefits: str | None = None       # Zusätzliche Benefits (JSON-Array oder Text)
+    details_quelle: str = "keine"     # "keine", "heuristik", "llm"
+    details_generiert_am: str = ""    # Zeitstempel der Detail-Extraktion
 
     @property
     def bewerbungs_url(self) -> str | None:
