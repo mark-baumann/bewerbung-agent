@@ -26,5 +26,4 @@ jobs:
     with:
       service_name: bewerbung-agent
       port: "8502"
-      app_file: app.py
     secrets: inherit
