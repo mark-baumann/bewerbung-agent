@@ -1,29 +1,25 @@
-# ═══════════════════════════════════════════════════════════════
-# build.yml — Build, Push & Deploy des Bewerbungsagent-Images
-# ═══════════════════════════════════════════════════════════════
-# AUG-422: Der Bewerbungsagent läuft seit dem Streamlit-UI-Umbau (siehe
-# Dockerfile, AUG-378) als Dauerläufer im infrastruktur-deployment-Stack
-# (services.yaml: bewerbung-agent, Port 8502). Der alte Workflow hat das
-# Image nur nach GHCR gepusht, aber nie den Pi zum Nachziehen gebracht —
-# der Pi lief dadurch dauerhaft auf einem veralteten Image. Dieser
-# Workflow ruft den geteilten build-deploy.yml-Workflow auf, den auch die
-# anderen Streamlit-Dienste (z. B. ebay-scraping-agent) nutzen: Build +
-# Push nach GHCR (ARM64 für den Pi), danach `docker compose pull/up` auf
-# dem Pi über den self-hosted Runner.
-
-name: Build & Deploy
+name: Deploy
 
 on:
   push:
-    branches: [main, master, claude/bewerbungsagent-browser-use-0z5rg2]
+    branches: [main]
   pull_request:
-    branches: [main, master, claude/bewerbungsagent-browser-use-0z5rg2]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      service_name:
+        required: true
+        type: string
+        description: "Docker-Compose service name"
+      port:
+        required: true
+        type: string
+        description: "Service port"
 
 jobs:
   deploy:
     uses: mark-baumann/infrastruktur-deployment/.github/workflows/build-deploy.yml@master
     with:
-      service_name: bewerbung-agent
-      port: "8502"
+      service_name: ${{ inputs.service_name || 'bewerbung-agent' }}
+      port: ${{ inputs.port || '8502' }}
     secrets: inherit
