@@ -1,9 +1,11 @@
 # 🚀 Onboarding — Bewerbungsagent
 
 Dieses Dokument beschreibt, wie der Bewerbungsagent eingerichtet, gebaut und
-ausgeführt wird. Es ist ein **CLI-Werkzeug** (kein Dauerläufer), daher gibt es
-keinen Pi-Deploy wie bei den Streamlit-Diensten — stattdessen ein
-reproduzierbares Docker-Image in der GitHub Container Registry.
+ausgeführt wird. Ursprünglich ein reines CLI-Werkzeug, läuft er inzwischen
+zusätzlich als Streamlit-Dauerläufer im infrastruktur-deployment-Stack auf
+dem Pi (`bewerbung-agent`, Port 8502, siehe `services.yaml`) — Pushes auf
+den Hauptbranch bauen das Image reproduzierbar in der GitHub Container
+Registry und deployen es automatisch auf den Pi (siehe Abschnitt 5).
 
 ---
 
@@ -80,16 +82,19 @@ Weitere Befehle: `bewerten`, `top`, `zeigen <ref>`, `anschreiben <ref>`,
 
 ## 5. CI/CD
 
-Der Workflow `.github/workflows/build.yml` baut das Image bei jedem Push auf
-`main`/`master` und stellt es in der GHCR bereit:
+Der Workflow `.github/workflows/build.yml` ruft den geteilten
+`build-deploy.yml`-Workflow aus `infrastruktur-deployment` auf (wie alle
+anderen Streamlit-Dienste): Build + Push nach GHCR (amd64 + arm64), danach
+Deploy auf den Pi (`docker compose pull/up` für den `bewerbung-agent`-Service,
+Port 8502, per self-hosted Runner):
 
 ```
 ghcr.io/mark-baumann/bewerbung-agent:latest
 ```
 
-- **Push auf `main`** → Build + Push (amd64 + arm64)
-- **Pull Request** → Build (ohne Push) als CI-Check
-- **`workflow_dispatch`** → manueller Build
+- **Push auf `main`/`master`** → Build + Push + Deploy auf den Pi
+- **Pull Request** → derselbe Build-Deploy-Workflow als CI-Check
+- **`workflow_dispatch`** → manueller Lauf
 
 ---
 
