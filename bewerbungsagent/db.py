@@ -37,7 +37,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     teilzeit INTEGER,
     befristung TEXT,
     verguetung TEXT,
-    geholt_am TEXT
+    geholt_am TEXT,
+    anforderungen TEXT,
+    team_info TEXT,
+    tech_stack TEXT,
+    aufgaben TEXT,
+    benefits TEXT,
+    details_quelle TEXT,
+    details_generiert_am TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scores (
@@ -71,6 +78,19 @@ CREATE INDEX IF NOT EXISTS idx_scores_gesamt ON scores(gesamt DESC);
 CREATE INDEX IF NOT EXISTS idx_applications_ref ON applications(ref);
 """
 
+# Spalten, die nach dem urspruenglichen Schema per ALTER TABLE ergaenzt wurden.
+# `CREATE TABLE IF NOT EXISTS` legt sie bei bereits existierenden Datenbanken
+# nicht nachtraeglich an, daher braucht es diese Migration (AUG-431).
+JOBS_MIGRATIONS: dict[str, str] = {
+    "anforderungen": "ALTER TABLE jobs ADD COLUMN anforderungen TEXT",
+    "team_info": "ALTER TABLE jobs ADD COLUMN team_info TEXT",
+    "tech_stack": "ALTER TABLE jobs ADD COLUMN tech_stack TEXT",
+    "aufgaben": "ALTER TABLE jobs ADD COLUMN aufgaben TEXT",
+    "benefits": "ALTER TABLE jobs ADD COLUMN benefits TEXT",
+    "details_quelle": "ALTER TABLE jobs ADD COLUMN details_quelle TEXT",
+    "details_generiert_am": "ALTER TABLE jobs ADD COLUMN details_generiert_am TEXT",
+}
+
 
 class Speicher:
     def __init__(self, pfad: str | Path | None = None):
@@ -80,7 +100,14 @@ class Speicher:
         self.con.row_factory = sqlite3.Row
         self.con.execute("PRAGMA foreign_keys = ON")
         self.con.executescript(SCHEMA)
+        self._migriere_jobs_spalten()
         self.con.commit()
+
+    def _migriere_jobs_spalten(self) -> None:
+        vorhanden = {row["name"] for row in self.con.execute("PRAGMA table_info(jobs)")}
+        for spalte, ddl in JOBS_MIGRATIONS.items():
+            if spalte not in vorhanden:
+                self.con.execute(ddl)
 
     def close(self) -> None:
         self.con.close()
