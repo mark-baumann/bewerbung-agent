@@ -275,18 +275,57 @@ with tab3:
     st.markdown("### 🔑 API-Konfiguration")
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if anthropic_key:
-        st.success("✅ ANTHROPIC_API_KEY ist gesetzt")
-        st.code(f"ANTHROPIC_API_KEY={anthropic_key[:10]}...{anthropic_key[-4:]}", language=None)
+    ollama_key = os.getenv("OLLAMA_API_KEY", "")
+    if anthropic_key or ollama_key:
+        st.success("✅ LLM-API-Key ist gesetzt (ANTHROPIC_API_KEY oder OLLAMA_API_KEY aus .env)")
+        if anthropic_key:
+            st.code(f"ANTHROPIC_API_KEY={anthropic_key[:10]}...{anthropic_key[-4:]}", language=None)
+        if ollama_key:
+            st.code(
+                f"OLLAMA_API_KEY={ollama_key[:10]}...{ollama_key[-4:]} | "
+                f"MODEL={os.getenv('OLLAMA_MODEL', 'glm-5.3-flash')}",
+                language=None,
+            )
     else:
-        st.error("❌ ANTHROPIC_API_KEY nicht gesetzt")
+        st.error("❌ Kein LLM-API-Key gesetzt")
         st.markdown("""
         **API-Key setzen:**
         ```bash
         echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+        # oder zentral (alle Dienste): OLLAMA_API_KEY=... in der Deployment-.env
         ```
         Ohne API-Key funktioniert nur die heuristische Bewertung, nicht die LLM-basierte.
         """)
+
+    # LLM-Modell-Auswahl (aus GUI waehlbar; Standard aus .env)
+    if profil is not None:
+        st.markdown("### 🤖 LLM-Modell")
+        env_default_model = (
+            os.getenv("OLLAMA_MODEL")
+            or os.getenv("LLM_MODEL")
+            or os.getenv("ANTHROPIC_MODEL")
+            or "claude-opus-5"
+        )
+        model_options = [
+            "claude-opus-5", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-latest",
+            "glm-5.3-flash", "glm-5.1", "deepseek-v4.1-flash", "qwen3:latest",
+        ]
+        if env_default_model not in model_options:
+            model_options.append(env_default_model)
+        akt_modell = profil.bewertung.modell or env_default_model
+        idx = model_options.index(akt_modell) if akt_modell in model_options else 0
+        with st.form("llm_modell"):
+            gewaehlt = st.selectbox(
+                "KI-Modell für Bewertung & Anschreiben",
+                options=model_options,
+                index=idx,
+                help="Standard kommt aus der .env (OLLAMA_MODEL/LLM_MODEL); Auswahl wird im Profil gespeichert.",
+            )
+            speichern_modell = st.form_submit_button("💾 Modell speichern", type="primary")
+        if speichern_modell:
+            profil.bewertung.modell = gewaehlt
+            speichere_profil(profil, profil_pfad)
+            st.success(f"✅ LLM-Modell auf `{gewaehlt}` gesetzt!")
 
 # Footer
 st.markdown("---")
