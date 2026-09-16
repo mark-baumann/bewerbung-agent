@@ -26,7 +26,7 @@ suchen → bewerten → top → anschreiben → bewerben
 | Komponente | Anforderung |
 |---|---|
 | Python | 3.11+ |
-| LLM | Anthropic API-Key (`ANTHROPIC_API_KEY`) |
+| LLM | Anthropic API-Key (`ANTHROPIC_API_KEY`) **oder** Ollama (`OLLAMA_BASE_URL`/`OLLAMA_MODEL`) |
 | Browser | Chromium (via Playwright, nur für `bewerben`) |
 | Optional | BA-Login (`BA_BENUTZER` / `BA_PASSWORT`) für „Online bewerben" |
 
@@ -46,9 +46,15 @@ Konfiguration:
 
 ```bash
 cp config/profil.example.yaml config/profil.yaml
-cp .env.example .env                 # ANTHROPIC_API_KEY eintragen
+cp .env.example .env                 # ANTHROPIC_API_KEY oder OLLAMA_* eintragen
 $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüsse
 ```
+
+**LLM-Anbieter:** Claude-Modelle (`claude-*`) laufen über `ANTHROPIC_API_KEY`,
+alle anderen Modelle (z.B. `glm-5.3-flash`, `deepseek-v4.1-flash`, `qwen3`)
+über einen OpenAI-kompatiblen Ollama-Server (`OLLAMA_BASE_URL`, Standard
+`http://localhost:11434`, plus optional `OLLAMA_API_KEY`/`OLLAMA_MODEL`).
+Ohne Key fällt die Bewertung auf die Heuristik zurück.
 
 ---
 

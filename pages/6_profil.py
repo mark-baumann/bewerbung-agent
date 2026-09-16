@@ -293,6 +293,7 @@ with tab3:
         ```bash
         echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
         # oder zentral (alle Dienste): OLLAMA_API_KEY=... in der Deployment-.env
+        # lokal reicht auch: OLLAMA_BASE_URL=http://localhost:11434
         ```
         Ohne API-Key funktioniert nur die heuristische Bewertung, nicht die LLM-basierte.
         """)

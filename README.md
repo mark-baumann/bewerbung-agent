@@ -2,6 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)](https://python.org)
 [![Claude](https://img.shields.io/badge/LLM-Claude-orange?logo=anthropic)](https://anthropic.com)
+[![Ollama](https://img.shields.io/badge/LLM-Ollama-black?logo=ollama)](https://ollama.com)
 [![Browser-Use](https://img.shields.io/badge/Automation-browser--use-green)](https://github.com/browser-use/browser-use)
 [![Tests](https://img.shields.io/badge/Tests-Pytest-green?logo=pytest)](https://pytest.org)
 
@@ -9,8 +10,8 @@
 
 ```
 suchen  ──►  bewerten  ──►  top / zeigen  ──►  anschreiben  ──►  bewerben
- (API)      (Sentiment       (Auswahl)         (Claude)        (browser-use)
-             + Claude)
+ (API)      (Sentiment       (Auswahl)         (LLM)         (browser-use)
+             + LLM)
 ```
 
 ---
@@ -19,7 +20,7 @@ suchen  ──►  bewerten  ──►  top / zeigen  ──►  anschreiben  �
 
 - **🔍 Jobsuche:** Echte Stellen von der [Jobbörse der Bundesagentur für Arbeit](https://www.arbeitsagentur.de/jobsuche/) per API
 - **📊 Intelligente Bewertung:** Skill-Matching + Sentiment-Analyse speziell für deutsche Stellenanzeigen
-- **🤖 LLM-unterstützt:** Claude bewertet semantische Passung und generiert Anschreiben
+- **🤖 LLM-unterstützt:** Claude oder Ollama bewertet semantische Passung und generiert Anschreiben
 - **🌐 Browser-Automation:** browser-use füllt Bewerbungsformulare automatisch aus
 - **🖥️ Web-UI:** Moderne Streamlit-Oberfläche als Alternative zum CLI
 - **🛡️ Sicherheitsnetze:** Probelauf-Standard, Domain-Schranke, keine erfundenen Angaben
@@ -42,9 +43,27 @@ playwright install chromium
 
 ```bash
 cp config/profil.example.yaml config/profil.yaml
-cp .env.example .env                 # ANTHROPIC_API_KEY eintragen
+cp .env.example .env                 # LLM-Key eintragen (Anthropic ODER Ollama)
 $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüsse
 ```
+
+### 🤖 LLM-Konfiguration
+
+Entweder Anthropic **oder** ein lokaler/Ollama-Server (OpenAI-kompatibel):
+
+```bash
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# ODER Ollama (lokal oder zentral)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_API_KEY=                      # nur falls der Server einen Key verlangt
+OLLAMA_MODEL=glm-5.3-flash           # z.B. glm-5.3-flash, deepseek-v4.1-flash, qwen3
+```
+
+Claude-Modelle (`claude-*`) laufen über Anthropic, alle anderen Modelle über
+Ollama. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
+die Vorlage zurück.
 
 ---
 
@@ -119,7 +138,7 @@ Der Gesamtscore ist `Passung × 0,7 + Ton × 0,3`.
 |---|---|
 | **CLI** | Python argparse + Rich |
 | **API** | Bundesagentur für Arbeit Jobsuche-API |
-| **LLM** | Anthropic Claude |
+| **LLM** | Anthropic Claude oder Ollama (OpenAI-kompatibel) |
 | **Browser** | browser-use + Playwright |
 | **Storage** | SQLite |
 | **Konfiguration** | YAML-Profil |
@@ -140,7 +159,7 @@ bewerbung-agent/
 │   ├── scoring/
 │   │   ├── sentiment.py          # Lexikon für Anzeigen-Tonalität
 │   │   ├── heuristik.py          # Skill-Match, Ausschlüsse
-│   │   └── llm.py                # Semantische Bewertung (Claude)
+│   │   └── llm.py                # Semantische Bewertung (Claude/Ollama)
 │   ├── anschreiben.py            # Anschreiben-Generator
 │   └── bewerben/browser.py       # browser-use-Agent
 ├── config/profil.example.yaml

@@ -41,6 +41,32 @@ def _pruefe_browser_use() -> None:
         ) from e
 
 
+def _browser_llm(modell: str):
+    """LangChain-LLM fuer browser-use: Anthropic oder OpenAI-kompatibles Ollama."""
+    from ..scoring import llm as llm_modul
+
+    anbieter = llm_modul.provider(modell)
+    if anbieter == "ollama":
+        from browser_use import ChatOpenAI
+
+        base = (llm_modul._env("OLLAMA_BASE_URL") or llm_modul.OLLAMA_DEFAULT_BASE_URL).rstrip("/")
+        key = llm_modul._env("OLLAMA_API_KEY") or "ollama"
+        effektives_modell = modell
+        if llm_modul.ist_claude_modell(modell) or not modell:
+            effektives_modell = (
+                llm_modul._env("OLLAMA_MODEL") or llm_modul._env("LLM_MODEL") or llm_modul.OLLAMA_DEFAULT_MODEL
+            )
+        return ChatOpenAI(
+            model=effektives_modell,
+            base_url=f"{base}/v1",
+            api_key=key,
+            temperature=0.2,
+        )
+    from browser_use import ChatAnthropic
+
+    return ChatAnthropic(model=modell)
+
+
 def _ergebnis_modell():
     from pydantic import BaseModel, Field
 
@@ -212,7 +238,7 @@ class BewerbungsBrowser:
 
     def baue_agent(self, job: Job, anschreiben: str, dry_run: bool = True):
         """Konfiguriert den browser-use-Agenten, ohne ihn zu starten."""
-        from browser_use import Agent, BrowserProfile, ChatAnthropic
+        from browser_use import Agent, BrowserProfile
 
         url = job.bewerbungs_url
         if not url:
@@ -220,6 +246,7 @@ class BewerbungsBrowser:
 
         anhaenge = self.profil.anhaenge()
         ergebnis_modell = _ergebnis_modell()
+        llm = _browser_llm(self.modell)
 
         aufgabe = AUFGABE.format(
             name=self.profil.person.name,
@@ -260,7 +287,7 @@ class BewerbungsBrowser:
 
         return Agent(
             task=aufgabe,
-            llm=ChatAnthropic(model=self.modell),
+            llm=llm,
             browser_profile=browser_profil,
             available_file_paths=anhaenge or None,
             sensitive_data=sensitive or None,

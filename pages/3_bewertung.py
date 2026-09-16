@@ -29,7 +29,7 @@ st.markdown("""
 Bewerte gefundene Jobs anhand von:
 - **Skill-Matching**: Abgleich mit deinem Profil
 - **Sentiment-Analyse**: Analyse der Stellenanzeige auf positive/negative Signale
-- **LLM-Bewertung** (optional): Semantische Analyse durch Claude
+- **LLM-Bewertung** (optional): Semantische Analyse durch Claude oder Ollama
 """)
 
 with Speicher(str(db_path)) as db:
@@ -67,17 +67,18 @@ with st.form("bewertung_form"):
 
     with col2:
         mit_llm = st.checkbox(
-            "LLM-Bewertung aktivieren (Claude)",
+            "LLM-Bewertung aktivieren (KI)",
             value=True,
-            help="Semantische Bewertung durch Claude - benötigt ANTHROPIC_API_KEY"
+            help="Semantische Bewertung durch Claude oder Ollama - benötigt ANTHROPIC_API_KEY oder OLLAMA_API_KEY"
         )
 
         if mit_llm:
             llm_verfuegbar = llm_modul.client_verfuegbar()
             if llm_verfuegbar:
-                st.success("✅ Claude API verfügbar")
+                anbieter = llm_modul.provider()
+                st.success(f"✅ KI verfügbar ({anbieter})")
             else:
-                st.error("❌ ANTHROPIC_API_KEY nicht gesetzt")
+                st.error("❌ Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY oder OLLAMA_API_KEY)")
                 mit_llm = False
 
     submitted = st.form_submit_button("📊 Bewertung starten", use_container_width=True)
@@ -171,6 +172,8 @@ if submitted:
                                     st.metric("Ton", f"{score.sentiment:.0f}")
                                     st.caption(f"Bewerter: {score.bewerter}")
 
+                                if job.anzeige_url:
+                                    st.markdown(f"[🔗 Zum Jobangebot öffnen]({job.anzeige_url})")
                                 st.code(f"Referenz: {job.ref}", language=None)
 
                     # Ausgeschlossene Jobs (Beispiele)
@@ -185,6 +188,8 @@ if submitted:
                                 with st.expander(f"🚫 {job.titel}"):
                                     st.write(f"**Grund:** {score.ausschlussgrund}")
                                     st.write(f"🏢 {job.arbeitgeber}")
+                                    if job.anzeige_url:
+                                        st.markdown(f"[🔗 Zum Jobangebot öffnen]({job.anzeige_url})")
 
                     # Next steps
                     st.markdown("---")

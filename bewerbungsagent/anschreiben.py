@@ -1,4 +1,4 @@
-"""Anschreiben erzeugen - mit Claude, sonst aus einer Vorlage."""
+"""Anschreiben erzeugen - mit Claude oder Ollama, sonst aus einer Vorlage."""
 
 from __future__ import annotations
 
@@ -7,7 +7,13 @@ import textwrap
 
 from .config import Profil
 from .models import Job, Score
-from .scoring.llm import LLMNichtVerfuegbar, client_verfuegbar
+from .scoring.llm import (
+    LLMNichtVerfuegbar,
+    OllamaClient,
+    client_verfuegbar,
+    ist_claude_modell,
+    provider,
+)
 
 log = logging.getLogger(__name__)
 
@@ -69,9 +75,7 @@ def erzeuge(
     if not mit_llm or not client_verfuegbar():
         return _vorlage(job, profil, score)
     try:
-        import anthropic
-
-        client = anthropic.Anthropic()
+        anbieter = provider(profil.bewertung.modell)
         system = SYSTEM.format(
             name=profil.person.name,
             kurzprofil=profil.kurzprofil or "(kein Kurzprofil hinterlegt)",
@@ -84,28 +88,39 @@ def erzeuge(
         hinweis = ""
         if score and score.treffer:
             hinweis = "\n\nBesonders relevante Uebereinstimmungen: " + ", ".join(score.treffer[:8])
-
-        antwort = client.messages.create(
-            model=profil.bewertung.modell,
-            max_tokens=2000,
-            thinking={"type": "adaptive"},
-            output_config={"effort": "medium"},
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Stelle: {job.titel}\n"
-                        f"Arbeitgeber: {job.arbeitgeber}\n"
-                        f"Ort: {job.ort or '-'}\n\n"
-                        f"Anzeigentext:\n{anzeige}{hinweis}"
-                    ),
-                }
-            ],
+        nutzermeldung = (
+            f"Stelle: {job.titel}\n"
+            f"Arbeitgeber: {job.arbeitgeber}\n"
+            f"Ort: {job.ort or '-'}\n\n"
+            f"Anzeigentext:\n{anzeige}{hinweis}"
         )
-        if antwort.stop_reason == "refusal":
-            raise LLMNichtVerfuegbar(str(antwort.stop_details))
-        text = "\n".join(b.text for b in antwort.content if b.type == "text").strip()
+
+        if anbieter == "anthropic":
+            import anthropic
+
+            client = anthropic.Anthropic()
+            antwort = client.messages.create(
+                model=profil.bewertung.modell,
+                max_tokens=2000,
+                thinking={"type": "adaptive"},
+                output_config={"effort": "medium"},
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": nutzermeldung}],
+            )
+            if antwort.stop_reason == "refusal":
+                raise LLMNichtVerfuegbar(str(antwort.stop_details))
+            text = "\n".join(b.text for b in antwort.content if b.type == "text").strip()
+        else:
+            ollama = OllamaClient()
+            modell = profil.bewertung.modell
+            if ist_claude_modell(modell):
+                modell = ollama.modell
+            text = ollama.chat(
+                modell=modell,
+                system=system,
+                messages=[{"role": "user", "content": nutzermeldung}],
+                max_tokens=2000,
+            ).strip()
         return text or _vorlage(job, profil, score)
     except Exception as e:
         log.warning("Anschreiben per LLM fehlgeschlagen (%s) - nutze Vorlage.", e)
