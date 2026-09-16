@@ -80,7 +80,10 @@ try:
                         st.write(f"📍 {job.ort or 'Unbekannt'}")
                         st.write(f"📅 {job.veroeffentlicht or 'Unbekannt'}")
                         st.write(f"⭐ {score_text}")
-                        st.write(f"🔗 Ref: `{job.ref}`")
+                        if job.anzeige_url:
+                            st.markdown(f"[🔗 Zum Jobangebot]({job.anzeige_url})")
+                        else:
+                            st.write(f"🔗 Ref: `{job.ref}`")
             else:
                 st.info("Noch keine Jobs gefunden. Starte eine Suche!")
 

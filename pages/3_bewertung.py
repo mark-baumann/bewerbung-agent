@@ -171,6 +171,8 @@ if submitted:
                                     st.metric("Ton", f"{score.sentiment:.0f}")
                                     st.caption(f"Bewerter: {score.bewerter}")
 
+                                if job.anzeige_url:
+                                    st.markdown(f"[🔗 Zum Jobangebot öffnen]({job.anzeige_url})")
                                 st.code(f"Referenz: {job.ref}", language=None)
 
                     # Ausgeschlossene Jobs (Beispiele)
@@ -185,6 +187,8 @@ if submitted:
                                 with st.expander(f"🚫 {job.titel}"):
                                     st.write(f"**Grund:** {score.ausschlussgrund}")
                                     st.write(f"🏢 {job.arbeitgeber}")
+                                    if job.anzeige_url:
+                                        st.markdown(f"[🔗 Zum Jobangebot öffnen]({job.anzeige_url})")
 
                     # Next steps
                     st.markdown("---")

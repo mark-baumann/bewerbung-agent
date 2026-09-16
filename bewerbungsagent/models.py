@@ -52,6 +52,16 @@ class Job:
         return self.externe_url or self.detail_url
 
     @property
+    def anzeige_url(self) -> str | None:
+        """Klickbarer Link zum Jobangebot fuer die UI-Anzeige."""
+        url = self.bewerbungs_url
+        if url:
+            return url
+        if self.ref and self.quelle == "arbeitsagentur":
+            return f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{self.ref}"
+        return None
+
+    @property
     def volltext(self) -> str:
         teile = [self.titel, self.beruf or "", self.arbeitgeber, self.beschreibung or ""]
         return "\n".join(t for t in teile if t)

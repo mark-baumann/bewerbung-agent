@@ -139,6 +139,41 @@ def test_detail_anreicherung():
     assert "Kubernetes" in (job.beschreibung or "")
 
 
+def test_anzeige_url_bevorzugt_externe_url():
+    job = _job_aus_treffer(BEISPIEL_TREFFER)
+    assert job.bewerbungs_url == "https://karriere.beispiel.de/job/42"
+    assert job.anzeige_url == "https://karriere.beispiel.de/job/42"
+
+
+def test_anzeige_url_faellt_auf_detail_url_zurueck():
+    job = _job_aus_treffer(
+        {
+            "stellenangebotsTitel": "Python Dev",
+            "firma": "Beispiel GmbH",
+            "referenznummer": "13644-236954-S",
+        }
+    )
+    assert job.externe_url is None
+    assert job.detail_url == "https://www.arbeitsagentur.de/jobsuche/jobdetail/13644-236954-S"
+    assert job.anzeige_url == job.detail_url
+
+
+def test_anzeige_url_konstruiert_link_aus_ref_ohne_gespeicherte_url():
+    job = Job(
+        ref="10001-1003704433-S",
+        titel="AI KI Automation Manager",
+        arbeitgeber="STILORD GmbH",
+        quelle="arbeitsagentur",
+    )
+    assert job.bewerbungs_url is None
+    assert job.anzeige_url == "https://www.arbeitsagentur.de/jobsuche/jobdetail/10001-1003704433-S"
+
+
+def test_anzeige_url_ohne_quelle_ist_none():
+    job = Job(ref="X-1", titel="Test", arbeitgeber="Test AG", quelle="manuell")
+    assert job.anzeige_url is None
+
+
 def test_sentiment_erkennt_gute_bedingungen():
     gut = sentiment.analysiere(
         "Unbefristeter Vertrag nach Tarifvertrag, Gleitzeit, 30 Tage Urlaub, "
