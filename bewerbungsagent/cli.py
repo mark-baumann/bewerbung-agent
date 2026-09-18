@@ -79,7 +79,7 @@ def cmd_bewerten(args: argparse.Namespace) -> int:
 
         mit_llm = not args.ohne_llm
         if mit_llm and not llm_modul.client_verfuegbar():
-            console.print("[yellow]ANTHROPIC_API_KEY fehlt - bewerte rein heuristisch.[/]")
+            console.print("[yellow]Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY/OLLAMA_API_KEY) - bewerte rein heuristisch.[/]")
             mit_llm = False
 
         console.print(f"Bewerte {len(jobs)} Stellen ({'LLM + Heuristik' if mit_llm else 'Heuristik'}) ...")
