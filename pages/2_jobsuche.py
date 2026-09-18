@@ -162,6 +162,8 @@ if submitted:
                         st.markdown("**Beschreibung:**")
                         st.text(job.beschreibung[:300] + "..." if len(job.beschreibung) > 300 else job.beschreibung)
 
+                    if job.anzeige_url:
+                        st.markdown(f"[🔗 Zum Jobangebot öffnen]({job.anzeige_url})")
                     st.code(f"Referenz: {job.ref}", language=None)
 
             if len(alle_jobs) > 10:
