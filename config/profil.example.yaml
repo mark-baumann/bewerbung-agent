@@ -38,6 +38,12 @@ suche:
     - arbeitsagentur
     - get-in-it
 
+# Cron wird ausserhalb der Web-App ausgefuehrt. `bewerbungsagent cron` gibt
+# die passende Crontab-Zeile aus; jeder Lauf wird im Dashboard protokolliert.
+automatisierung:
+  aktiv: true
+  cron: "30 2 * * *"             # taeglich um 02:30 Uhr (deutsche Zeit)
+
 bewertung:
   # Pflicht-Skills: bestimmen die fachliche Passung
   skills:

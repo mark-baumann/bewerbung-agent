@@ -124,6 +124,7 @@ def test_v6_treffer_mit_standort_und_entfernung():
 def test_treffer_normalisierung():
     job = _job_aus_treffer(BEISPIEL_TREFFER)
     assert job.ref == "10001-1003353506-S"
+    assert job.quelle == "arbeitsagentur"
     assert job.ort == "Berlin"
     assert job.entfernung_km == 5.0
     # Die API liefert den String "null" statt eines fehlenden Werts.
@@ -267,6 +268,29 @@ def test_speicher_roundtrip(tmp_path):
         # 'offen' blendet bereits beworbene Stellen aus
         assert db.bestenliste(min_score=0, limit=5, offen=True) == []
         assert db.statistik()["abgeschickt"] == 1
+
+
+def test_speicher_protokolliert_datenabruf(tmp_path):
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        abruf_id = db.starte_abruf(
+            "arbeitsagentur", "Python", {"wo": "Berlin", "umkreis_km": 30}
+        )
+        db.beende_abruf(abruf_id, treffer=3, neu=2, aktualisiert=1)
+        abruf = db.letzte_abrufe(limit=1)[0]
+
+    assert abruf["quelle"] == "arbeitsagentur"
+    assert abruf["suchbegriff"] == "Python"
+    assert abruf["status"] == "erfolgreich"
+    assert (abruf["treffer"], abruf["neu"], abruf["aktualisiert"]) == (3, 2, 1)
+
+
+def test_docker_startet_taeglichen_abruf():
+    entrypoint = Path("docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert "30 2 * * * root cd /app && bewerbungsagent pipeline --offen" in entrypoint
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    assert "cron" in dockerfile
+    assert "tzdata" in dockerfile
+    assert "TZ=Europe/Berlin" in dockerfile
 
 
 def test_profil_meldet_unbekannte_felder(tmp_path):

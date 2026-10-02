@@ -164,6 +164,17 @@ with tab2:
                     int(profil.bewertung.min_score),
                 )
 
+            st.markdown("### ⏰ Automatische Aktualisierung")
+            automatisierung_aktiv = st.checkbox(
+                "Cron-Aktualisierung aktivieren", value=profil.automatisierung.aktiv,
+                help="Für lokale Cron-Installationen. Der Docker-Dauerläufer aktualisiert täglich um 02:30 deutscher Zeit.",
+            )
+            cron_zeitplan = st.text_input(
+                "Cron-Zeitplan", value=profil.automatisierung.cron,
+                help="Fünf Cron-Felder, z. B. 30 2 * * * für täglich um 02:30 Uhr.",
+            )
+            st.caption("Docker aktualisiert automatisch täglich um 02:30 deutscher Zeit. Lokal: `bewerbungsagent --profil config/profil.yaml cron` ausführen und die Ausgabe in `crontab -e` einfügen.")
+
             gespeichert = st.form_submit_button("💾 Speichern", type="primary")
 
         if gespeichert:
@@ -179,6 +190,8 @@ with tab2:
             profil.bewertung.wunsch = [w.strip() for w in wunsch_text.splitlines() if w.strip()]
             profil.bewertung.ausschluss = [a.strip() for a in ausschluss_text.splitlines() if a.strip()]
             profil.bewertung.min_score = float(min_score)
+            profil.automatisierung.aktiv = automatisierung_aktiv
+            profil.automatisierung.cron = cron_zeitplan.strip() or "30 2 * * *"
             speichere_profil(profil, profil_pfad)
             st.success("✅ Sucheinstellungen gespeichert!")
 

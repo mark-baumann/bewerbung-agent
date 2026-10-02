@@ -66,11 +66,20 @@ class Unterlagen:
 
 
 @dataclass
+class Automatisierung:
+    """Einstellungen fuer den extern ausgefuehrten Cron-Job."""
+
+    aktiv: bool = True
+    cron: str = "30 2 * * *"
+
+
+@dataclass
 class Profil:
     person: Person = field(default_factory=Person)
     suche: Suche = field(default_factory=Suche)
     bewertung: Bewertung = field(default_factory=Bewertung)
     unterlagen: Unterlagen = field(default_factory=Unterlagen)
+    automatisierung: Automatisierung = field(default_factory=Automatisierung)
     kurzprofil: str = ""
 
     # --- Zugangsdaten kommen ausschliesslich aus der Umgebung, nie aus der YAML ---
@@ -113,6 +122,7 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
         suche=_fill(Suche, roh.get("suche")),
         bewertung=_fill(Bewertung, roh.get("bewertung")),
         unterlagen=_fill(Unterlagen, roh.get("unterlagen")),
+        automatisierung=_fill(Automatisierung, roh.get("automatisierung")),
         kurzprofil=roh.get("kurzprofil", ""),
     )
     if not profil.suche.was:
@@ -149,6 +159,7 @@ def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
         "suche": _to_dict(profil.suche),
         "bewertung": _to_dict(profil.bewertung),
         "unterlagen": _to_dict(profil.unterlagen),
+        "automatisierung": _to_dict(profil.automatisierung),
     }
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(

@@ -71,14 +71,24 @@ auf die Heuristik und das Anschreiben auf die Vorlage zurück.
 
 ### ⏰ Automatische Suche per Cron
 
-Die Suche verwendet immer den Ort und Umkreis aus `suche` im Profil – etwa
+Wenn die Docker-Web-UI ohne Argumente gestartet wird, führt der Container die
+Pipeline **jeden Tag um 02:30 deutscher Zeit** automatisch aus. Der Abruf verwendet immer
+Ort und Umkreis aus `suche` im Profil – etwa
 `wo: München` und `umkreis: 30`. Alle aktivierten Quellen werden abgefragt.
-Eine Cron-Zeile wird bewusst nur ausgegeben (sie verändert keine Crontab):
+Für lokale Installationen können Zeitplan und Aktivierung unter
+`automatisierung` im Profil (oder in der Profil-UI) verwaltet werden. Eine
+Cron-Zeile wird bewusst nur ausgegeben (sie verändert keine Crontab):
 
 ```bash
 bewerbungsagent cron
-# Ausgabe mit `crontab -e` einfügen; Standard: täglich um 08:00 Uhr
+# Ausgabe mit `crontab -e` einfügen; Standard: täglich um 02:30 Uhr
 ```
+
+Jeder Abruf wird in der SQLite-Datenbank mit Quelle, Suchbegriff, verwendeten
+Filtern, Zeitpunkt, Trefferzahl sowie neuen/aktualisierten Stellen protokolliert.
+Das Dashboard zeigt diesen Abrufverlauf; bei jeder Stelle ist außerdem die
+Jobbörse sichtbar. So bleiben auch automatisch per Cron geladene Daten
+nachvollziehbar.
 
 ---
 

@@ -34,6 +34,8 @@ WORKDIR /app
 # System-Abhängigkeiten: Chromium + Playwright-Browser + Browser-Treiber
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    cron \
+    tzdata \
     ca-certificates \
     fonts-liberation \
     libasound2 \
@@ -71,12 +73,13 @@ COPY pages ./pages
 COPY config ./config
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p /app/daten
 
 # Konfiguration & Unterlagen werden zur Laufzeit gemountet (nicht ins Image).
 # Standard-Arbeitsverzeichnis für SQLite-Daten.
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8501
+ENV TZ=Europe/Berlin
 
 EXPOSE $PORT
 

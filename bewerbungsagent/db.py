@@ -76,6 +76,21 @@ CREATE TABLE IF NOT EXISTS applications (
 
 CREATE INDEX IF NOT EXISTS idx_scores_gesamt ON scores(gesamt DESC);
 CREATE INDEX IF NOT EXISTS idx_applications_ref ON applications(ref);
+
+CREATE TABLE IF NOT EXISTS abrufe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    gestartet_am TEXT NOT NULL,
+    beendet_am TEXT,
+    quelle TEXT NOT NULL,
+    suchbegriff TEXT NOT NULL,
+    parameter TEXT NOT NULL,
+    status TEXT NOT NULL,
+    treffer INTEGER NOT NULL DEFAULT 0,
+    neu INTEGER NOT NULL DEFAULT 0,
+    aktualisiert INTEGER NOT NULL DEFAULT 0,
+    fehler TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_abrufe_gestartet_am ON abrufe(gestartet_am DESC);
 """
 
 # Spalten, die nach dem urspruenglichen Schema per ALTER TABLE ergaenzt wurden.
@@ -155,6 +170,36 @@ class Speicher:
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [_zu_job(r) for r in self.con.execute(sql)]
+
+    # ---------------- Datenabrufe ----------------
+
+    def starte_abruf(self, quelle: str, suchbegriff: str, parameter: dict[str, Any]) -> int:
+        """Protokolliert den Beginn eines Abrufs von einer Jobboerse."""
+        cur = self.con.execute(
+            "INSERT INTO abrufe (gestartet_am, quelle, suchbegriff, parameter, status) "
+            "VALUES (datetime('now'), ?, ?, ?, 'laeuft')",
+            (quelle, suchbegriff, json.dumps(parameter, ensure_ascii=False, sort_keys=True)),
+        )
+        self.con.commit()
+        return int(cur.lastrowid)
+
+    def beende_abruf(
+        self, abruf_id: int, *, treffer: int = 0, neu: int = 0,
+        aktualisiert: int = 0, fehler: str | None = None,
+    ) -> None:
+        status = "fehler" if fehler else "erfolgreich"
+        self.con.execute(
+            "UPDATE abrufe SET beendet_am=datetime('now'), status=?, treffer=?, neu=?, "
+            "aktualisiert=?, fehler=? WHERE id=?",
+            (status, treffer, neu, aktualisiert, fehler, abruf_id),
+        )
+        self.con.commit()
+
+    def letzte_abrufe(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.con.execute(
+            "SELECT * FROM abrufe ORDER BY gestartet_am DESC, id DESC LIMIT ?", (limit,)
+        )
+        return [dict(row) for row in rows]
 
     # ---------------- Scores ----------------
 
