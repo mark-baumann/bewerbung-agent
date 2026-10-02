@@ -18,7 +18,7 @@ from .config import lade_profil
 from .db import Speicher
 from .models import Application, Job, Score
 from .scoring import llm as llm_modul
-from .sources.arbeitsagentur import ArbeitsagenturClient
+from .sources import QUELLEN, client_fuer
 
 console = Console()
 
@@ -34,25 +34,32 @@ def cmd_suchen(args: argparse.Namespace) -> int:
     ort = args.wo if args.wo is not None else s.wo
 
     alle: dict[str, Job] = {}
-    with ArbeitsagenturClient() as client:
-        for begriff in begriffe:
-            console.print(f"[cyan]Suche[/] '{begriff}' in '{ort or 'ganz DE'}' ...")
-            try:
-                jobs = client.hole_jobs(
-                    was=begriff,
-                    wo=ort,
-                    umkreis=args.umkreis or s.umkreis,
-                    veroeffentlicht_seit_tagen=args.tage or s.veroeffentlicht_seit_tagen,
-                    nur_vollzeit=s.nur_vollzeit,
-                    max_treffer=args.limit or s.max_pro_query,
-                    mit_details=not args.ohne_details,
-                )
-            except Exception as e:
-                console.print(f"[red]Suche fehlgeschlagen:[/] {e}")
-                continue
-            console.print(f"  {len(jobs)} Treffer")
-            for j in jobs:
-                alle.setdefault(j.ref, j)
+    quellen = args.quelle or s.quellen
+    for quelle in quellen:
+        try:
+            client = client_fuer(quelle)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            continue
+        with client:
+            for begriff in begriffe:
+                console.print(f"[cyan]Suche ({quelle})[/] '{begriff}' in '{ort or 'ganz DE'}' ...")
+                try:
+                    jobs = client.hole_jobs(
+                        was=begriff,
+                        wo=ort,
+                        umkreis=args.umkreis or s.umkreis,
+                        veroeffentlicht_seit_tagen=args.tage or s.veroeffentlicht_seit_tagen,
+                        nur_vollzeit=s.nur_vollzeit,
+                        max_treffer=args.limit or s.max_pro_query,
+                        mit_details=not args.ohne_details,
+                    )
+                except Exception as e:
+                    console.print(f"[red]Suche fehlgeschlagen ({quelle}):[/] {e}")
+                    continue
+                console.print(f"  {len(jobs)} Treffer")
+                for j in jobs:
+                    alle.setdefault(j.ref, j)
 
     if not alle:
         console.print("[yellow]Keine Stellen gefunden.[/]")
@@ -79,7 +86,7 @@ def cmd_bewerten(args: argparse.Namespace) -> int:
 
         mit_llm = not args.ohne_llm
         if mit_llm and not llm_modul.client_verfuegbar():
-            console.print("[yellow]Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY/OLLAMA_API_KEY) - bewerte rein heuristisch.[/]")
+            console.print("[yellow]Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY/OPENAI_API_KEY/OLLAMA_API_KEY) - bewerte rein heuristisch.[/]")
             mit_llm = False
 
         console.print(f"Bewerte {len(jobs)} Stellen ({'LLM + Heuristik' if mit_llm else 'Heuristik'}) ...")
@@ -360,19 +367,29 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         args.limit = such_limit
 
 
+def cmd_cron(args: argparse.Namespace) -> int:
+    """Gibt eine sichere, installierbare Cron-Zeile aus (keine Crontab-Aenderung)."""
+    executable = args.executable or "bewerbungsagent"
+    profil = f" --profil {args.profil}" if args.profil else ""
+    db = f" --db {args.db}" if args.db else ""
+    console.print("Cron installiert sich nicht selbst. Fuege diese Zeile mit `crontab -e` ein:")
+    console.print(f"{args.zeitplan} {executable}{profil}{db} pipeline --offen >> daten/cron.log 2>&1")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bewerbungsagent",
-        description="Stellen der Arbeitsagentur suchen, bewerten und per browser-use bewerben.",
+        description="Stellen aus mehreren Quellen suchen, bewerten und per browser-use bewerben.",
     )
     p.add_argument("--profil", default=None, help="Pfad zur Profil-YAML (Standard: config/profil.yaml)")
     p.add_argument("--db", default=None, help="Pfad zur SQLite-Datei")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="befehl", required=True)
 
-    s = sub.add_parser("suchen", help="Stellen von der Arbeitsagentur holen und speichern")
+    s = sub.add_parser("suchen", help="Stellen aus den Profilquellen holen und speichern")
     s.add_argument("--was", action="append", help="Suchbegriff (mehrfach moeglich)")
     s.add_argument("--wo", default=None, help="Ort oder PLZ")
     s.add_argument("--umkreis", type=int, default=None)
@@ -380,6 +397,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=None, help="Max. Treffer pro Suchbegriff")
     s.add_argument("--ohne-details", action="store_true",
                    help="Kein Volltext laden (schneller, aber Sentiment wird ungenau)")
+    s.add_argument("--quelle", action="append", choices=sorted(QUELLEN),
+                   help="Nur diese Quelle nutzen (mehrfach moeglich; Standard: Profilquellen)")
     s.set_defaults(func=cmd_suchen)
 
     b = sub.add_parser("bewerten", help="Gespeicherte Stellen bewerten")
@@ -431,11 +450,17 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--tage", type=int, default=None)
     pl.add_argument("--limit", type=int, default=None)
     pl.add_argument("--ohne-details", action="store_true")
+    pl.add_argument("--quelle", action="append", choices=sorted(QUELLEN))
     pl.add_argument("--alle", action="store_true")
     pl.add_argument("--ohne-llm", action="store_true")
     pl.add_argument("--min", type=float, default=None)
     pl.add_argument("--offen", action="store_true")
     pl.set_defaults(func=cmd_pipeline)
+
+    cr = sub.add_parser("cron", help="Cron-Zeile fuer die regelmaessige Pipeline ausgeben")
+    cr.add_argument("--zeitplan", default="0 8 * * *", help="Cron-Ausdruck (Standard: taeglich 08:00)")
+    cr.add_argument("--executable", default="bewerbungsagent", help="Absoluter Pfad zur CLI, falls noetig")
+    cr.set_defaults(func=cmd_cron)
     return p
 
 

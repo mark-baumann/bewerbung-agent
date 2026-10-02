@@ -42,6 +42,8 @@ class Suche:
     nur_vollzeit: bool = False
     nur_homeoffice: bool = False
     max_pro_query: int = 50
+    # Verfuegbare Quellen: arbeitsagentur, get-in-it.
+    quellen: list[str] = field(default_factory=lambda: ["arbeitsagentur", "get-in-it"])
 
 
 @dataclass

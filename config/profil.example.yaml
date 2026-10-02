@@ -34,6 +34,9 @@ suche:
   nur_vollzeit: true
   nur_homeoffice: false
   max_pro_query: 40
+  quellen:
+    - arbeitsagentur
+    - get-in-it
 
 bewertung:
   # Pflicht-Skills: bestimmen die fachliche Passung
