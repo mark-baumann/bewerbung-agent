@@ -1,4 +1,4 @@
-"""Jobsuche - Jobs von der Arbeitsagentur suchen."""
+"""Jobsuche in den im Profil aktivierten Quellen."""
 
 import streamlit as st
 from pathlib import Path
@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import lade_profil
 from bewerbungsagent.db import STANDARD_DB, Speicher
-from bewerbungsagent.sources.arbeitsagentur import ArbeitsagenturClient
+from bewerbungsagent.sources import client_fuer
 from bewerbungsagent.models import Job
 
 st.set_page_config(page_title="Jobsuche", page_icon="🔍", layout="wide")
@@ -38,7 +38,8 @@ except Exception as e:
     nur_vollzeit_default = False
 
 st.markdown("""
-Suche nach Jobs in der [Jobbörse der Bundesagentur für Arbeit](https://www.arbeitsagentur.de/jobsuche/).
+Suche nach Jobs der Bundesagentur für Arbeit und GET IN IT. Ort und Umkreis
+kommen direkt aus deinem Profil, z. B. München + 30 km.
 """)
 
 # Suchformular
@@ -105,30 +106,32 @@ if submitted:
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        with ArbeitsagenturClient() as client:
-            for idx, begriff in enumerate(begriffe):
-                status_text.write(f"🔍 Suche '{begriff}' in '{wo or 'ganz Deutschland'}' ...")
+        quellen = profil.suche.quellen if "profil" in locals() else ["arbeitsagentur"]
+        for quelle in quellen:
+            with client_fuer(quelle) as client:
+                for idx, begriff in enumerate(begriffe):
+                    status_text.write(f"🔍 Suche bei {quelle}: '{begriff}' in '{wo or 'ganz Deutschland'}' ...")
 
-                try:
-                    jobs = client.hole_jobs(
-                        was=begriff,
-                        wo=(wo or "").strip(),
-                        umkreis=int(umkreis),
-                        veroeffentlicht_seit_tagen=int(tage),
-                        nur_vollzeit=nur_vollzeit,
-                        max_treffer=int(max_treffer),
-                        mit_details=mit_details,
-                    )
+                    try:
+                        jobs = client.hole_jobs(
+                            was=begriff,
+                            wo=(wo or "").strip(),
+                            umkreis=int(umkreis),
+                            veroeffentlicht_seit_tagen=int(tage),
+                            nur_vollzeit=nur_vollzeit,
+                            max_treffer=int(max_treffer),
+                            mit_details=mit_details,
+                        )
 
-                    status_text.write(f"✅ {len(jobs)} Treffer für '{begriff}'")
+                        status_text.write(f"✅ {len(jobs)} Treffer für '{begriff}' ({quelle})")
 
-                    for job in jobs:
-                        alle_jobs.setdefault(job.ref, job)
+                        for job in jobs:
+                            alle_jobs.setdefault(job.ref, job)
 
-                except Exception as e:
-                    st.error(f"❌ Fehler bei '{begriff}': {e}")
+                    except Exception as e:
+                        st.error(f"❌ Fehler bei {quelle}, '{begriff}': {e}")
 
-                progress_bar.progress((idx + 1) / len(begriffe))
+                    progress_bar.progress((idx + 1) / len(begriffe))
 
         progress_bar.empty()
         status_text.empty()

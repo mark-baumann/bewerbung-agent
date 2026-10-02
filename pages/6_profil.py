@@ -128,6 +128,12 @@ with tab2:
                 )
                 nur_vollzeit = st.checkbox("Nur Vollzeit", value=profil.suche.nur_vollzeit)
                 nur_homeoffice = st.checkbox("Nur Homeoffice", value=profil.suche.nur_homeoffice)
+                quellen = st.multiselect(
+                    "Jobquellen",
+                    options=["arbeitsagentur", "get-in-it"],
+                    default=profil.suche.quellen,
+                    help="Die Suche verwendet bei einem Profilort wie München jede gewählte Quelle.",
+                )
 
             st.markdown("### 📊 Bewertungsparameter")
 
@@ -168,6 +174,7 @@ with tab2:
             profil.suche.max_pro_query = int(max_pro_query)
             profil.suche.nur_vollzeit = nur_vollzeit
             profil.suche.nur_homeoffice = nur_homeoffice
+            profil.suche.quellen = quellen or ["arbeitsagentur"]
             profil.bewertung.skills = [s.strip() for s in skills_text.splitlines() if s.strip()]
             profil.bewertung.wunsch = [w.strip() for w in wunsch_text.splitlines() if w.strip()]
             profil.bewertung.ausschluss = [a.strip() for a in ausschluss_text.splitlines() if a.strip()]
@@ -275,9 +282,10 @@ with tab3:
     st.markdown("### 🔑 API-Konfiguration")
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "")
     ollama_key = os.getenv("OLLAMA_API_KEY", "")
-    if anthropic_key or ollama_key:
-        st.success("✅ LLM-API-Key ist gesetzt (ANTHROPIC_API_KEY oder OLLAMA_API_KEY aus .env)")
+    if anthropic_key or openai_key or ollama_key:
+        st.success("✅ LLM-API-Key ist gesetzt (Anthropic, OpenAI oder Ollama aus .env)")
         if anthropic_key:
             st.code(f"ANTHROPIC_API_KEY={anthropic_key[:10]}...{anthropic_key[-4:]}", language=None)
         if ollama_key:
@@ -286,12 +294,19 @@ with tab3:
                 f"MODEL={os.getenv('OLLAMA_MODEL', 'glm-5.3-flash')}",
                 language=None,
             )
+        if openai_key:
+            st.code(
+                f"OPENAI_API_KEY={openai_key[:10]}...{openai_key[-4:]} | "
+                f"MODEL={os.getenv('OPENAI_MODEL', 'gpt-4o-mini')}",
+                language=None,
+            )
     else:
         st.error("❌ Kein LLM-API-Key gesetzt")
         st.markdown("""
         **API-Key setzen:**
         ```bash
         echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+        # oder ChatGPT / OpenAI: OPENAI_API_KEY=sk-... in der Deployment-.env
         # oder zentral (alle Dienste): OLLAMA_API_KEY=... in der Deployment-.env
         ```
         Ohne API-Key funktioniert nur die heuristische Bewertung, nicht die LLM-basierte.
@@ -308,6 +323,7 @@ with tab3:
         )
         model_options = [
             "claude-opus-5", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-latest",
+            "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini",
             "glm-5.3-flash", "glm-5.1", "deepseek-v4.1-flash", "qwen3:latest",
         ]
         if env_default_model not in model_options:

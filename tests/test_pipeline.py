@@ -11,6 +11,7 @@ from bewerbungsagent.sources.arbeitsagentur import (
     _job_aus_treffer,
     suchparameter,
 )
+from bewerbungsagent.sources.get_in_it import _jobs_aus_html
 
 BEISPIEL_TREFFER = {
     "beruf": "Softwareentwickler/in",
@@ -128,6 +129,15 @@ def test_treffer_normalisierung():
     # Die API liefert den String "null" statt eines fehlenden Werts.
     assert job.plz == "10785"
     assert job.bewerbungs_url == "https://karriere.beispiel.de/job/42"
+
+
+def test_get_in_it_json_ld_wird_normalisiert():
+    html = '''<script type="application/ld+json">{"@context":"https://schema.org", "@type":"JobPosting", "title":"Python Engineer", "url":"https://www.get-in-it.de/jobs/python-engineer", "datePosted":"2026-10-01", "hiringOrganization":{"name":"Beispiel GmbH"}, "jobLocation":{"address":{"addressLocality":"München", "postalCode":"80331"}}}</script>'''
+    jobs = _jobs_aus_html(html)
+    assert len(jobs) == 1
+    assert jobs[0].quelle == "get-in-it"
+    assert jobs[0].ort == "München"
+    assert jobs[0].ref.startswith("get-in-it:")
 
 
 def test_detail_anreicherung():
