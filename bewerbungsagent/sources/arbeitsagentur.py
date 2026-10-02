@@ -189,6 +189,7 @@ def _job_aus_treffer(roh: dict[str, Any]) -> Job:
         ref=ref,
         titel=(roh.get("stellenangebotsTitel") or roh.get("titel") or roh.get("hauptberuf") or roh.get("beruf") or "").strip(),
         arbeitgeber=(roh.get("firma") or roh.get("arbeitgeber") or "").strip(),
+        quelle="arbeitsagentur",
         beruf=roh.get("hauptberuf") or roh.get("beruf"),
         ort=_saeubern(adresse.get("ort") or ort.get("ort")),
         plz=_saeubern(adresse.get("plz") or ort.get("plz")),

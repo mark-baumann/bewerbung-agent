@@ -7,8 +7,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import lade_profil
 from bewerbungsagent.db import STANDARD_DB, Speicher
-from bewerbungsagent.sources import client_fuer
 from bewerbungsagent.models import Job
+from bewerbungsagent.jobsuche import hole_jobs
 
 st.set_page_config(page_title="Jobsuche", page_icon="🔍", layout="wide")
 
@@ -103,21 +103,24 @@ if submitted:
         st.error("Bitte mindestens einen Suchbegriff eingeben!")
     else:
         alle_jobs = {}
+        neu = aktualisiert = 0
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         quellen = profil.suche.quellen if "profil" in locals() else ["arbeitsagentur"]
-        for quelle in quellen:
-            with client_fuer(quelle) as client:
+        with Speicher(str(db_path)) as db:
+            for quelle in quellen:
                 for idx, begriff in enumerate(begriffe):
                     status_text.write(f"🔍 Suche bei {quelle}: '{begriff}' in '{wo or 'ganz Deutschland'}' ...")
 
                     try:
-                        jobs = client.hole_jobs(
-                            was=begriff,
+                        jobs, neue, aktualisierte = hole_jobs(
+                            db,
+                            quelle=quelle,
+                            suchbegriff=begriff,
                             wo=(wo or "").strip(),
                             umkreis=int(umkreis),
-                            veroeffentlicht_seit_tagen=int(tage),
+                            tage=int(tage),
                             nur_vollzeit=nur_vollzeit,
                             max_treffer=int(max_treffer),
                             mit_details=mit_details,
@@ -127,6 +130,8 @@ if submitted:
 
                         for job in jobs:
                             alle_jobs.setdefault(job.ref, job)
+                        neu += neue
+                        aktualisiert += aktualisierte
 
                     except Exception as e:
                         st.error(f"❌ Fehler bei {quelle}, '{begriff}': {e}")
@@ -139,12 +144,7 @@ if submitted:
         if alle_jobs:
             st.success(f"✅ {len(alle_jobs)} eindeutige Jobs gefunden!")
 
-            # In Datenbank speichern
-            with st.spinner("Speichere Jobs in Datenbank..."):
-                with Speicher(str(db_path)) as db:
-                    neu, aktualisiert = db.speichere_jobs(alle_jobs.values())
-
-                st.info(f"💾 {neu} neue und {aktualisiert} aktualisierte Jobs gespeichert.")
+            st.info(f"💾 {neu} neue und {aktualisiert} aktualisierte Jobs gespeichert.")
 
             # Vorschau der Ergebnisse
             st.subheader("📋 Gefundene Jobs (Vorschau)")
@@ -155,6 +155,7 @@ if submitted:
                     with col1:
                         st.write(f"📍 **Ort:** {job.ort or 'Unbekannt'}")
                         st.write(f"🏢 **Arbeitgeber:** {job.arbeitgeber}")
+                        st.write(f"🗃️ **Quelle:** {job.quelle or 'Unbekannt'}")
                         st.write(f"📅 **Veröffentlicht:** {job.veroeffentlicht or 'Unbekannt'}")
                     with col2:
                         st.write(f"💼 **Vertrag:** {job.befristung or 'Unbefristet'}")

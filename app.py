@@ -1,5 +1,6 @@
 """Startseite (Root) des Bewerbungsagenten – zeigt das Dashboard."""
 
+import json
 import streamlit as st
 from pathlib import Path
 import sys
@@ -66,6 +67,14 @@ try:
                 erfolgreiche = sum(1 for b in alle_bewerbungen if b["status"] == "abgeschickt")
                 st.metric("Abgeschickt", erfolgreiche)
 
+            letzte_abrufe = db.letzte_abrufe(limit=1)
+            if letzte_abrufe:
+                abruf = letzte_abrufe[0]
+                st.caption(
+                    f"Letzter Datenabruf: {abruf['gestartet_am']} · "
+                    f"{abruf['quelle']} · {abruf['status']}"
+                )
+
             st.markdown("---")
 
             # Letzte Aktivitäten
@@ -79,6 +88,7 @@ try:
                     with st.expander(f"**{job.titel}** - {job.arbeitgeber}"):
                         st.write(f"📍 {job.ort or 'Unbekannt'}")
                         st.write(f"📅 {job.veroeffentlicht or 'Unbekannt'}")
+                        st.write(f"🗃️ Quelle: **{job.quelle or 'Unbekannt'}** · gespeichert am {job.geholt_am}")
                         st.write(f"⭐ {score_text}")
                         if job.anzeige_url:
                             st.markdown(f"[🔗 Zum Jobangebot]({job.anzeige_url})")
@@ -88,6 +98,25 @@ try:
                 st.info("Noch keine Jobs gefunden. Starte eine Suche!")
 
             st.markdown("---")
+
+            st.subheader("🔄 Datenherkunft & Abrufverlauf")
+            abrufe = db.letzte_abrufe(limit=10)
+            if abrufe:
+                for abruf in abrufe:
+                    ergebnis = (
+                        f"{abruf['treffer']} Treffer · {abruf['neu']} neu · "
+                        f"{abruf['aktualisiert']} aktualisiert"
+                    )
+                    with st.expander(
+                        f"{abruf['gestartet_am']} · {abruf['quelle']} · "
+                        f"{abruf['suchbegriff']} · {abruf['status']}"
+                    ):
+                        st.write(ergebnis)
+                        st.json(json.loads(abruf["parameter"]))
+                        if abruf["fehler"]:
+                            st.error(abruf["fehler"])
+            else:
+                st.info("Noch keine Abrufe protokolliert. Starte eine Jobsuche oder richte Cron ein.")
 
             # Quick Actions
             st.subheader("🚀 Schnellaktionen")

@@ -17,8 +17,9 @@ from .anschreiben import erzeuge as erzeuge_anschreiben
 from .config import lade_profil
 from .db import Speicher
 from .models import Application, Job, Score
+from .jobsuche import hole_jobs
 from .scoring import llm as llm_modul
-from .sources import QUELLEN, client_fuer
+from .sources import QUELLEN
 
 console = Console()
 
@@ -34,22 +35,17 @@ def cmd_suchen(args: argparse.Namespace) -> int:
     ort = args.wo if args.wo is not None else s.wo
 
     alle: dict[str, Job] = {}
+    neu = aktualisiert = 0
     quellen = args.quelle or s.quellen
-    for quelle in quellen:
-        try:
-            client = client_fuer(quelle)
-        except ValueError as e:
-            console.print(f"[red]{e}[/]")
-            continue
-        with client:
+    with Speicher(args.db) as db:
+        for quelle in quellen:
             for begriff in begriffe:
                 console.print(f"[cyan]Suche ({quelle})[/] '{begriff}' in '{ort or 'ganz DE'}' ...")
                 try:
-                    jobs = client.hole_jobs(
-                        was=begriff,
-                        wo=ort,
+                    jobs, neue, aktualisierte = hole_jobs(
+                        db, quelle=quelle, suchbegriff=begriff, wo=ort,
                         umkreis=args.umkreis or s.umkreis,
-                        veroeffentlicht_seit_tagen=args.tage or s.veroeffentlicht_seit_tagen,
+                        tage=args.tage or s.veroeffentlicht_seit_tagen,
                         nur_vollzeit=s.nur_vollzeit,
                         max_treffer=args.limit or s.max_pro_query,
                         mit_details=not args.ohne_details,
@@ -58,6 +54,8 @@ def cmd_suchen(args: argparse.Namespace) -> int:
                     console.print(f"[red]Suche fehlgeschlagen ({quelle}):[/] {e}")
                     continue
                 console.print(f"  {len(jobs)} Treffer")
+                neu += neue
+                aktualisiert += aktualisierte
                 for j in jobs:
                     alle.setdefault(j.ref, j)
 
@@ -65,9 +63,7 @@ def cmd_suchen(args: argparse.Namespace) -> int:
         console.print("[yellow]Keine Stellen gefunden.[/]")
         return 1
 
-    with Speicher(args.db) as db:
-        neu, akt = db.speichere_jobs(alle.values())
-    console.print(f"[green]{neu} neue[/] und {akt} aktualisierte Stellen gespeichert "
+    console.print(f"[green]{neu} neue[/] und {aktualisiert} aktualisierte Stellen gespeichert "
                   f"({len(alle)} eindeutige Treffer).")
     return 0
 
@@ -369,11 +365,16 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
 
 def cmd_cron(args: argparse.Namespace) -> int:
     """Gibt eine sichere, installierbare Cron-Zeile aus (keine Crontab-Aenderung)."""
+    profil_obj = lade_profil(args.profil)
+    if not profil_obj.automatisierung.aktiv:
+        console.print("[yellow]Automatisierung ist im Profil deaktiviert (automatisierung.aktiv: false).[/]")
+        return 1
     executable = args.executable or "bewerbungsagent"
     profil = f" --profil {args.profil}" if args.profil else ""
     db = f" --db {args.db}" if args.db else ""
     console.print("Cron installiert sich nicht selbst. Fuege diese Zeile mit `crontab -e` ein:")
-    console.print(f"{args.zeitplan} {executable}{profil}{db} pipeline --offen >> daten/cron.log 2>&1")
+    zeitplan = args.zeitplan or profil_obj.automatisierung.cron
+    console.print(f"{zeitplan} {executable}{profil}{db} pipeline --offen >> daten/cron.log 2>&1")
     return 0
 
 
@@ -458,7 +459,7 @@ def build_parser() -> argparse.ArgumentParser:
     pl.set_defaults(func=cmd_pipeline)
 
     cr = sub.add_parser("cron", help="Cron-Zeile fuer die regelmaessige Pipeline ausgeben")
-    cr.add_argument("--zeitplan", default="0 8 * * *", help="Cron-Ausdruck (Standard: taeglich 08:00)")
+    cr.add_argument("--zeitplan", default=None, help="Cron-Ausdruck (Standard: automatisierung.cron im Profil)")
     cr.add_argument("--executable", default="bewerbungsagent", help="Absoluter Pfad zur CLI, falls noetig")
     cr.set_defaults(func=cmd_cron)
     return p
