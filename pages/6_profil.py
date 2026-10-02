@@ -1,6 +1,7 @@
 """Profil - Persönliche Daten, Sucheinstellungen und Unterlagen verwalten."""
 
 import os
+import smtplib
 import sys
 from pathlib import Path
 
@@ -9,20 +10,36 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import (
+    STANDARD_SUCHORT,
+    SMTPSettings,
+    ensure_seeded_profil,
     lade_profil,
+    profil_ist_beispiel,
     speichere_profil,
     ermittle_profil_pfad,
     erstelle_profil,
 )
-
-st.set_page_config(page_title="Profil", page_icon="👤", layout="wide")
+from bewerbungsagent.db import Speicher
+from bewerbungsagent.mailer import passwort_gesetzt, speichere_passwort, teste_verbindung
 
 st.title("👤 Profil")
+st.caption(f"Dein Profil wird dauerhaft in `{ermittle_profil_pfad()}` gespeichert.")
 
 st.markdown("""
-Verwalte dein Bewerbungsprofil, Sucheinstellungen und lade deine Unterlagen
-(Lebenslauf, Zeugnisse, etc.) direkt hier hoch.
+Ergänze deine echten Angaben und Unterlagen. Daraus entstehen passende Suchläufe;
+neue Treffer erscheinen anschließend hier im Postfach.
 """)
+
+try:
+    current_profile = ensure_seeded_profil()
+    if profil_ist_beispiel(current_profile):
+        st.warning(
+            "Dieses Profil enthält noch automatisch erzeugte Beispieldaten. Ersetze sie im Tab "
+            "„Persönliche Daten“ und lade deinen echten Lebenslauf hoch; bis dahin sind automatische Suchen pausiert.",
+            icon="⚠️",
+        )
+except (OSError, ValueError) as exc:
+    st.error(f"Profil konnte nicht geladen werden: {exc}")
 
 # Profil-Pfad
 profil_pfad = ermittle_profil_pfad()
@@ -32,11 +49,78 @@ unterlagen_dir.mkdir(exist_ok=True)
 
 
 def _lade():
-    return lade_profil(profil_pfad)
+    return ensure_seeded_profil(profil_pfad)
+
+
+def get_db_path() -> Path:
+    db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return db_path
+
+
+def render_postfach(profil):
+    ort = profil.suche.wo.strip() or profil.person.ort.strip() or STANDARD_SUCHORT
+    searches = []
+    if ort:
+        for term in profil.suche.was[:3]:
+            searches.append(
+                {
+                    "name": f"{term} @ {ort}",
+                    "query": term,
+                    "location": ort,
+                    "radius_km": profil.suche.umkreis,
+                    "published_days": profil.suche.veroeffentlicht_seit_tagen,
+                    "only_full_time": int(profil.suche.nur_vollzeit),
+                    "interval_minutes": 360,
+                }
+            )
+
+    with Speicher(get_db_path()) as db:
+        db.ensure_automated_searches(searches)
+        st.markdown("### 🕒 Automatische Suchläufe")
+        if not ort or not profil.suche.was:
+            st.info("Trage zuerst mindestens einen Suchbegriff und deinen Wohn-/Suchort ein. Bis dahin laufen keine automatischen Suchen.")
+        auto_rows = db.automated_searches()
+        active_rows = [row for row in auto_rows if row["enabled"]]
+        if active_rows:
+            st.caption("Die Suche wird alle 6 Stunden geprüft, solange die App läuft.")
+            for row in active_rows:
+                st.write(
+                    f"- **{row['name']}** · Ort: {row['location'] or 'Deutschland'} · alle {row['interval_minutes']} min · "
+                    f"letzter Lauf: {row['last_run_at'] or 'nie'}"
+                )
+        else:
+            st.info("Noch keine automatischen Suchläufe angelegt.")
+
+        st.markdown("### 📥 Postfach")
+        inbox = db.inbox(unread_only=False)
+        if inbox:
+            for item in inbox[:10]:
+                job = db.job(item["ref"])
+                source = (
+                    f"{job.quelle_icon} {job.quelle_label}"
+                    if job is not None
+                    else "🔎 Quelle unbekannt"
+                )
+                st.markdown(
+                    f"{source}  \n**{item['title']}** · {item['employer']}  \n"
+                    f"📍 {item['location'] or 'nicht angegeben'} · "
+                    f"Passung: {item['score'] if item['score'] is not None else '–'}  \n"
+                    f"Abfrage: `{item['query']}` · Status: `{item['status']}`"
+                )
+                if item.get("detail_url"):
+                    st.markdown(f"[Job öffnen]({item['detail_url']})")
+                if st.button(f"Als gelesen markieren #{item['id']}", key=f"read_{item['id']}"):
+                    db.mark_inbox_read(item["id"])
+                    st.rerun()
+        else:
+            st.info("Noch keine passenden Jobs im Postfach. Die nächste automatische Suche füllt es auf.")
 
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["👤 Persönliche Daten", "🔍 Sucheinstellungen", "📄 Unterlagen"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["👤 Person", "🔍 Suche", "📄 Unterlagen", "📬 Postfach", "✉️ E-Mail"]
+)
 
 # Tab 1: Persönliche Daten
 with tab1:
@@ -92,11 +176,12 @@ with tab1:
             profil.person.github = github
             profil.kurzprofil = kurzprofil
             speichere_profil(profil, profil_pfad)
-            st.success("✅ Profil gespeichert!")
+            st.success(f"✅ Profil dauerhaft gespeichert: `{profil_pfad}`")
 
 # Tab 2: Sucheinstellungen
 with tab2:
     st.subheader("🔍 Sucheinstellungen")
+    st.caption("Lege fest, welche Stellen gesucht werden. Standard-Suchort ist München; du kannst ihn jederzeit ändern.")
 
     try:
         profil = _lade()
@@ -114,7 +199,11 @@ with tab2:
                     value="\n".join(profil.suche.was),
                     height=120,
                 )
-                wo = st.text_input("Ort", value=profil.suche.wo or "")
+                wo = st.text_input(
+                    "Suchort",
+                    value=profil.suche.wo or profil.person.ort or STANDARD_SUCHORT,
+                    help="Standard: München. Der Suchort muss nicht deinem Wohnort entsprechen.",
+                )
                 umkreis = st.slider("Umkreis (km)", 0, 200, profil.suche.umkreis)
 
             with col2:
@@ -287,6 +376,111 @@ with tab3:
         ```
         Ohne API-Key funktioniert nur die heuristische Bewertung, nicht die LLM-basierte.
         """)
+
+# Tab 4: Postfach und automatische Suchen
+with tab4:
+    st.subheader("📬 Postfach & automatische Suche")
+    try:
+        profil = _lade()
+    except Exception:
+        profil = None
+
+    if profil is None:
+        st.warning("Noch kein Profil vorhanden. Bitte erst anlegen.")
+    else:
+        render_postfach(profil)
+
+# Tab 5: SMTP-Konfiguration
+with tab5:
+    st.subheader("✉️ Bewerbungen per E-Mail versenden")
+    st.caption(
+        "Serverdaten werden mit deinem Profil gespeichert. Das Passwort bleibt getrennt davon "
+        "im Windows-Schlüsselbund und wird nicht in YAML oder SQLite geschrieben."
+    )
+    try:
+        profil = _lade()
+    except (OSError, ValueError) as exc:
+        st.error(f"Profil konnte nicht geladen werden: {exc}")
+        profil = None
+
+    if profil is not None:
+        smtp = profil.smtp
+        with st.form("smtp_settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                smtp_host = st.text_input(
+                    "SMTP-Server",
+                    value=smtp.host,
+                    placeholder="smtp.gmail.com",
+                )
+                smtp_port = st.number_input(
+                    "Port",
+                    min_value=1,
+                    max_value=65535,
+                    value=int(smtp.port),
+                )
+                smtp_username = st.text_input("SMTP-Benutzername", value=smtp.username)
+            with col2:
+                smtp_sender = st.text_input(
+                    "Absender-E-Mail",
+                    value=smtp.sender_email or profil.person.email,
+                    placeholder="dein.name@example.com",
+                )
+                security = st.selectbox(
+                    "Verschlüsselung",
+                    ["STARTTLS (empfohlen)", "SSL/TLS", "Keine (nicht empfohlen)"],
+                    index=1 if smtp.use_ssl else (0 if smtp.starttls else 2),
+                )
+                smtp_password = st.text_input(
+                    "SMTP-Passwort oder App-Passwort",
+                    type="password",
+                    help="Leer lassen, wenn das gespeicherte Passwort unverändert bleiben soll.",
+                )
+            save_smtp = st.form_submit_button("💾 E-Mail-Einstellungen speichern", type="primary")
+
+        if save_smtp:
+            profil.smtp = SMTPSettings(
+                host=smtp_host.strip(),
+                port=int(smtp_port),
+                username=smtp_username.strip(),
+                sender_email=smtp_sender.strip(),
+                starttls=security == "STARTTLS (empfohlen)",
+                use_ssl=security == "SSL/TLS",
+            )
+            try:
+                speichere_profil(profil, profil_pfad)
+                if smtp_password:
+                    speichere_passwort(profil, smtp_password)
+                smtp = profil.smtp
+                st.success(f"E-Mail-Einstellungen gespeichert. Profil: `{profil_pfad}`")
+            except (OSError, RuntimeError, ValueError) as exc:
+                st.error(f"Einstellungen konnten nicht vollständig gespeichert werden: {exc}")
+
+        try:
+            has_password = not smtp.username.strip() or passwort_gesetzt(profil)
+        except RuntimeError as exc:
+            has_password = False
+            st.error(f"Windows-Schlüsselbund ist nicht verfügbar: {exc}")
+
+        if smtp.host and smtp.sender_email:
+            if not smtp.username.strip():
+                auth_status = "ohne SMTP-Anmeldung"
+            else:
+                auth_status = "Passwort sicher gespeichert" if has_password else "Passwort fehlt noch"
+            st.success(f"SMTP-Daten hinterlegt · {auth_status}")
+        else:
+            st.info("Hinterlege deine SMTP-Serverdaten und speichere sie zuerst.")
+
+        if st.button(
+            "🔌 Verbindung testen",
+            disabled=not (smtp.host and smtp.sender_email),
+            use_container_width=True,
+        ):
+            try:
+                teste_verbindung(profil)
+                st.success("SMTP-Verbindung und Anmeldung erfolgreich. Es wurde keine E-Mail versendet.")
+            except (OSError, RuntimeError, ValueError, smtplib.SMTPException) as exc:
+                st.error(f"SMTP-Verbindung fehlgeschlagen: {exc}")
 
 # Footer
 st.markdown("---")

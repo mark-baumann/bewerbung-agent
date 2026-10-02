@@ -2,7 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from bewerbungsagent.config import lade_profil
+from bewerbungsagent import mailer
+from bewerbungsagent.config import (
+    STANDARD_SUCHORT,
+    SMTPSettings,
+    Suche,
+    ensure_seeded_profil,
+    lade_profil,
+    speichere_profil,
+)
 from bewerbungsagent.db import Speicher
 from bewerbungsagent.models import Application, Job
 from bewerbungsagent.scoring import heuristik, sentiment
@@ -164,6 +172,150 @@ def test_erlaubte_domains_bleiben_eng():
     assert "*.beispiel.de" in domains
     assert "arbeitsagentur.de" in domains
     assert not any("boese" in d for d in domains)
+
+
+def test_seeded_profile_erfindet_keine_personendaten(tmp_path):
+    profile = ensure_seeded_profil(tmp_path / "profil.yaml")
+    assert profile.person.name == ""
+    assert profile.person.ort == ""
+    assert profile.suche.was == []
+    assert profile.unterlagen.lebenslauf == ""
+
+
+def test_standard_suchort_ist_muenchen():
+    assert STANDARD_SUCHORT == "München"
+    assert Suche().wo == "München"
+
+
+def test_job_zeigt_quellenname_und_icon():
+    job = Job(ref="source", titel="Engineer", arbeitgeber="Beispiel")
+    assert job.quelle_label == "Bundesagentur für Arbeit"
+    assert job.quelle_icon == "🏛️"
+
+
+def test_smtp_versand_enthaelt_anschreiben_und_profilanhaenge(tmp_path, monkeypatch):
+    profile = profil(tmp_path)
+    profile.smtp = SMTPSettings(
+        host="smtp.example.test",
+        sender_email="bewerber@example.test",
+    )
+    resume = tmp_path / "lebenslauf.pdf"
+    resume.write_bytes(b"resume")
+    reference = tmp_path / "zeugnis.pdf"
+    reference.write_bytes(b"reference")
+    profile.unterlagen.lebenslauf = str(resume)
+    profile.unterlagen.zeugnisse = [str(reference)]
+
+    class FakeSMTP:
+        instance = None
+
+        def __init__(self, *args, **kwargs):
+            self.__class__.instance = self
+
+        def ehlo(self):
+            pass
+
+        def starttls(self, **kwargs):
+            pass
+
+        def send_message(self, message):
+            self.message = message
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(mailer, "_smtp_passwort", lambda _profile: None)
+
+    mailer.sende_bewerbung(
+        profile,
+        Job(ref="job-1", titel="Python Entwickler", arbeitgeber="Beispiel GmbH"),
+        "jobs@example.test",
+        "Guten Tag,\n\nhiermit bewerbe ich mich.",
+    )
+
+    message = FakeSMTP.instance.message
+    assert message["To"] == "jobs@example.test"
+    assert "hiermit bewerbe ich mich" in message.get_body().get_content()
+    assert {part.get_filename() for part in message.iter_attachments()} == {
+        "lebenslauf.pdf",
+        "zeugnis.pdf",
+    }
+    assert FakeSMTP.instance.closed
+
+
+def test_smtp_rejects_invalid_recipient_before_connecting(tmp_path, monkeypatch):
+    profile = profil(tmp_path)
+    profile.smtp = SMTPSettings(
+        host="smtp.example.test",
+        sender_email="bewerber@example.test",
+    )
+    monkeypatch.setattr(
+        mailer.smtplib,
+        "SMTP",
+        lambda *args, **kwargs: pytest.fail("SMTP must not be opened for an invalid recipient"),
+    )
+
+    with pytest.raises(ValueError, match="Empfänger"):
+        mailer.sende_bewerbung(
+            profile,
+            Job(ref="job-1", titel="Python Entwickler", arbeitgeber="Beispiel GmbH"),
+            "not-an-email",
+            "Anschreiben",
+        )
+
+
+def test_smtp_settings_are_persisted_without_password(tmp_path):
+    profile_path = tmp_path / "profil.yaml"
+    profile = ensure_seeded_profil(profile_path)
+    profile.smtp = SMTPSettings(
+        host="smtp.example.test",
+        port=465,
+        username="bewerber@example.test",
+        sender_email="bewerber@example.test",
+        starttls=False,
+        use_ssl=True,
+    )
+
+    speichere_profil(profile, profile_path)
+    loaded = lade_profil(profile_path)
+    contents = profile_path.read_text(encoding="utf-8")
+
+    assert loaded.smtp == profile.smtp
+    assert "password" not in contents.lower()
+
+
+def test_automated_searches_and_inbox_roundtrip(tmp_path):
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        db.ensure_automated_searches([
+            {"name": "Python @ Berlin", "query": "Python Developer", "location": "Berlin", "radius_km": 25, "interval_minutes": 180}
+        ])
+        rows = db.automated_searches()
+        assert rows[0]["query"] == "Python Developer"
+
+        db.ensure_automated_searches([
+            {"name": "Python @ Hamburg", "query": "Python Developer", "location": "Hamburg", "radius_km": 40, "interval_minutes": 360}
+        ])
+        rows = db.automated_searches()
+        active_rows = [row for row in rows if row["enabled"]]
+        assert len(active_rows) == 1
+        assert active_rows[0]["location"] == "Hamburg"
+
+        job = Job(
+            ref="A-42",
+            titel="Python Developer",
+            arbeitgeber="ACME GmbH",
+            ort="Berlin",
+            detail_url="https://example.de/jobs/A-42",
+        )
+        item = db.add_inbox_item(job, "Python Developer", score=88.0)
+        assert item["ref"] == "A-42"
+        assert db.inbox()[0]["title"] == "Python Developer"
+
+        db.record_search_run(rows[0]["id"])
+        updated = db.automated_searches()[0]
+        assert updated["last_run_at"]
+        assert updated["next_run_at"]
 
 
 # --------------------------------------------------------------------------- #

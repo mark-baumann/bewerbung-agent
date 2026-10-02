@@ -5,12 +5,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from bewerbungsagent.config import lade_profil
+from bewerbungsagent.config import STANDARD_SUCHORT, lade_profil
 from bewerbungsagent.db import Speicher
 from bewerbungsagent.sources.arbeitsagentur import ArbeitsagenturClient
 from bewerbungsagent.models import Job
-
-st.set_page_config(page_title="Jobsuche", page_icon="🔍", layout="wide")
 
 st.title("🔍 Jobsuche")
 
@@ -20,8 +18,8 @@ db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
 # Lade Profil für Defaults
 try:
     profil = lade_profil()
-    default_begriffe = profil.suche.was
-    default_ort = profil.suche.wo or ""
+    default_begriffe = profil.suche.was or ["Python Developer"]
+    default_ort = profil.suche.wo.strip() or profil.person.ort.strip() or STANDARD_SUCHORT
     default_umkreis = profil.suche.umkreis
     default_tage = profil.suche.veroeffentlicht_seit_tagen
     default_max = profil.suche.max_pro_query
@@ -30,25 +28,31 @@ except Exception as e:
     st.warning(f"Profil konnte nicht geladen werden: {e}")
     st.page_link("pages/6_profil.py", label="👤 Profil jetzt über die UI einrichten", icon="👤")
     default_begriffe = ["Python Developer"]
-    default_ort = ""
+    default_ort = STANDARD_SUCHORT
     default_umkreis = 50
     default_tage = 7
     default_max = 50
     nur_vollzeit_default = False
 
-st.markdown("""
-Suche nach Jobs in der [Jobbörse der Bundesagentur für Arbeit](https://www.arbeitsagentur.de/jobsuche/).
-""")
+if st.session_state.get("_search_profile_location") != default_ort:
+    st.session_state["search_location"] = default_ort
+    st.session_state["_search_profile_location"] = default_ort
+
+st.markdown(
+    f"🏛️ **Quelle:** Bundesagentur für Arbeit · Suche nach Stellen im Raum **{default_ort}**. "
+    "Suchbegriffe kannst du kommasepariert anpassen."
+)
 
 # Suchformular
 with st.form("search_form"):
-    col1, col2 = st.columns(2)
+    st.caption("1 · Wonach suchst du?  2 · In welchem Umkreis?  3 · Suche starten")
+    col1, col2 = st.columns([3, 2])
 
     with col1:
         was_input = st.text_input(
-            "Was (Suchbegriffe, kommagetrennt)",
+            "Jobtitel oder Suchbegriffe",
             value=", ".join(default_begriffe),
-            help="z.B. 'Python Developer, Data Engineer'"
+            help="Mehrere Begriffe mit Komma trennen, z. B. Python Developer, Data Engineer"
         )
 
         umkreis = st.slider(
@@ -57,13 +61,13 @@ with st.form("search_form"):
             max_value=200,
             value=default_umkreis,
             step=10,
-            help="0 = bundesweit"
+            help="0 = bundesweite Suche"
         )
 
     with col2:
         wo = st.text_input(
-            "Wo (Ort)",
-            value=default_ort,
+            "Suchort",
+            key="search_location",
             help="z.B. 'Hamburg', 'Berlin' - leer für ganz Deutschland"
         )
 
@@ -146,7 +150,8 @@ if submitted:
             st.subheader("📋 Gefundene Jobs (Vorschau)")
 
             for idx, job in enumerate(list(alle_jobs.values())[:10]):
-                with st.expander(f"**{job.titel}** - {job.arbeitgeber}"):
+                with st.expander(f"{job.quelle_icon} {job.titel} · {job.arbeitgeber}"):
+                    st.caption(f"Quelle: {job.quelle_label}")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write(f"📍 **Ort:** {job.ort or 'Unbekannt'}")
@@ -156,6 +161,11 @@ if submitted:
                         st.write(f"💼 **Vertrag:** {job.befristung or 'Unbefristet'}")
                         st.write(f"🏠 **Homeoffice:** {'Ja' if job.homeoffice else 'Nein'}")
                         st.write(f"💰 **Vergütung:** {job.verguetung or 'Nicht angegeben'}")
+
+                    if job.bewerbungs_url:
+                        st.link_button("🔗 Stelle bei der Quelle öffnen", job.bewerbungs_url)
+                    else:
+                        st.caption("Für diese Stelle wurde kein externer Link bereitgestellt.")
 
                     if job.beschreibung:
                         st.markdown("**Beschreibung:**")

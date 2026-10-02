@@ -4,14 +4,14 @@ import streamlit as st
 from pathlib import Path
 import sys
 import asyncio
+import smtplib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import lade_profil
 from bewerbungsagent.db import Speicher
 from bewerbungsagent.anschreiben import erzeuge as erzeuge_anschreiben
 from bewerbungsagent.models import Application
-
-st.set_page_config(page_title="Bewerbungen", page_icon="✉️", layout="wide")
+from bewerbungsagent.mailer import sende_bewerbung
 
 st.title("✉️ Bewerbungen")
 
@@ -103,28 +103,35 @@ with tab1:
                     with st.spinner("Generiere Anschreiben..."):
                         try:
                             anschreiben = erzeuge_anschreiben(job, profil, score, mit_llm=mit_llm)
-
-                            st.success("✅ Anschreiben erfolgreich generiert!")
-
-                            # Anzeigen
-                            st.text_area(
-                                "Anschreiben",
-                                value=anschreiben,
-                                height=400,
-                                label_visibility="collapsed"
-                            )
+                            st.session_state["selected_job_ref"] = job_ref
+                            st.session_state["generiertes_anschreiben"] = anschreiben
+                            st.session_state["generiertes_anschreiben_ref"] = job_ref
 
                             # Optional speichern
                             if ausgabe_datei:
                                 Path(ausgabe_datei).write_text(anschreiben, encoding="utf-8")
                                 st.info(f"💾 Gespeichert als: {ausgabe_datei}")
 
-                            # In Session für nächsten Tab
-                            st.session_state["generiertes_anschreiben"] = anschreiben
-                            st.session_state["selected_job_ref"] = job_ref
-
                         except Exception as e:
                             st.error(f"❌ Fehler beim Generieren: {e}")
+
+                if st.session_state.get("generiertes_anschreiben_ref") == job_ref:
+                    letter_key = f"application_letter_{job_ref}"
+                    if letter_key not in st.session_state:
+                        st.session_state[letter_key] = st.session_state["generiertes_anschreiben"]
+                    st.success("Anschreiben bereit – bitte vor der Bewerbung prüfen und bearbeiten.")
+                    letter = st.text_area(
+                        "Anschreiben bearbeiten",
+                        key=letter_key,
+                        height=360,
+                    )
+                    st.session_state["generiertes_anschreiben"] = letter
+                    st.download_button(
+                        "⬇️ Anschreiben herunterladen",
+                        data=letter,
+                        file_name=f"anschreiben-{job.ref}.txt",
+                        mime="text/plain",
+                    )
 
 # Tab 2: Bewerbung abschicken
 with tab2:
@@ -143,6 +150,75 @@ with tab2:
 
                 if score:
                     st.metric("Score", f"{score.gesamt:.0f}")
+
+                st.markdown("### ✉️ Per E-Mail bewerben")
+                letter = (
+                    st.session_state.get("generiertes_anschreiben")
+                    if st.session_state.get("generiertes_anschreiben_ref") == job.ref
+                    else None
+                )
+                if not letter:
+                    st.info("Erstelle zuerst ein Anschreiben im vorherigen Schritt. Danach kannst du es hier prüfen und senden.")
+                else:
+                    st.caption(
+                        f"Absender: {profil.smtp.sender_email or 'SMTP-Absender noch nicht konfiguriert'} · "
+                        f"Anhänge: {', '.join(Path(path).name for path in profil.anhaenge()) or 'keine'}"
+                    )
+                    if profil.fehlende_anhaenge():
+                        st.warning(
+                            "Diese im Profil hinterlegten Dateien fehlen und werden nicht angehängt: "
+                            + ", ".join(profil.fehlende_anhaenge())
+                        )
+                    if not profil.smtp.host or not profil.smtp.sender_email:
+                        st.warning("Richte zuerst deinen SMTP-Server im Profil unter „E-Mail“ ein.")
+                        st.page_link("pages/6_profil.py", label="SMTP-Einstellungen öffnen", icon="⚙️")
+                    else:
+                        with st.form(f"send_application_{job.ref}"):
+                            recipient = st.text_input(
+                                "Empfängeradresse des Arbeitgebers",
+                                placeholder="bewerbungen@unternehmen.de",
+                                key=f"recipient_{job.ref}",
+                            )
+                            confirm_send = st.checkbox(
+                                "Ich habe Empfänger, Anschreiben und angehängte Unterlagen geprüft.",
+                                key=f"confirm_send_{job.ref}",
+                            )
+                            send_clicked = st.form_submit_button(
+                                "📨 Bewerbung jetzt per E-Mail senden",
+                                type="primary",
+                                use_container_width=True,
+                            )
+
+                        if send_clicked:
+                            if not confirm_send:
+                                st.error("Bitte bestätige zuerst die Prüfung der Empfängeradresse und Unterlagen.")
+                            else:
+                                try:
+                                    sende_bewerbung(profil, job, recipient, letter)
+                                except (OSError, RuntimeError, ValueError, smtplib.SMTPException) as exc:
+                                    db.speichere_bewerbung(
+                                        Application(
+                                            ref=job.ref,
+                                            status="fehlgeschlagen",
+                                            anschreiben=letter,
+                                            ergebnis=f"SMTP-Versand fehlgeschlagen: {exc}",
+                                            dry_run=False,
+                                            recipient_email=recipient,
+                                        )
+                                    )
+                                    st.error(f"Die E-Mail wurde nicht als erfolgreich verbucht: {exc}")
+                                else:
+                                    db.speichere_bewerbung(
+                                        Application(
+                                            ref=job.ref,
+                                            status="abgeschickt",
+                                            anschreiben=letter,
+                                            ergebnis="Bewerbung per SMTP-E-Mail versendet.",
+                                            dry_run=False,
+                                            recipient_email=recipient,
+                                        )
+                                    )
+                                    st.success(f"Bewerbung an {recipient} versendet und im Verlauf gespeichert.")
 
                 st.markdown("---")
 
@@ -211,6 +287,8 @@ with tab2:
                             st.write(f"**Schritte:** {bew['schritte']}")
                             if bew['url']:
                                 st.write(f"**URL:** {bew['url']}")
+                            if bew.get("recipient_email"):
+                                st.write(f"**Empfänger:** {bew['recipient_email']}")
                             if bew['ergebnis']:
                                 st.text_area("Ergebnis", value=bew['ergebnis'], disabled=True, height=100)
                 else:
@@ -283,6 +361,8 @@ with tab3:
 
                         if bew['ergebnis']:
                             st.text_area("Ergebnis", value=bew['ergebnis'], disabled=True, height=80, label_visibility="collapsed")
+                        if bew.get("recipient_email"):
+                            st.write(f"**E-Mail-Empfänger:** {bew['recipient_email']}")
 
             else:
                 st.info("📭 Noch keine Bewerbungen vorhanden. Starte deine erste Bewerbung!")

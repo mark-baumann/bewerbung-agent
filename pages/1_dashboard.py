@@ -1,84 +1,111 @@
-"""Dashboard - Übersicht über Jobs, Bewertungen und Bewerbungen."""
+"""Dashboard mit geführtem Bewerbungs-Workflow."""
+
+import sys
+from pathlib import Path
 
 import streamlit as st
-from pathlib import Path
-import sys
 
-# Import bewerbungsagent modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from bewerbungsagent.config import ensure_seeded_profil, profil_ist_beispiel
 from bewerbungsagent.db import Speicher
 
-st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
-
-st.title("📊 Dashboard")
-
-# Datenbank-Pfad
 db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
+db_path.parent.mkdir(parents=True, exist_ok=True)
+profil = ensure_seeded_profil()
 
-try:
-    with Speicher(str(db_path)) as db:
-        # Statistiken abrufen
-        alle_jobs = db.jobs(limit=10000)
-        jobs_mit_score = [j for j in alle_jobs if db.score(j.ref) is not None]
+st.title("🏠 Deine Jobsuche")
+st.caption("Ein klarer Ablauf: Profil vervollständigen, passende Stellen finden und Bewerbungen vorbereiten.")
 
-        # Metrics in Spalten
-        col1, col2, col3, col4 = st.columns(4)
+demo_profile = profil_ist_beispiel(profil)
+if demo_profile:
+    st.warning(
+        "Das gespeicherte Profil enthält noch Beispieldaten. Bitte ersetze sie durch deine echten Angaben "
+        "und lade deinen Lebenslauf hoch, bevor du Anschreiben erstellst oder dich bewirbst.",
+        icon="⚠️",
+    )
 
-        with col1:
-            st.metric("Gefundene Jobs", len(alle_jobs))
+cv_path = Path(profil.unterlagen.lebenslauf).expanduser() if profil.unterlagen.lebenslauf else None
+profile_steps = [
+    bool(profil.person.vorname.strip() and profil.person.nachname.strip()),
+    bool(profil.person.ort.strip() or profil.suche.wo.strip()),
+    bool(profil.suche.was),
+    bool(cv_path and cv_path.is_file()),
+]
+completed_steps = sum(profile_steps)
 
-        with col2:
-            st.metric("Bewertete Jobs", len(jobs_mit_score))
+with Speicher(db_path) as db:
+    stats = db.statistik()
+    inbox_items = db.inbox(unread_only=True)
+    inbox_sources = {}
+    for item in inbox_items:
+        job = db.job(item["ref"])
+        if job is not None:
+            inbox_sources[item["id"]] = (job.quelle_icon, job.quelle_label)
 
-        with col3:
-            # Count applications
-            alle_bewerbungen = []
-            for job in alle_jobs:
-                bewerbungen = db.bewerbungen(job.ref)
-                alle_bewerbungen.extend(bewerbungen)
-            st.metric("Bewerbungen", len(alle_bewerbungen))
+cols = st.columns(4)
+for col, label, value in zip(
+    cols,
+    ("Stellen gefunden", "Bewertet", "Neue Treffer", "Bewerbungen"),
+    (stats["jobs"], stats["bewertet"], len(inbox_items), stats["abgeschickt"] + stats["probelaeufe"]),
+):
+    col.metric(label, value)
 
-        with col4:
-            # Erfolgreiche Bewerbungen (abgeschickt)
-            erfolgreiche = sum(1 for b in alle_bewerbungen if b["status"] == "abgeschickt")
-            st.metric("Abgeschickt", erfolgreiche)
+st.markdown("---")
+st.subheader("Dein nächster Schritt")
+if completed_steps < len(profile_steps):
+    st.info(
+        f"Profil eingerichtet: **{completed_steps} von {len(profile_steps)} Angaben**. "
+        "Vervollständige dein Profil, damit die Suche Wohnort und Qualifikationen berücksichtigen kann."
+    )
+    if st.button("1 · Profil vervollständigen", type="primary", use_container_width=True):
+        st.switch_page("pages/6_profil.py")
+else:
+    st.success("Dein Profil hat die wichtigsten Angaben für eine personalisierte Suche.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("1 · Jobs suchen", type="primary", use_container_width=True):
+            st.switch_page("pages/2_jobsuche.py")
+    with col2:
+        if st.button("2 · Treffer bewerten", use_container_width=True):
+            st.switch_page("pages/3_bewertung.py")
+    with col3:
+        if st.button("3 · Postfach öffnen", use_container_width=True):
+            st.switch_page("pages/6_profil.py")
 
-        st.markdown("---")
+with st.expander("Profil-Check", expanded=completed_steps < len(profile_steps)):
+    labels = ("Name", "Wohnort", "Suchbegriffe", "Lebenslauf")
+    for label, complete in zip(labels, profile_steps):
+        st.write(f"{'✅' if complete else '⬜'} {label}")
 
-        # Letzte Aktivitäten
-        st.subheader("📝 Neueste Jobs")
-        neueste = sorted(alle_jobs, key=lambda j: j.geholt_am, reverse=True)[:5]
-        if neueste:
-            for job in neueste:
-                score = db.score(job.ref)
-                score_text = f"Score: {score.gesamt:.0f}" if score else "Nicht bewertet"
+st.markdown("---")
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.subheader("📬 Neue Treffer")
+    if inbox_items:
+        for item in inbox_items[:5]:
+            with st.container(border=True):
+                source_icon, source_label = inbox_sources.get(item["id"], ("🔎", "Quelle unbekannt"))
+                st.markdown(
+                    f"{source_icon} **{item['title'] or 'Stelle ohne Titel'}** · "
+                    f"{item['employer'] or 'Arbeitgeber unbekannt'}"
+                )
+                st.caption(
+                    f"{source_label}  ·  📍 {item['location'] or 'Ort nicht angegeben'}  ·  "
+                    f"Suchbegriff: {item['query']}  ·  "
+                    f"Score: {item['score'] if item['score'] is not None else 'noch nicht bewertet'}"
+                )
+                if item.get("detail_url"):
+                    st.link_button("Stelle ansehen", item["detail_url"])
+    else:
+        st.info("Noch keine neuen Treffer. Starte eine Suche oder prüfe deine Suchbegriffe und den Wohnort im Profil.")
 
-                with st.expander(f"**{job.titel}** - {job.arbeitgeber}"):
-                    st.write(f"📍 {job.ort or 'Unbekannt'}")
-                    st.write(f"📅 {job.veroeffentlicht or 'Unbekannt'}")
-                    st.write(f"⭐ {score_text}")
-                    st.write(f"🔗 Ref: `{job.ref}`")
-        else:
-            st.info("Noch keine Jobs gefunden. Starte eine Suche!")
-
-        st.markdown("---")
-
-        # Quick Actions
-        st.subheader("🚀 Schnellaktionen")
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button("🔍 Neue Jobsuche", use_container_width=True):
-                st.switch_page("pages/2_jobsuche.py")
-
-        with col2:
-            if st.button("📊 Jobs bewerten", use_container_width=True):
-                st.switch_page("pages/3_bewertung.py")
-
-        with col3:
-            if st.button("✉️ Bewerbungen", use_container_width=True):
-                st.switch_page("pages/5_bewerbungen.py")
-
-except Exception as e:
-    st.error(f"Fehler beim Laden der Datenbank: {e}")
-    st.info("Möglicherweise existiert die Datenbank noch nicht. Führe zuerst eine Jobsuche durch!")
+with col2:
+    st.subheader("Schnellzugriff")
+    if st.button("🔍 Jobsuche", use_container_width=True):
+        st.switch_page("pages/2_jobsuche.py")
+    if st.button("📊 Bewertungen", use_container_width=True):
+        st.switch_page("pages/3_bewertung.py")
+    if st.button("✉️ Bewerbungen", use_container_width=True):
+        st.switch_page("pages/5_bewerbungen.py")
+    if st.button("👤 Profil & Postfach", use_container_width=True):
+        st.switch_page("pages/6_profil.py")

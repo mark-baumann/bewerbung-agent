@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from .models import Application, Job, Score
 
 STANDARD_DB = Path("daten/bewerbungen.sqlite3")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -59,11 +65,45 @@ CREATE TABLE IF NOT EXISTS applications (
     ergebnis TEXT,
     schritte INTEGER,
     dry_run INTEGER,
+    recipient_email TEXT,
     zeitpunkt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS automated_searches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    location TEXT,
+    radius_km INTEGER DEFAULT 25,
+    published_days INTEGER DEFAULT 30,
+    only_full_time INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    interval_minutes INTEGER DEFAULT 360,
+    last_run_at TEXT,
+    next_run_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS inbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ref TEXT NOT NULL,
+    title TEXT,
+    employer TEXT,
+    location TEXT,
+    score REAL,
+    query TEXT,
+    status TEXT DEFAULT 'new',
+    is_read INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    matched_location TEXT,
+    detail_url TEXT,
+    UNIQUE(ref, query)
 );
 
 CREATE INDEX IF NOT EXISTS idx_scores_gesamt ON scores(gesamt DESC);
 CREATE INDEX IF NOT EXISTS idx_applications_ref ON applications(ref);
+CREATE INDEX IF NOT EXISTS idx_automated_searches_next_run ON automated_searches(next_run_at);
+CREATE INDEX IF NOT EXISTS idx_inbox_status ON inbox(status, is_read);
 """
 
 
@@ -75,6 +115,11 @@ class Speicher:
         self.con.row_factory = sqlite3.Row
         self.con.execute("PRAGMA foreign_keys = ON")
         self.con.executescript(SCHEMA)
+        application_columns = {
+            row["name"] for row in self.con.execute("PRAGMA table_info(applications)")
+        }
+        if "recipient_email" not in application_columns:
+            self.con.execute("ALTER TABLE applications ADD COLUMN recipient_email TEXT")
         self.con.commit()
 
     def close(self) -> None:
@@ -171,8 +216,8 @@ class Speicher:
         d = app.as_dict()
         d["dry_run"] = int(d["dry_run"])
         cur = self.con.execute(
-            "INSERT INTO applications (ref, status, url, anschreiben, ergebnis, schritte, dry_run, zeitpunkt) "
-            "VALUES (:ref, :status, :url, :anschreiben, :ergebnis, :schritte, :dry_run, :zeitpunkt)",
+            "INSERT INTO applications (ref, status, url, anschreiben, ergebnis, schritte, dry_run, recipient_email, zeitpunkt) "
+            "VALUES (:ref, :status, :url, :anschreiben, :ergebnis, :schritte, :dry_run, :recipient_email, :zeitpunkt)",
             d,
         )
         self.con.commit()
@@ -202,6 +247,125 @@ class Speicher:
             "abgeschickt": z("SELECT COUNT(*) FROM applications WHERE status='abgeschickt'"),
             "probelaeufe": z("SELECT COUNT(*) FROM applications WHERE status='probelauf'"),
         }
+
+    # ---------------- Automatische Suchen / Postfach ----------------
+
+    def ensure_automated_searches(self, queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Synchronisiert aktive Suchläufe mit den aktuellen Profileinstellungen."""
+        created: list[dict[str, Any]] = []
+        self.con.execute("UPDATE automated_searches SET enabled = 0")
+        for item in queries:
+            row = self.con.execute(
+                "SELECT id FROM automated_searches WHERE name = ? AND query = ?",
+                (item["name"], item["query"]),
+            ).fetchone()
+            if row is None:
+                now = _now_iso()
+                self.con.execute(
+                    "INSERT INTO automated_searches (name, query, location, radius_km, published_days, only_full_time, enabled, interval_minutes, next_run_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        item["name"],
+                        item["query"],
+                        item.get("location"),
+                        item.get("radius_km", 25),
+                        item.get("published_days", 30),
+                        int(item.get("only_full_time", 0)),
+                        1,
+                        item.get("interval_minutes", 360),
+                        now,
+                        now,
+                    ),
+                )
+                created.append(item)
+            else:
+                self.con.execute(
+                    "UPDATE automated_searches SET location = ?, radius_km = ?, published_days = ?, "
+                    "only_full_time = ?, enabled = 1, interval_minutes = ? WHERE id = ?",
+                    (
+                        item.get("location"),
+                        item.get("radius_km", 25),
+                        item.get("published_days", 30),
+                        int(item.get("only_full_time", 0)),
+                        item.get("interval_minutes", 360),
+                        row["id"],
+                    ),
+                )
+        self.con.commit()
+        return created
+
+    def automated_searches(self) -> list[dict[str, Any]]:
+        rows = self.con.execute(
+            "SELECT * FROM automated_searches ORDER BY enabled DESC, next_run_at ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_search_run(self, search_id: int) -> None:
+        now = _now_iso()
+        row = self.con.execute(
+            "SELECT interval_minutes FROM automated_searches WHERE id = ?",
+            (search_id,),
+        ).fetchone()
+        if row is None:
+            return
+        interval = int(row["interval_minutes"] or 360)
+        future = (datetime.now(timezone.utc).timestamp() + interval * 60)
+        future_iso = datetime.fromtimestamp(future, tz=timezone.utc).isoformat(timespec="seconds")
+        self.con.execute(
+            "UPDATE automated_searches SET last_run_at = ?, next_run_at = ? WHERE id = ?",
+            (now, future_iso, search_id),
+        )
+        self.con.commit()
+
+    def add_inbox_item(self, job: Job, query: str, score: float | None = None, status: str = "new") -> dict[str, Any]:
+        existing = self.con.execute(
+            "SELECT id FROM inbox WHERE ref = ? AND query = ?",
+            (job.ref, query),
+        ).fetchone()
+        if existing:
+            self.con.execute(
+                "UPDATE inbox SET title = ?, employer = ?, location = ?, score = ?, status = ?, detail_url = ?, matched_location = ?, is_read = 0 WHERE id = ?",
+                (job.titel, job.arbeitgeber, job.ort, score, status, job.bewerbungs_url, job.ort, existing["id"]),
+            )
+            self.con.commit()
+            row = self.con.execute("SELECT * FROM inbox WHERE id = ?", (existing["id"],)).fetchone()
+            return dict(row)
+
+        now = _now_iso()
+        cur = self.con.execute(
+            "INSERT INTO inbox (ref, title, employer, location, score, query, status, is_read, created_at, matched_location, detail_url) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            (
+                job.ref,
+                job.titel,
+                job.arbeitgeber,
+                job.ort,
+                score,
+                query,
+                status,
+                now,
+                job.ort,
+                job.bewerbungs_url,
+            ),
+        )
+        self.con.commit()
+        row = self.con.execute("SELECT * FROM inbox WHERE id = ?", (int(cur.lastrowid),)).fetchone()
+        return dict(row)
+
+    def inbox(self, unread_only: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM inbox"
+        params: list[Any] = []
+        if unread_only:
+            sql += " WHERE is_read = 0"
+        sql += " ORDER BY created_at DESC"
+        rows = self.con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_inbox_read(self, item_id: int) -> None:
+        self.con.execute("UPDATE inbox SET is_read = 1 WHERE id = ?", (item_id,))
+        self.con.commit()
+
+    def clear_inbox(self) -> None:
+        self.con.execute("DELETE FROM inbox")
+        self.con.commit()
 
 
 def _zu_job(row: sqlite3.Row) -> Job:

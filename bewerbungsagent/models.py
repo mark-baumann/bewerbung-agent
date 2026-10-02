@@ -38,6 +38,21 @@ class Job:
     geholt_am: str = field(default_factory=_now)
 
     @property
+    def quelle_label(self) -> str:
+        """Lesbarer Name der Jobquelle fuer Listen und Karten."""
+        labels = {
+            "arbeitsagentur": "Bundesagentur für Arbeit",
+        }
+        return labels.get(self.quelle, self.quelle.replace("_", " ").title() or "Unbekannte Quelle")
+
+    @property
+    def quelle_icon(self) -> str:
+        icons = {
+            "arbeitsagentur": "🏛️",
+        }
+        return icons.get(self.quelle, "🔎")
+
+    @property
     def bewerbungs_url(self) -> str | None:
         """URL, auf der die Bewerbung tatsaechlich abgegeben wird."""
         return self.externe_url or self.detail_url
@@ -86,6 +101,7 @@ class Application:
     ergebnis: str | None = None
     schritte: int = 0
     dry_run: bool = True
+    recipient_email: str | None = None
     zeitpunkt: str = field(default_factory=_now)
 
     def as_dict(self) -> dict[str, Any]:

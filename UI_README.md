@@ -27,9 +27,14 @@ playwright install chromium
 
 ```bash
 streamlit run app.py
+# oder mit explizitem Port:
+PORT=8502 streamlit run app.py
+# oder über das Start-Skript:
+PORT=8502 ./start-ui.sh
 ```
 
-Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
+Die Standard-Anwendung startet auf `http://localhost:8501`.
+Mit `PORT` lässt sich der Port flexibel wechseln, z. B. `http://localhost:8502`.
 
 ### Workflow
 

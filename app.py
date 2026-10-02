@@ -1,9 +1,19 @@
-"""Streamlit UI für den Bewerbungsagenten."""
+"""Streamlit UI und Navigation des Bewerbungsagenten."""
+
+import logging
+import sys
+from pathlib import Path
+from threading import Event, Thread
 
 import streamlit as st
-from pathlib import Path
 
-# Seitenkonfiguration
+sys.path.insert(0, str(Path(__file__).parent))
+
+from bewerbungsagent.config import STANDARD_SUCHORT, ensure_seeded_profil, profil_ist_beispiel
+from bewerbungsagent.db import Speicher
+
+log = logging.getLogger(__name__)
+
 st.set_page_config(
     page_title="Bewerbungsagent",
     page_icon="🤖",
@@ -11,108 +21,124 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-def main():
-    st.title("🤖 Bewerbungsagent")
 
-    st.markdown("""
-    # Willkommen beim Bewerbungsagenten!
-
-    Automatisierte Jobsuche und Bewerbung mit KI-Unterstützung.
-
-    ## 📋 Workflow
-
-    1. **🔍 Jobsuche** - Stellen von der Bundesagentur für Arbeit suchen
-    2. **📊 Bewertung** - Jobs automatisch bewerten (Skill-Match + Sentiment)
-    3. **✉️ Bewerbungen** - Anschreiben generieren und bewerben
-
-    ## 🚀 Los geht's
-
-    Wähle eine Seite aus der Navigation links oder nutze die Schnellzugriffe:
-    """)
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        if st.button("📊 Dashboard", use_container_width=True, type="primary"):
-            st.switch_page("pages/1_dashboard.py")
-
-    with col2:
-        if st.button("🔍 Jobsuche", use_container_width=True):
-            st.switch_page("pages/2_jobsuche.py")
-
-    with col3:
-        if st.button("✉️ Bewerbungen", use_container_width=True):
-            st.switch_page("pages/5_bewerbungen.py")
-
-    with col4:
-        if st.button("👤 Profil", use_container_width=True):
-            st.switch_page("pages/6_profil.py")
-
-    st.markdown("---")
-
-    # Info-Boxen
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.info("""
-        ### ℹ️ Erste Schritte
-
-        1. **Profil ausfüllen** unter 👤 Profil
-        2. **Unterlagen hochladen** (Lebenslauf, Zeugnisse)
-        3. **API-Key setzen** (`.env` Datei)
-        4. **Jobsuche starten** und Jobs finden
-        5. **Bewerten** und die besten Jobs ansehen
-        """)
-
-    with col2:
-        st.success("""
-        ### ✨ Features
-
-        - 🔍 Echte Jobs von der Arbeitsagentur
-        - 🤖 KI-gestützte Bewertung mit Claude
-        - 📊 Skill-Matching und Sentiment-Analyse
-        - ✉️ Automatische Anschreiben-Generierung
-        - 🌐 Browser-Automation (CLI)
-        - 💾 Persistent in SQLite
-        """)
-
-    st.markdown("---")
-
-    # Stats (wenn DB existiert)
+def _db_path() -> Path:
     db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
-    if db_path.exists():
-        try:
-            import sys
-            sys.path.insert(0, str(Path(__file__).parent))
-            from bewerbungsagent.db import Speicher
-
-            with Speicher(str(db_path)) as db:
-                alle_jobs = db.jobs(limit=10000)
-                jobs_mit_score = [j for j in alle_jobs if db.score(j.ref) is not None]
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Gefundene Jobs", len(alle_jobs))
-                with col2:
-                    st.metric("Bewertete Jobs", len(jobs_mit_score))
-                with col3:
-                    alle_bewerbungen = []
-                    for job in alle_jobs:
-                        alle_bewerbungen.extend(db.bewerbungen(job.ref))
-                    st.metric("Bewerbungen", len(alle_bewerbungen))
-
-        except Exception as e:
-            st.caption(f"Statistiken konnten nicht geladen werden: {e}")
-    else:
-        st.info("💡 **Tipp:** Starte mit einer Jobsuche, um loszulegen!")
-
-    st.markdown("---")
-    st.markdown("""
-    **Bewerbungsagent** | [GitHub](https://github.com/mark-baumann/bewerbung-agent) | [Dokumentation](README.md) | [UI Anleitung](UI_README.md)
-
-    Erstellt von **Mark Baumann**
-    """)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return db_path
 
 
-if __name__ == "__main__":
-    main()
+def _seed_app_state():
+    profil = ensure_seeded_profil()
+    if profil_ist_beispiel(profil):
+        with Speicher(_db_path()) as db:
+            db.ensure_automated_searches([])
+        return profil
+
+    ort = profil.suche.wo.strip() or profil.person.ort.strip() or STANDARD_SUCHORT
+    search_queries = [
+        {
+            "name": f"{term} @ {ort}",
+            "query": term,
+            "location": ort,
+            "radius_km": profil.suche.umkreis,
+            "published_days": profil.suche.veroeffentlicht_seit_tagen,
+            "only_full_time": int(profil.suche.nur_vollzeit),
+            "interval_minutes": 360,
+        }
+        for term in profil.suche.was[:3]
+    ]
+    with Speicher(_db_path()) as db:
+        db.ensure_automated_searches(search_queries)
+    return profil
+
+
+def _run_due_automated_searches() -> None:
+    from datetime import datetime, timezone
+
+    from bewerbungsagent.scoring.heuristik import bewerte
+    from bewerbungsagent.sources.arbeitsagentur import ArbeitsagenturClient
+
+    profil = ensure_seeded_profil()
+    if profil_ist_beispiel(profil) or not profil.suche.was:
+        return
+
+    with Speicher(_db_path()) as db:
+        for plan in db.automated_searches():
+            if not plan.get("enabled", True):
+                continue
+            next_run = plan.get("next_run_at")
+            if next_run:
+                try:
+                    next_dt = datetime.fromisoformat(next_run.replace("Z", "+00:00"))
+                    if next_dt > datetime.now(timezone.utc):
+                        continue
+                except ValueError:
+                    log.warning("Ungueltiger naechster Lauf fuer Suche %s: %s", plan["id"], next_run)
+            try:
+                with ArbeitsagenturClient() as client:
+                    jobs = client.hole_jobs(
+                        was=plan["query"],
+                        wo=plan.get("location") or profil.person.ort or profil.suche.wo,
+                        umkreis=int(plan.get("radius_km", profil.suche.umkreis or 25)),
+                        veroeffentlicht_seit_tagen=int(
+                            plan.get("published_days", profil.suche.veroeffentlicht_seit_tagen or 30)
+                        ),
+                        nur_vollzeit=bool(plan.get("only_full_time", profil.suche.nur_vollzeit)),
+                        max_treffer=10,
+                        mit_details=True,
+                    )
+                if jobs:
+                    db.speichere_jobs(jobs)
+                    for job in jobs:
+                        score = bewerte(job, profil)
+                        db.speichere_score(score)
+                        if not score.ausgeschlossen and score.gesamt >= profil.bewertung.min_score:
+                            db.add_inbox_item(job, plan["query"], score=score.gesamt)
+            except Exception:
+                log.exception("Automatische Jobsuche fehlgeschlagen: %s", plan["name"])
+            finally:
+                db.record_search_run(plan["id"])
+
+
+@st.cache_resource
+def _start_search_scheduler() -> Event:
+    stop_event = Event()
+
+    def worker():
+        while not stop_event.wait(60):
+            try:
+                _seed_app_state()
+                _run_due_automated_searches()
+            except Exception:
+                log.exception("Automatischer Suchdienst konnte nicht ausgefuehrt werden.")
+
+    Thread(target=worker, name="bewerbungsagent-search-scheduler", daemon=True).start()
+    return stop_event
+
+
+_seed_app_state()
+_run_due_automated_searches()
+_start_search_scheduler()
+
+navigation = st.navigation(
+    {
+        "Workflow": [
+            st.Page(
+                "pages/1_dashboard.py",
+                title="Dashboard",
+                icon="🏠",
+                url_path="dashboard",
+                default=True,
+            ),
+            st.Page("pages/2_jobsuche.py", title="Jobsuche", icon="🔍", url_path="jobsuche"),
+            st.Page("pages/3_bewertung.py", title="Bewertung", icon="📊", url_path="bewertung"),
+            st.Page("pages/5_bewerbungen.py", title="Bewerbungen", icon="✉️", url_path="bewerbungen"),
+        ],
+        "Profil": [
+            st.Page("pages/6_profil.py", title="Profil & Einstellungen", icon="👤", url_path="profil"),
+        ],
+    },
+    position="sidebar",
+)
+navigation.run()

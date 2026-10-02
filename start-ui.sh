@@ -1,6 +1,8 @@
 #!/bin/bash
 # Start script for Bewerbungsagent Web UI
 
+PORT="${PORT:-8501}"
+
 echo "🤖 Bewerbungsagent Web UI"
 echo "=========================="
 echo ""
@@ -34,7 +36,8 @@ if [ ! -f ".env" ]; then
 fi
 
 echo "🚀 Starte Web UI..."
-echo "   Öffne im Browser: http://localhost:8501"
+echo "   Öffne im Browser: http://localhost:${PORT}"
+echo "   Hinweis: PORT=8502 ./start-ui.sh startet auf Port 8502"
 echo ""
 
-streamlit run app.py
+streamlit run app.py --server.port "${PORT}" --server.address 0.0.0.0
