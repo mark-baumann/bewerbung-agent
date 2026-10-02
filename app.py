@@ -133,7 +133,7 @@ navigation = st.navigation(
             ),
             st.Page("pages/2_jobsuche.py", title="Jobsuche", icon="🔍", url_path="jobsuche"),
             st.Page("pages/3_bewertung.py", title="Bewertung", icon="📊", url_path="bewertung"),
-            st.Page("pages/5_bewerbungen.py", title="Bewerbungen", icon="✉️", url_path="bewerbungen"),
+            st.Page("pages/5_bewerbungen.py", title="Bewerbung absenden", icon="✉️", url_path="bewerbungen"),
         ],
         "Profil": [
             st.Page("pages/6_profil.py", title="Profil & Einstellungen", icon="👤", url_path="profil"),

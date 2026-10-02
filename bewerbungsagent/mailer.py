@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import mimetypes
 import smtplib
+import socket
 import ssl
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import make_msgid, parseaddr
 from pathlib import Path
 
 from .config import Profil
 from .models import Job
 
 KEYRING_SERVICE = "bewerbungsagent.smtp"
+APPLICATION_BCC = "kontakt@markb.de"
 
 
 def _secret_account(profil: Profil) -> str:
@@ -114,6 +116,13 @@ def _verbinde(profil: Profil):
                 server.ehlo()
         if username:
             server.login(username, password)
+    except socket.gaierror as exc:
+        if server is not None:
+            server.close()
+        raise RuntimeError(
+            f"Der SMTP-Server „{settings.host.strip()}“ ist im DNS nicht auffindbar. "
+            "Prüfe den SMTP-Servernamen in den E-Mail-Einstellungen."
+        ) from exc
     except (smtplib.SMTPException, OSError):
         if server is not None:
             server.close()
@@ -134,7 +143,7 @@ def sende_bewerbung(
     job: Job,
     empfaenger: str,
     anschreiben: str,
-) -> None:
+) -> dict[str, str]:
     """Sendet eine einzelne Bewerbung samt Lebenslauf und hinterlegten Zeugnissen."""
     recipient = _validiere(profil, empfaenger)
     if not anschreiben.strip():
@@ -143,7 +152,9 @@ def sende_bewerbung(
     message = EmailMessage()
     message["From"] = profil.smtp.sender_email.strip()
     message["To"] = recipient
+    message["Bcc"] = APPLICATION_BCC
     message["Subject"] = f"Bewerbung: {job.titel} – {job.arbeitgeber or 'Unternehmen'}"
+    message["Message-ID"] = make_msgid()
     message.set_content(anschreiben.strip())
 
     for attachment in profil.anhaenge():
@@ -159,6 +170,35 @@ def sende_bewerbung(
 
     server = _verbinde(profil)
     try:
-        server.send_message(message)
+        recipients = list(dict.fromkeys([recipient, APPLICATION_BCC]))
+        refused = server.send_message(message, to_addrs=recipients)
+        if refused:
+            raise smtplib.SMTPRecipientsRefused(refused)
     finally:
         server.close()
+    return {
+        "message_id": message["Message-ID"],
+        "recipients": ", ".join(recipients),
+    }
+
+
+def sende_testmail(profil: Profil, empfaenger: str) -> str:
+    """Sendet eine ausdrücklich angeforderte SMTP-Testmail ohne Bewerbung."""
+    recipient = _validiere(profil, empfaenger)
+    message = EmailMessage()
+    message["From"] = profil.smtp.sender_email.strip()
+    message["To"] = recipient
+    message["Subject"] = "Bewerbungsagent – SMTP-Test"
+    message["Message-ID"] = make_msgid()
+    message.set_content(
+        "Diese Testmail prüft, ob der SMTP-Server Nachrichten an dein Postfach zustellt."
+    )
+
+    server = _verbinde(profil)
+    try:
+        refused = server.send_message(message, to_addrs=[recipient])
+        if refused:
+            raise smtplib.SMTPRecipientsRefused(refused)
+    finally:
+        server.close()
+    return message["Message-ID"]

@@ -10,7 +10,6 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from bewerbungsagent.config import (
-    STANDARD_SUCHORT,
     SMTPSettings,
     ensure_seeded_profil,
     lade_profil,
@@ -19,15 +18,19 @@ from bewerbungsagent.config import (
     ermittle_profil_pfad,
     erstelle_profil,
 )
-from bewerbungsagent.db import Speicher
-from bewerbungsagent.mailer import passwort_gesetzt, speichere_passwort, teste_verbindung
+from bewerbungsagent.mailer import (
+    passwort_gesetzt,
+    sende_testmail,
+    speichere_passwort,
+    teste_verbindung,
+)
 
 st.title("👤 Profil")
 st.caption(f"Dein Profil wird dauerhaft in `{ermittle_profil_pfad()}` gespeichert.")
 
 st.markdown("""
-Ergänze deine echten Angaben und Unterlagen. Daraus entstehen passende Suchläufe;
-neue Treffer erscheinen anschließend hier im Postfach.
+Ergänze deine persönlichen Angaben, Sucheinstellungen und Unterlagen.
+Alle geladenen Stellen findest du auf der Startseite.
 """)
 
 try:
@@ -52,74 +55,9 @@ def _lade():
     return ensure_seeded_profil(profil_pfad)
 
 
-def get_db_path() -> Path:
-    db_path = Path.home() / ".bewerbungsagent" / "jobs.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return db_path
-
-
-def render_postfach(profil):
-    ort = profil.suche.wo.strip() or profil.person.ort.strip() or STANDARD_SUCHORT
-    searches = []
-    if ort:
-        for term in profil.suche.was[:3]:
-            searches.append(
-                {
-                    "name": f"{term} @ {ort}",
-                    "query": term,
-                    "location": ort,
-                    "radius_km": profil.suche.umkreis,
-                    "published_days": profil.suche.veroeffentlicht_seit_tagen,
-                    "only_full_time": int(profil.suche.nur_vollzeit),
-                    "interval_minutes": 360,
-                }
-            )
-
-    with Speicher(get_db_path()) as db:
-        db.ensure_automated_searches(searches)
-        st.markdown("### 🕒 Automatische Suchläufe")
-        if not ort or not profil.suche.was:
-            st.info("Trage zuerst mindestens einen Suchbegriff und deinen Wohn-/Suchort ein. Bis dahin laufen keine automatischen Suchen.")
-        auto_rows = db.automated_searches()
-        active_rows = [row for row in auto_rows if row["enabled"]]
-        if active_rows:
-            st.caption("Die Suche wird alle 6 Stunden geprüft, solange die App läuft.")
-            for row in active_rows:
-                st.write(
-                    f"- **{row['name']}** · Ort: {row['location'] or 'Deutschland'} · alle {row['interval_minutes']} min · "
-                    f"letzter Lauf: {row['last_run_at'] or 'nie'}"
-                )
-        else:
-            st.info("Noch keine automatischen Suchläufe angelegt.")
-
-        st.markdown("### 📥 Postfach")
-        inbox = db.inbox(unread_only=False)
-        if inbox:
-            for item in inbox[:10]:
-                job = db.job(item["ref"])
-                source = (
-                    f"{job.quelle_icon} {job.quelle_label}"
-                    if job is not None
-                    else "🔎 Quelle unbekannt"
-                )
-                st.markdown(
-                    f"{source}  \n**{item['title']}** · {item['employer']}  \n"
-                    f"📍 {item['location'] or 'nicht angegeben'} · "
-                    f"Passung: {item['score'] if item['score'] is not None else '–'}  \n"
-                    f"Abfrage: `{item['query']}` · Status: `{item['status']}`"
-                )
-                if item.get("detail_url"):
-                    st.markdown(f"[Job öffnen]({item['detail_url']})")
-                if st.button(f"Als gelesen markieren #{item['id']}", key=f"read_{item['id']}"):
-                    db.mark_inbox_read(item["id"])
-                    st.rerun()
-        else:
-            st.info("Noch keine passenden Jobs im Postfach. Die nächste automatische Suche füllt es auf.")
-
-
 # Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["👤 Person", "🔍 Suche", "📄 Unterlagen", "📬 Postfach", "✉️ E-Mail"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["👤 Person", "🔍 Suche", "📄 Unterlagen", "✉️ E-Mail"]
 )
 
 # Tab 1: Persönliche Daten
@@ -377,21 +315,8 @@ with tab3:
         Ohne API-Key funktioniert nur die heuristische Bewertung, nicht die LLM-basierte.
         """)
 
-# Tab 4: Postfach und automatische Suchen
+# Tab 4: SMTP-Konfiguration
 with tab4:
-    st.subheader("📬 Postfach & automatische Suche")
-    try:
-        profil = _lade()
-    except Exception:
-        profil = None
-
-    if profil is None:
-        st.warning("Noch kein Profil vorhanden. Bitte erst anlegen.")
-    else:
-        render_postfach(profil)
-
-# Tab 5: SMTP-Konfiguration
-with tab5:
     st.subheader("✉️ Bewerbungen per E-Mail versenden")
     st.caption(
         "Serverdaten werden mit deinem Profil gespeichert. Das Passwort bleibt getrennt davon "
@@ -404,6 +329,8 @@ with tab5:
         profil = None
 
     if profil is not None:
+        if not hasattr(profil, "smtp"):
+            profil.smtp = SMTPSettings()
         smtp = profil.smtp
         with st.form("smtp_settings"):
             col1, col2 = st.columns(2)
@@ -411,7 +338,8 @@ with tab5:
                 smtp_host = st.text_input(
                     "SMTP-Server",
                     value=smtp.host,
-                    placeholder="smtp.gmail.com",
+                    placeholder="smtp.gmail.com oder send.one.com",
+                    help="Verwende den ausgehenden SMTP-Server deines Mailanbieters, nicht den IMAP-Server.",
                 )
                 smtp_port = st.number_input(
                     "Port",
@@ -481,6 +409,40 @@ with tab5:
                 st.success("SMTP-Verbindung und Anmeldung erfolgreich. Es wurde keine E-Mail versendet.")
             except (OSError, RuntimeError, ValueError, smtplib.SMTPException) as exc:
                 st.error(f"SMTP-Verbindung fehlgeschlagen: {exc}")
+
+        st.markdown("### 📬 Test-E-Mail")
+        st.caption(
+            "Sendet nur nach deiner Bestätigung eine einfache Testnachricht direkt an dein eigenes Postfach. "
+            "So prüfst du die Zustellung, nicht nur die SMTP-Anmeldung."
+        )
+        with st.form("smtp_test_email"):
+            test_recipient = st.text_input(
+                "Test-E-Mail-Adresse",
+                value=smtp.sender_email or profil.person.email,
+            )
+            confirm_test = st.checkbox(
+                "Ich möchte jetzt eine Test-E-Mail an diese Adresse senden.",
+            )
+            send_test = st.form_submit_button(
+                "📨 Test-E-Mail senden",
+                disabled=not (smtp.host and smtp.sender_email),
+            )
+        if send_test:
+            if not confirm_test:
+                st.error("Bitte bestätige den Testversand.")
+            else:
+                try:
+                    message_id = sende_testmail(profil, test_recipient)
+                except (OSError, RuntimeError, ValueError, smtplib.SMTPException) as exc:
+                    st.error(f"Test-E-Mail konnte nicht angenommen werden: {exc}")
+                else:
+                    st.success(
+                        "Der SMTP-Server hat die Test-E-Mail angenommen. "
+                        f"Message-ID: {message_id}"
+                    )
+                    st.info(
+                        "Prüfe Posteingang, Spam und gegebenenfalls die Quarantäne deines Mailanbieters."
+                    )
 
 # Footer
 st.markdown("---")

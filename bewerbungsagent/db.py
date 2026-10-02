@@ -188,6 +188,10 @@ class Speicher:
         row = self.con.execute("SELECT * FROM scores WHERE ref = ?", (ref,)).fetchone()
         return _zu_score(row) if row else None
 
+    def scores_by_ref(self) -> dict[str, Score]:
+        rows = self.con.execute("SELECT * FROM scores").fetchall()
+        return {row["ref"]: _zu_score(row) for row in rows}
+
     def bestenliste(
         self,
         min_score: float = 0.0,

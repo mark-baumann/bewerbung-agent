@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import socket
 
 from bewerbungsagent import mailer
 from bewerbungsagent.config import (
@@ -141,6 +142,7 @@ def test_speicher_roundtrip(tmp_path):
         gespeichert = db.job(job.ref)
         assert gespeichert is not None
         assert gespeichert.homeoffice is True
+        assert db.scores_by_ref()[job.ref].gesamt == pytest.approx(db.score(job.ref).gesamt)
 
         beste = db.bestenliste(min_score=0, limit=5)
         assert beste and beste[0][0].ref == job.ref
@@ -218,8 +220,10 @@ def test_smtp_versand_enthaelt_anschreiben_und_profilanhaenge(tmp_path, monkeypa
         def starttls(self, **kwargs):
             pass
 
-        def send_message(self, message):
+        def send_message(self, message, **kwargs):
             self.message = message
+            self.recipients = kwargs.get("to_addrs")
+            return getattr(self, "refused", {})
 
         def close(self):
             self.closed = True
@@ -236,12 +240,52 @@ def test_smtp_versand_enthaelt_anschreiben_und_profilanhaenge(tmp_path, monkeypa
 
     message = FakeSMTP.instance.message
     assert message["To"] == "jobs@example.test"
+    assert message["Bcc"] == "kontakt@markb.de"
+    assert FakeSMTP.instance.recipients == ["jobs@example.test", "kontakt@markb.de"]
     assert "hiermit bewerbe ich mich" in message.get_body().get_content()
     assert {part.get_filename() for part in message.iter_attachments()} == {
         "lebenslauf.pdf",
         "zeugnis.pdf",
     }
     assert FakeSMTP.instance.closed
+
+
+def test_smtp_versand_meldet_abgelehnten_bcc_empfaenger(tmp_path, monkeypatch):
+    profile = profil(tmp_path)
+    profile.smtp = SMTPSettings(
+        host="smtp.example.test",
+        sender_email="bewerber@example.test",
+    )
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+
+        def ehlo(self):
+            pass
+
+        def starttls(self, **kwargs):
+            pass
+
+        def send_message(self, message, **kwargs):
+            return {"kontakt@markb.de": (550, b"Mailbox rejected")}
+
+        def close(self):
+            self.closed = True
+
+    fake_server = FakeSMTP()
+    monkeypatch.setattr(mailer.smtplib, "SMTP", lambda *args, **kwargs: fake_server)
+    monkeypatch.setattr(mailer, "_smtp_passwort", lambda _profile: None)
+
+    with pytest.raises(mailer.smtplib.SMTPRecipientsRefused):
+        mailer.sende_bewerbung(
+            profile,
+            Job(ref="job-1", titel="Python Entwickler", arbeitgeber="Beispiel GmbH"),
+            "jobs@example.test",
+            "Anschreiben",
+        )
+
+    assert fake_server.closed
 
 
 def test_smtp_rejects_invalid_recipient_before_connecting(tmp_path, monkeypatch):
@@ -263,6 +307,22 @@ def test_smtp_rejects_invalid_recipient_before_connecting(tmp_path, monkeypatch)
             "not-an-email",
             "Anschreiben",
         )
+
+
+def test_smtp_dns_error_explains_invalid_server_name(tmp_path, monkeypatch):
+    profile = profil(tmp_path)
+    profile.smtp = SMTPSettings(
+        host="typo.example.test",
+        sender_email="bewerber@example.test",
+    )
+
+    class UnresolvableSMTP:
+        def __init__(self, *args, **kwargs):
+            raise socket.gaierror("Name or service not known")
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP", UnresolvableSMTP)
+    with pytest.raises(RuntimeError, match="SMTP-Server.*DNS nicht auffindbar"):
+        mailer.teste_verbindung(profile)
 
 
 def test_smtp_settings_are_persisted_without_password(tmp_path):

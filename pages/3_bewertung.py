@@ -36,6 +36,18 @@ st.subheader("1 · Stellen prüfen")
 if not alle_jobs:
     st.info("Hier erscheinen deine gespeicherten Treffer. Starte zuerst eine Jobsuche.")
 else:
+    filter_col, sort_col = st.columns([2, 1])
+    suchtext = filter_col.text_input(
+        "Stellen filtern",
+        placeholder="Titel, Arbeitgeber oder Ort",
+        key="rating_job_filter",
+    ).casefold().strip()
+    sortierung = sort_col.selectbox(
+        "Sortierung",
+        ["Neueste zuerst", "Arbeitgeber A–Z", "Bewertung zuerst"],
+        key="rating_job_sort",
+    )
+
     filter_status = st.radio(
         "Treffer anzeigen",
         ["Alle", "Unbewertet", "Bewertet"],
@@ -49,56 +61,77 @@ else:
     else:
         sichtbare_jobs = alle_jobs
 
-    page_size = 25
+    if suchtext:
+        sichtbare_jobs = [
+            job for job in sichtbare_jobs
+            if suchtext in " ".join((job.titel, job.arbeitgeber, job.ort or "")).casefold()
+        ]
+    if sortierung == "Arbeitgeber A–Z":
+        sichtbare_jobs.sort(key=lambda job: (job.arbeitgeber.casefold(), job.titel.casefold()))
+    elif sortierung == "Bewertung zuerst":
+        sichtbare_jobs.sort(
+            key=lambda job: (
+                vorhandene_scores[job.ref].gesamt if vorhandene_scores[job.ref] else -1,
+                job.titel.casefold(),
+            ),
+            reverse=True,
+        )
+    else:
+        sichtbare_jobs.sort(key=lambda job: job.geholt_am, reverse=True)
+
+    page_size = 10
     page_count = max(1, (len(sichtbare_jobs) + page_size - 1) // page_size)
     page = st.selectbox(
-        f"{len(sichtbare_jobs)} Stellen · Seite",
+        f"{len(sichtbare_jobs)} Treffer · Seite",
         options=range(1, page_count + 1),
         format_func=lambda value: f"{value} von {page_count}",
+        key="rating_job_page",
     )
     page_jobs = sichtbare_jobs[(page - 1) * page_size : page * page_size]
 
-    st.dataframe(
-        [
-            {
-                "Quelle": f"{job.quelle_icon} {job.quelle_label}",
-                "Stelle": job.titel,
-                "Arbeitgeber": job.arbeitgeber,
-                "Ort": job.ort or "Nicht angegeben",
-                "Veröffentlicht": job.veroeffentlicht or "Unbekannt",
-                "Bewertung": (
-                    f"{vorhandene_scores[job.ref].gesamt:.0f}/100"
-                    if vorhandene_scores[job.ref]
-                    else "Ausstehend"
-                ),
-            }
-            for job in page_jobs
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
     for job in page_jobs:
         score = vorhandene_scores[job.ref]
-        status = f"{score.gesamt:.0f}/100" if score else "noch unbewertet"
-        with st.expander(f"{job.quelle_icon} {job.titel} · {job.arbeitgeber} · {status}"):
-            st.caption(
-                f"{job.quelle_label} · 📍 {job.ort or 'Ort unbekannt'} · "
-                f"veröffentlicht {job.veroeffentlicht or 'unbekannt'}"
-            )
-            if job.beschreibung:
-                st.markdown("**Stellenbeschreibung**")
-                st.write(job.beschreibung)
-            else:
-                st.info("Für diese Stelle wurde kein Beschreibungstext mitgeliefert.")
-            if score:
-                st.progress(min(max(score.gesamt / 100, 0.0), 1.0), text=f"Passung {score.gesamt:.0f}/100")
-                st.write(score.begruendung)
-                if score.treffer:
-                    st.success(f"Skills: {', '.join(score.treffer)}")
-                if score.rot:
-                    st.warning(f"Warnsignale: {', '.join(score.rot)}")
-            if job.bewerbungs_url:
-                st.link_button("Stelle bei der Quelle öffnen", job.bewerbungs_url)
+        with st.container(border=True):
+            info_col, score_col, link_col = st.columns([5, 1, 2])
+            with info_col:
+                st.markdown(f"**{job.titel}**")
+                st.caption(
+                    f"{job.arbeitgeber} · 📍 {job.ort or 'Ort unbekannt'} · "
+                    f"{job.quelle_icon} {job.quelle_label}"
+                )
+            with score_col:
+                if score:
+                    st.metric("Passung", f"{score.gesamt:.0f}/100")
+                else:
+                    st.caption("Noch offen")
+            with link_col:
+                if job.bewerbungs_url:
+                    st.link_button(
+                        "Stelle öffnen",
+                        job.bewerbungs_url,
+                        use_container_width=True,
+                        key=f"rating_job_link_{job.ref}",
+                    )
+                else:
+                    st.caption("Kein Stellenlink")
+
+            with st.expander("Details und Bewertung"):
+                st.caption(f"Veröffentlicht: {job.veroeffentlicht or 'unbekannt'}")
+                if job.beschreibung:
+                    st.markdown("**Stellenbeschreibung**")
+                    st.write(job.beschreibung)
+                else:
+                    st.info("Für diese Stelle wurde kein Beschreibungstext mitgeliefert.")
+                if score:
+                    st.progress(
+                        min(max(score.gesamt / 100, 0.0), 1.0),
+                        text=f"Passung {score.gesamt:.0f}/100",
+                    )
+                    st.write(score.begruendung)
+                    if score.treffer:
+                        st.success(f"Skills: {', '.join(score.treffer)}")
+                    if score.rot:
+                        st.warning(f"Warnsignale: {', '.join(score.rot)}")
 
 st.markdown("---")
 st.subheader("2 · Bewertung starten")
@@ -217,4 +250,5 @@ if result_refs:
                 )
             with col_continue:
                 if st.button("Weiter zur Bewerbung", type="primary", use_container_width=True):
+                    st.session_state["selected_job_ref"] = selected_job.ref
                     st.switch_page("pages/5_bewerbungen.py")
