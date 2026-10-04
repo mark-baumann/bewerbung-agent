@@ -9,9 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from bewerbungsagent.db import STANDARD_DB, Speicher
 
 # Seitenkonfiguration
-st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Bewerbungsagent", page_icon="📊", layout="wide")
 
-st.title("📊 Dashboard")
+st.title("📊 Bewerbungsagent")
 st.caption("🤖 Bewerbungsagent – Übersicht über Jobs, Bewertungen und Bewerbungen")
 
 # Datenbank-Pfad (identisch mit der CLI, damit Daten den Container-Neustart
