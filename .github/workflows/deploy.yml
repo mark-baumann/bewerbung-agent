@@ -8,12 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       service_name:
-        required: true
+        required: false
         type: string
+        default: "bewerbung-agent"
         description: "Docker-Compose service name"
       port:
-        required: true
+        required: false
         type: string
+        default: "8502"
         description: "Service port"
 
 jobs:
