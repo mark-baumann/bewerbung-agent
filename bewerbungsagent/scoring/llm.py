@@ -1,4 +1,4 @@
-"""Semantische Bewertung mit Claude oder Ollama (OpenAI-kompatibel).
+"""Semantische Bewertung mit Claude, ChatGPT/OpenAI oder Ollama.
 
 Die Heuristik sieht nur Stringtreffer. Der LLM-Bewerter beurteilt zusaetzlich,
 ob die Rolle inhaltlich zum Profil passt (auch bei anderer Wortwahl) und wie
@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "glm-5.3-flash"
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+OPENAI_BASE_URL = "https://api.openai.com"
 
 SCHEMA = {
     "type": "object",
@@ -112,26 +114,39 @@ def ollama_verfuegbar() -> bool:
     return bool(_env("OLLAMA_BASE_URL") or _env("OLLAMA_API_KEY") or _env("OLLAMA_MODEL"))
 
 
+def openai_verfuegbar() -> bool:
+    return bool(_env("OPENAI_API_KEY"))
+
+
 def ist_claude_modell(modell: str | None) -> bool:
     return bool(modell and modell.strip().lower().startswith("claude"))
 
 
+def ist_openai_modell(modell: str | None) -> bool:
+    return bool(modell and modell.strip().lower().startswith(("gpt-", "o1", "o3", "o4")))
+
+
 def provider(modell: str | None = None) -> str | None:
-    """Waehlt den LLM-Anbieter: 'anthropic' oder 'ollama'.
+    """Waehlt den LLM-Anbieter: 'anthropic', 'openai' oder 'ollama'.
 
     Bei gesetztem Key gewinnt das zum Modell passende Backend (Claude-Modelle
     laufen ueber Anthropic, alles andere ueber Ollama). Sonst wird der Key
     genutzt, der gesetzt ist.
     """
     anthropic_ok = anthropic_verfuegbar()
+    openai_ok = openai_verfuegbar()
     ollama_ok = ollama_verfuegbar()
     if modell:
         if ist_claude_modell(modell) and anthropic_ok:
             return "anthropic"
+        if ist_openai_modell(modell) and openai_ok:
+            return "openai"
         if not ist_claude_modell(modell) and ollama_ok:
             return "ollama"
     if anthropic_ok:
         return "anthropic"
+    if openai_ok:
+        return "openai"
     if ollama_ok:
         return "ollama"
     return None
@@ -205,12 +220,54 @@ class OllamaClient:
             raise LLMNichtVerfuegbar("Leere Antwort vom Ollama-Modell") from e
 
 
+class OpenAIClient:
+    """Minimaler Client fuer die offizielle ChatGPT/OpenAI-API."""
+
+    def __init__(self, transport=None):
+        self.base_url = (_env("OPENAI_BASE_URL") or OPENAI_BASE_URL).rstrip("/")
+        self.api_key = _env("OPENAI_API_KEY")
+        self.modell = _env("OPENAI_MODEL") or _env("LLM_MODEL") or OPENAI_DEFAULT_MODEL
+        self._client = httpx.Client(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(120.0, connect=15.0),
+            transport=transport,
+        )
+
+    def chat(
+        self, *, modell: str | None = None, system: str,
+        messages: list[dict[str, str]], max_tokens: int, json_schema: dict | None = None,
+    ) -> str:
+        if not self.api_key:
+            raise LLMNichtVerfuegbar("OPENAI_API_KEY ist nicht gesetzt")
+        payload: dict = {
+            "model": modell or self.modell,
+            "messages": [{"role": "system", "content": system}, *messages],
+            "max_tokens": max_tokens,
+            "temperature": 0.2,
+        }
+        if json_schema:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "job_bewertung", "strict": True, "schema": json_schema},
+            }
+        response = self._client.post(
+            "/v1/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        try:
+            return response.json()["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise LLMNichtVerfuegbar("Leere Antwort von der OpenAI-API") from e
+
+
 class LLMBewerter:
     def __init__(self, profil: Profil):
         self.anbieter = provider(profil.bewertung.modell)
         if self.anbieter is None:
             raise LLMNichtVerfuegbar(
-                "Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY oder OLLAMA_API_KEY) - "
+                "Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY, OPENAI_API_KEY oder OLLAMA_API_KEY) - "
                 "Bewertung laeuft nur heuristisch."
             )
         self.profil = profil
@@ -218,6 +275,8 @@ class LLMBewerter:
         self.effort = profil.bewertung.effort
         if self.anbieter == "ollama" and (ist_claude_modell(self.modell) or not self.modell):
             self.modell = _env("OLLAMA_MODEL") or _env("LLM_MODEL") or OLLAMA_DEFAULT_MODEL
+        if self.anbieter == "openai" and (ist_claude_modell(self.modell) or not self.modell):
+            self.modell = _env("OPENAI_MODEL") or _env("LLM_MODEL") or OPENAI_DEFAULT_MODEL
         self._system = SYSTEM.format(
             profil=profil.kurzprofil or "(kein Kurzprofil hinterlegt)",
             skills=", ".join(profil.bewertung.skills) or "-",
@@ -232,6 +291,8 @@ class LLMBewerter:
             except ImportError as e:  # pragma: no cover
                 raise LLMNichtVerfuegbar("Paket 'anthropic' nicht installiert") from e
             self._anthropic = anthropic.Anthropic()
+        elif self.anbieter == "openai":
+            self._openai = OpenAIClient()
         else:
             self._ollama = OllamaClient()
 
@@ -255,6 +316,8 @@ class LLMBewerter:
 
         if self.anbieter == "anthropic":
             text = self._anthropic_bewerten(inhalt)
+        elif self.anbieter == "openai":
+            text = self._openai_bewerten(inhalt)
         else:
             text = self._ollama_bewerten(inhalt)
         daten = json.loads(text)
@@ -306,6 +369,15 @@ class LLMBewerter:
         if not text:
             raise LLMNichtVerfuegbar("Leere Antwort vom Modell")
         return text
+
+    def _openai_bewerten(self, inhalt: str) -> str:
+        return self._openai.chat(
+            modell=self.modell,
+            system=self._system,
+            messages=[{"role": "user", "content": inhalt}],
+            max_tokens=4000,
+            json_schema=SCHEMA,
+        )
 
 
 def bewerte_jobs(jobs: list[Job], profil: Profil, mit_llm: bool = True) -> list[Score]:

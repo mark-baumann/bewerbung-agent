@@ -28,12 +28,21 @@ suche:
     - Softwareentwickler Python
     - Backend Entwickler
     - Site Reliability Engineer
-  wo: Berlin
+  wo: München
   umkreis: 30                      # km
   veroeffentlicht_seit_tagen: 14   # API kennt 0, 7, 14, 30, 100
   nur_vollzeit: true
   nur_homeoffice: false
   max_pro_query: 40
+  quellen:
+    - arbeitsagentur
+    - get-in-it
+
+# Cron wird ausserhalb der Web-App ausgefuehrt. `bewerbungsagent cron` gibt
+# die passende Crontab-Zeile aus; jeder Lauf wird im Dashboard protokolliert.
+automatisierung:
+  aktiv: true
+  cron: "30 2 * * *"             # taeglich um 02:30 Uhr (deutsche Zeit)
 
 bewertung:
   # Pflicht-Skills: bestimmen die fachliche Passung

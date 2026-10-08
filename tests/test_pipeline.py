@@ -11,6 +11,7 @@ from bewerbungsagent.sources.arbeitsagentur import (
     _job_aus_treffer,
     suchparameter,
 )
+from bewerbungsagent.sources.get_in_it import _jobs_aus_html
 
 BEISPIEL_TREFFER = {
     "beruf": "Softwareentwickler/in",
@@ -123,11 +124,21 @@ def test_v6_treffer_mit_standort_und_entfernung():
 def test_treffer_normalisierung():
     job = _job_aus_treffer(BEISPIEL_TREFFER)
     assert job.ref == "10001-1003353506-S"
+    assert job.quelle == "arbeitsagentur"
     assert job.ort == "Berlin"
     assert job.entfernung_km == 5.0
     # Die API liefert den String "null" statt eines fehlenden Werts.
     assert job.plz == "10785"
     assert job.bewerbungs_url == "https://karriere.beispiel.de/job/42"
+
+
+def test_get_in_it_json_ld_wird_normalisiert():
+    html = '''<script type="application/ld+json">{"@context":"https://schema.org", "@type":"JobPosting", "title":"Python Engineer", "url":"https://www.get-in-it.de/jobs/python-engineer", "datePosted":"2026-10-01", "hiringOrganization":{"name":"Beispiel GmbH"}, "jobLocation":{"address":{"addressLocality":"München", "postalCode":"80331"}}}</script>'''
+    jobs = _jobs_aus_html(html)
+    assert len(jobs) == 1
+    assert jobs[0].quelle == "get-in-it"
+    assert jobs[0].ort == "München"
+    assert jobs[0].ref.startswith("get-in-it:")
 
 
 def test_detail_anreicherung():
@@ -259,6 +270,29 @@ def test_speicher_roundtrip(tmp_path):
         assert db.statistik()["abgeschickt"] == 1
 
 
+def test_speicher_protokolliert_datenabruf(tmp_path):
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        abruf_id = db.starte_abruf(
+            "arbeitsagentur", "Python", {"wo": "Berlin", "umkreis_km": 30}
+        )
+        db.beende_abruf(abruf_id, treffer=3, neu=2, aktualisiert=1)
+        abruf = db.letzte_abrufe(limit=1)[0]
+
+    assert abruf["quelle"] == "arbeitsagentur"
+    assert abruf["suchbegriff"] == "Python"
+    assert abruf["status"] == "erfolgreich"
+    assert (abruf["treffer"], abruf["neu"], abruf["aktualisiert"]) == (3, 2, 1)
+
+
+def test_docker_startet_taeglichen_abruf():
+    entrypoint = Path("docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert "30 2 * * * root cd /app && bewerbungsagent pipeline --offen" in entrypoint
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    assert "cron" in dockerfile
+    assert "tzdata" in dockerfile
+    assert "TZ=Europe/Berlin" in dockerfile
+
+
 def test_profil_meldet_unbekannte_felder(tmp_path):
     (tmp_path / "profil.yaml").write_text(
         "person:\n  vorname: A\n  quatsch: 1\nsuche:\n  was: [x]\n", encoding="utf-8"
@@ -351,3 +385,23 @@ def test_agent_ohne_bewerbungs_url_meldet_fehler(tmp_path, monkeypatch):
     ohne_url = Job(ref="X-2", titel="Test", arbeitgeber="Test AG")
     with pytest.raises(ValueError, match="keine Bewerbungs-URL"):
         browser.baue_agent(ohne_url, "Text", dry_run=True)
+
+
+def test_speicher_merkt_letzte_suche(tmp_path):
+    jobs = [Job(ref=f"r{i}", titel=f"Job {i}", arbeitgeber="X") for i in range(3)]
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        assert db.letzte_suche() is None
+        db.speichere_jobs(jobs)
+        db.speichere_suche({"begriffe": ["Python"], "wo": "München"}, ["r2", "r0"])
+
+    # Neue Verbindung: Suche muss persistent sein
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        suche = db.letzte_suche()
+        assert suche["parameter"]["wo"] == "München"
+        assert [j.ref for j in db.jobs_nach_refs(suche["refs"])] == ["r2", "r0"]
+
+
+def test_suche_standardort_ist_muenchen():
+    from bewerbungsagent.config import Suche
+
+    assert Suche().wo == "München"

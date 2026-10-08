@@ -76,6 +76,28 @@ CREATE TABLE IF NOT EXISTS applications (
 
 CREATE INDEX IF NOT EXISTS idx_scores_gesamt ON scores(gesamt DESC);
 CREATE INDEX IF NOT EXISTS idx_applications_ref ON applications(ref);
+
+CREATE TABLE IF NOT EXISTS abrufe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    gestartet_am TEXT NOT NULL,
+    beendet_am TEXT,
+    quelle TEXT NOT NULL,
+    suchbegriff TEXT NOT NULL,
+    parameter TEXT NOT NULL,
+    status TEXT NOT NULL,
+    treffer INTEGER NOT NULL DEFAULT 0,
+    neu INTEGER NOT NULL DEFAULT 0,
+    aktualisiert INTEGER NOT NULL DEFAULT 0,
+    fehler TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_abrufe_gestartet_am ON abrufe(gestartet_am DESC);
+
+CREATE TABLE IF NOT EXISTS suchen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zeitpunkt TEXT NOT NULL,
+    parameter TEXT NOT NULL,
+    refs TEXT NOT NULL
+);
 """
 
 # Spalten, die nach dem urspruenglichen Schema per ALTER TABLE ergaenzt wurden.
@@ -155,6 +177,73 @@ class Speicher:
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [_zu_job(r) for r in self.con.execute(sql)]
+
+    def jobs_nach_refs(self, refs: Iterable[str]) -> list[Job]:
+        """Liefert die Jobs zu den Referenzen in der uebergebenen Reihenfolge."""
+        refs = list(dict.fromkeys(refs))
+        if not refs:
+            return []
+        platzhalter = ", ".join("?" for _ in refs)
+        rows = self.con.execute(f"SELECT * FROM jobs WHERE ref IN ({platzhalter})", refs)
+        nach_ref = {r["ref"]: _zu_job(r) for r in rows}
+        return [nach_ref[r] for r in refs if r in nach_ref]
+
+    # ---------------- Suchen (UI) ----------------
+
+    def speichere_suche(self, parameter: dict[str, Any], refs: Iterable[str]) -> int:
+        """Merkt sich eine Suche samt gefundener Jobs, damit sie einen Reload ueberlebt."""
+        cur = self.con.execute(
+            "INSERT INTO suchen (zeitpunkt, parameter, refs) VALUES (datetime('now'), ?, ?)",
+            (
+                json.dumps(parameter, ensure_ascii=False, sort_keys=True),
+                json.dumps(list(dict.fromkeys(refs)), ensure_ascii=False),
+            ),
+        )
+        self.con.commit()
+        return int(cur.lastrowid)
+
+    def letzte_suche(self) -> dict[str, Any] | None:
+        row = self.con.execute(
+            "SELECT * FROM suchen ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "zeitpunkt": row["zeitpunkt"],
+            "parameter": json.loads(row["parameter"]),
+            "refs": json.loads(row["refs"]),
+        }
+
+    # ---------------- Datenabrufe ----------------
+
+    def starte_abruf(self, quelle: str, suchbegriff: str, parameter: dict[str, Any]) -> int:
+        """Protokolliert den Beginn eines Abrufs von einer Jobboerse."""
+        cur = self.con.execute(
+            "INSERT INTO abrufe (gestartet_am, quelle, suchbegriff, parameter, status) "
+            "VALUES (datetime('now'), ?, ?, ?, 'laeuft')",
+            (quelle, suchbegriff, json.dumps(parameter, ensure_ascii=False, sort_keys=True)),
+        )
+        self.con.commit()
+        return int(cur.lastrowid)
+
+    def beende_abruf(
+        self, abruf_id: int, *, treffer: int = 0, neu: int = 0,
+        aktualisiert: int = 0, fehler: str | None = None,
+    ) -> None:
+        status = "fehler" if fehler else "erfolgreich"
+        self.con.execute(
+            "UPDATE abrufe SET beendet_am=datetime('now'), status=?, treffer=?, neu=?, "
+            "aktualisiert=?, fehler=? WHERE id=?",
+            (status, treffer, neu, aktualisiert, fehler, abruf_id),
+        )
+        self.con.commit()
+
+    def letzte_abrufe(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.con.execute(
+            "SELECT * FROM abrufe ORDER BY gestartet_am DESC, id DESC LIMIT ?", (limit,)
+        )
+        return [dict(row) for row in rows]
 
     # ---------------- Scores ----------------
 

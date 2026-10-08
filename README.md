@@ -1,7 +1,7 @@
 # 🤖 Bewerbungs-Agent — Automatisierte Jobsuche & Bewerbung
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)](https://python.org)
-[![Claude](https://img.shields.io/badge/LLM-Claude-orange?logo=anthropic)](https://anthropic.com)
+[![OpenAI](https://img.shields.io/badge/LLM-ChatGPT-412991?logo=openai)](https://openai.com)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-black?logo=ollama)](https://ollama.com)
 [![Browser-Use](https://img.shields.io/badge/Automation-browser--use-green)](https://github.com/browser-use/browser-use)
 [![Tests](https://img.shields.io/badge/Tests-Pytest-green?logo=pytest)](https://pytest.org)
@@ -18,7 +18,7 @@ suchen  ──►  bewerten  ──►  top / zeigen  ──►  anschreiben  �
 
 ## ✨ Features
 
-- **🔍 Jobsuche:** Echte Stellen von der [Jobbörse der Bundesagentur für Arbeit](https://www.arbeitsagentur.de/jobsuche/) per API
+- **🔍 Jobsuche:** Stellen der [Bundesagentur für Arbeit](https://www.arbeitsagentur.de/jobsuche/) per API und von GET IN IT
 - **📊 Intelligente Bewertung:** Skill-Matching + Sentiment-Analyse speziell für deutsche Stellenanzeigen
 - **🤖 LLM-unterstützt:** Claude oder Ollama bewertet semantische Passung und generiert Anschreiben
 - **🌐 Browser-Automation:** browser-use füllt Bewerbungsformulare automatisch aus
@@ -49,11 +49,15 @@ $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüss
 
 ### 🤖 LLM-Konfiguration
 
-Entweder Anthropic **oder** ein lokaler/Ollama-Server (OpenAI-kompatibel):
+Entweder OpenAI/ChatGPT, Anthropic oder ein lokaler/Ollama-Server:
 
 ```bash
 # Anthropic
 ANTHROPIC_API_KEY=sk-ant-...
+
+# ChatGPT / OpenAI
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
 
 # ODER Ollama (lokal oder zentral)
 OLLAMA_BASE_URL=http://localhost:11434
@@ -61,9 +65,30 @@ OLLAMA_API_KEY=                      # nur falls der Server einen Key verlangt
 OLLAMA_MODEL=glm-5.3-flash           # z.B. glm-5.3-flash, deepseek-v4.1-flash, qwen3
 ```
 
-Claude-Modelle (`claude-*`) laufen über Anthropic, alle anderen Modelle über
-Ollama. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
-die Vorlage zurück.
+Claude-Modelle (`claude-*`) laufen über Anthropic, GPT-/o-Modelle über die
+OpenAI-API und die übrigen Modelle über Ollama. Ohne Key fällt die Bewertung
+auf die Heuristik und das Anschreiben auf die Vorlage zurück.
+
+### ⏰ Automatische Suche per Cron
+
+Wenn die Docker-Web-UI ohne Argumente gestartet wird, führt der Container die
+Pipeline **jeden Tag um 02:30 deutscher Zeit** automatisch aus. Der Abruf verwendet immer
+Ort und Umkreis aus `suche` im Profil – etwa
+`wo: München` und `umkreis: 30`. Alle aktivierten Quellen werden abgefragt.
+Für lokale Installationen können Zeitplan und Aktivierung unter
+`automatisierung` im Profil (oder in der Profil-UI) verwaltet werden. Eine
+Cron-Zeile wird bewusst nur ausgegeben (sie verändert keine Crontab):
+
+```bash
+bewerbungsagent cron
+# Ausgabe mit `crontab -e` einfügen; Standard: täglich um 02:30 Uhr
+```
+
+Jeder Abruf wird in der SQLite-Datenbank mit Quelle, Suchbegriff, verwendeten
+Filtern, Zeitpunkt, Trefferzahl sowie neuen/aktualisierten Stellen protokolliert.
+Das Dashboard zeigt diesen Abrufverlauf; bei jeder Stelle ist außerdem die
+Jobbörse sichtbar. So bleiben auch automatisch per Cron geladene Daten
+nachvollziehbar.
 
 ---
 

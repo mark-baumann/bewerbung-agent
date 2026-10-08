@@ -42,6 +42,9 @@ def _ohne_keys(monkeypatch):
         "OLLAMA_BASE_URL",
         "OLLAMA_MODEL",
         "LLM_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "OPENAI_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -69,6 +72,27 @@ def test_ollama_key_nutzt_ollama(monkeypatch):
 def test_ollama_base_url_allein_reicht(monkeypatch):
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
     assert llm.provider("qwen3:latest") == "ollama"
+
+
+def test_openai_key_nutzt_chatgpt_api(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert llm.provider() == "openai"
+    assert llm.provider("gpt-4o-mini") == "openai"
+
+
+def test_openai_chat_sendet_strukturierten_request(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    gespeichert = {}
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        gespeichert["headers"] = request.headers
+        gespeichert["body"] = json.loads(request.content)
+        return httpx.Response(200, json=JSON_ANTWORT)
+
+    client = llm.OpenAIClient(transport=httpx.MockTransport(transport))
+    assert client.chat(modell="gpt-4o-mini", system="System", messages=[], max_tokens=20, json_schema=llm.SCHEMA)
+    assert gespeichert["headers"]["Authorization"] == "Bearer sk-test"
+    assert gespeichert["body"]["response_format"]["type"] == "json_schema"
 
 
 def test_beide_keys_modell_entscheidet(monkeypatch):
