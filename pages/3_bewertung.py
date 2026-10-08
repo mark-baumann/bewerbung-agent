@@ -35,14 +35,33 @@ Bewerte gefundene Jobs anhand von:
 with Speicher(str(db_path)) as db:
     jobs_ohne_score = db.jobs(nur_ohne_score=True, limit=10000)
     alle_jobs = db.jobs(limit=10000)
+    letzte_suche = db.letzte_suche()
+    jobs_letzte_suche = db.jobs_nach_refs(letzte_suche["refs"]) if letzte_suche else []
+    alle_scores = {job.ref: db.score(job.ref) for job in alle_jobs}
 
-col1, col2 = st.columns(2)
+unbewertet_letzte_suche = [j for j in jobs_letzte_suche if alle_scores.get(j.ref) is None]
+
+col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Gesamt Jobs", len(alle_jobs))
 with col2:
     st.metric("Unbewertete Jobs", len(jobs_ohne_score))
+with col3:
+    st.metric(
+        "Letzte Suche",
+        len(jobs_letzte_suche),
+        delta=f"{len(unbewertet_letzte_suche)} unbewertet",
+        delta_color="off",
+    )
+
+if not alle_jobs:
+    st.info("Noch keine Jobs gefunden. Starte zuerst eine Jobsuche.")
+    st.page_link("pages/2_jobsuche.py", label="🔍 Zur Jobsuche", icon="🔍")
 
 st.markdown("---")
+
+AUSWAHL_LETZTE = "Jobs der letzten Suche"
+AUSWAHL_ALLE = "Alle gefundenen Jobs"
 
 # Bewertungsformular
 with st.form("bewertung_form"):
@@ -51,6 +70,13 @@ with st.form("bewertung_form"):
     col1, col2 = st.columns(2)
 
     with col1:
+        auswahl = st.radio(
+            "Welche Jobs bewerten?",
+            [AUSWAHL_LETZTE, AUSWAHL_ALLE],
+            index=0 if jobs_letzte_suche else 1,
+            help="Bezieht sich auf die bereits gefundenen und gespeicherten Jobs",
+        )
+
         nur_neue = st.checkbox(
             "Nur unbewertete Jobs",
             value=True,
@@ -60,8 +86,8 @@ with st.form("bewertung_form"):
         limit = st.number_input(
             "Max. Anzahl zu bewerten",
             min_value=1,
-            max_value=1000,
-            value=max(min(len(jobs_ohne_score) if nur_neue else len(alle_jobs), 50), 1),
+            max_value=10000,
+            value=max(len(jobs_letzte_suche) if jobs_letzte_suche else min(len(alle_jobs), 50), 1),
             step=10
         )
 
@@ -89,10 +115,16 @@ if submitted:
     else:
         try:
             with Speicher(str(db_path)) as db:
-                jobs = db.jobs(nur_ohne_score=nur_neue, limit=limit)
+                if auswahl == AUSWAHL_LETZTE:
+                    kandidaten = db.jobs_nach_refs(letzte_suche["refs"]) if letzte_suche else []
+                else:
+                    kandidaten = db.jobs(limit=10000)
+                if nur_neue:
+                    kandidaten = [j for j in kandidaten if db.score(j.ref) is None]
+                jobs = kandidaten[: int(limit)]
 
                 if not jobs:
-                    st.warning("⚠️ Keine Jobs zu bewerten. Führe zuerst eine Jobsuche durch.")
+                    st.warning("⚠️ Keine (unbewerteten) Jobs in der Auswahl. Führe eine neue Jobsuche durch oder wähle 'Alle gefundenen Jobs'.")
                 else:
                     st.info(f"🔄 Bewerte {len(jobs)} Jobs ({'LLM + Heuristik' if mit_llm else 'nur Heuristik'})...")
 
@@ -199,3 +231,39 @@ if submitted:
         except Exception as e:
             st.error(f"Fehler: {e}")
             st.info("Möglicherweise existiert die Datenbank noch nicht. Führe zuerst eine Jobsuche durch!")
+
+# Übersicht über alle bereits gefundenen Jobs inkl. gespeicherter Bewertung –
+# bleibt nach Reload erhalten, weil alles aus der Datenbank kommt.
+with Speicher(str(db_path)) as db:
+    uebersicht_jobs = (
+        db.jobs_nach_refs(letzte_suche["refs"]) if auswahl == AUSWAHL_LETZTE and letzte_suche
+        else db.jobs(limit=10000)
+    )
+    uebersicht_scores = {job.ref: db.score(job.ref) for job in uebersicht_jobs}
+
+if uebersicht_jobs:
+    st.markdown("---")
+    st.subheader(f"📋 Gefundene Jobs ({auswahl})")
+    zeilen = []
+    for job in uebersicht_jobs:
+        sc = uebersicht_scores.get(job.ref)
+        zeilen.append({
+            "Score": None if sc is None or sc.ausgeschlossen else round(sc.gesamt),
+            "Status": "unbewertet" if sc is None else ("ausgeschlossen" if sc.ausgeschlossen else "bewertet"),
+            "Titel": job.titel,
+            "Arbeitgeber": job.arbeitgeber,
+            "Ort": job.ort or "",
+            "Quelle": job.quelle or "",
+            "Veröffentlicht": job.veroeffentlicht or "",
+            "Link": job.anzeige_url or "",
+        })
+    zeilen.sort(key=lambda z: (z["Score"] is None, -(z["Score"] or 0)))
+    st.dataframe(
+        zeilen,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Score": st.column_config.NumberColumn(format="%d"),
+            "Link": st.column_config.LinkColumn(display_text="öffnen"),
+        },
+    )

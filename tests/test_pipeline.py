@@ -385,3 +385,23 @@ def test_agent_ohne_bewerbungs_url_meldet_fehler(tmp_path, monkeypatch):
     ohne_url = Job(ref="X-2", titel="Test", arbeitgeber="Test AG")
     with pytest.raises(ValueError, match="keine Bewerbungs-URL"):
         browser.baue_agent(ohne_url, "Text", dry_run=True)
+
+
+def test_speicher_merkt_letzte_suche(tmp_path):
+    jobs = [Job(ref=f"r{i}", titel=f"Job {i}", arbeitgeber="X") for i in range(3)]
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        assert db.letzte_suche() is None
+        db.speichere_jobs(jobs)
+        db.speichere_suche({"begriffe": ["Python"], "wo": "München"}, ["r2", "r0"])
+
+    # Neue Verbindung: Suche muss persistent sein
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        suche = db.letzte_suche()
+        assert suche["parameter"]["wo"] == "München"
+        assert [j.ref for j in db.jobs_nach_refs(suche["refs"])] == ["r2", "r0"]
+
+
+def test_suche_standardort_ist_muenchen():
+    from bewerbungsagent.config import Suche
+
+    assert Suche().wo == "München"

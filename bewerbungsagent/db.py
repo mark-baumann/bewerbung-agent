@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS abrufe (
     fehler TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_abrufe_gestartet_am ON abrufe(gestartet_am DESC);
+
+CREATE TABLE IF NOT EXISTS suchen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zeitpunkt TEXT NOT NULL,
+    parameter TEXT NOT NULL,
+    refs TEXT NOT NULL
+);
 """
 
 # Spalten, die nach dem urspruenglichen Schema per ALTER TABLE ergaenzt wurden.
@@ -170,6 +177,43 @@ class Speicher:
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [_zu_job(r) for r in self.con.execute(sql)]
+
+    def jobs_nach_refs(self, refs: Iterable[str]) -> list[Job]:
+        """Liefert die Jobs zu den Referenzen in der uebergebenen Reihenfolge."""
+        refs = list(dict.fromkeys(refs))
+        if not refs:
+            return []
+        platzhalter = ", ".join("?" for _ in refs)
+        rows = self.con.execute(f"SELECT * FROM jobs WHERE ref IN ({platzhalter})", refs)
+        nach_ref = {r["ref"]: _zu_job(r) for r in rows}
+        return [nach_ref[r] for r in refs if r in nach_ref]
+
+    # ---------------- Suchen (UI) ----------------
+
+    def speichere_suche(self, parameter: dict[str, Any], refs: Iterable[str]) -> int:
+        """Merkt sich eine Suche samt gefundener Jobs, damit sie einen Reload ueberlebt."""
+        cur = self.con.execute(
+            "INSERT INTO suchen (zeitpunkt, parameter, refs) VALUES (datetime('now'), ?, ?)",
+            (
+                json.dumps(parameter, ensure_ascii=False, sort_keys=True),
+                json.dumps(list(dict.fromkeys(refs)), ensure_ascii=False),
+            ),
+        )
+        self.con.commit()
+        return int(cur.lastrowid)
+
+    def letzte_suche(self) -> dict[str, Any] | None:
+        row = self.con.execute(
+            "SELECT * FROM suchen ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "zeitpunkt": row["zeitpunkt"],
+            "parameter": json.loads(row["parameter"]),
+            "refs": json.loads(row["refs"]),
+        }
 
     # ---------------- Datenabrufe ----------------
 

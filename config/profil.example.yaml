@@ -28,7 +28,7 @@ suche:
     - Softwareentwickler Python
     - Backend Entwickler
     - Site Reliability Engineer
-  wo: Berlin
+  wo: München
   umkreis: 30                      # km
   veroeffentlicht_seit_tagen: 14   # API kennt 0, 7, 14, 30, 100
   nur_vollzeit: true
