@@ -11,7 +11,7 @@ from bewerbungsagent.sources.arbeitsagentur import (
     _job_aus_treffer,
     suchparameter,
 )
-from bewerbungsagent.sources.get_in_it import _jobs_aus_html
+from bewerbungsagent.sources.get_in_it import GetInItClient, _jobs_aus_html, _passende_treffer
 
 BEISPIEL_TREFFER = {
     "beruf": "Softwareentwickler/in",
@@ -140,6 +140,45 @@ def test_get_in_it_json_ld_wird_normalisiert():
     assert jobs[0].ort == "München"
     assert jobs[0].ref.startswith("get-in-it:")
 
+
+
+def test_get_in_it_json_ld_mit_adressliste():
+    html = '''<script type="application/ld+json">{"@type":"JobPosting", "title":"Dev", "url":"https://www.get-in-it.de/jobsuche/p1", "employmentType":"FULL_TIME", "description":"<p>Python &amp; Go</p>", "jobLocation":{"@type":"Place","address":[{"addressLocality":"Berlin"},{"addressLocality":"Köln"}]}}</script>'''
+    job = _jobs_aus_html(html)[0]
+    assert job.ort == "Berlin, Köln"
+    assert job.vollzeit is True
+    assert job.beschreibung == "Python & Go"
+
+
+def test_get_in_it_suchbegriff_wird_clientseitig_gefiltert():
+    treffer = [
+        {"title": "IT-Account Manager", "careers": [{"name": "Consulting"}]},
+        {"title": "Senior Software Engineer", "careers": []},
+        {"title": "Softwareentwickler Python (m/w/d)", "careers": []},
+    ]
+    titel = [t["title"] for t in _passende_treffer(treffer, "Softwareentwickler Python")]
+    assert titel == ["Softwareentwickler Python (m/w/d)", "Senior Software Engineer"]
+
+
+def test_get_in_it_client_nutzt_such_api():
+    import httpx
+
+    def antwort(request):
+        if request.url.path == "/api/v2/open/job/search":
+            return httpx.Response(200, json={"total": 2, "items": {"results": [
+                {"id": 1, "title": "Python Engineer", "url": "/jobsuche/p1", "homeOffice": True,
+                 "careers": [], "locations": [{"id": 9, "name": "München"}], "company": {"title": "Beispiel GmbH"}},
+                {"id": 2, "title": "Vertrieb", "url": "/jobsuche/p2", "careers": [], "locations": [], "company": {}},
+            ]}})
+        raise AssertionError(request.url)
+
+    with GetInItClient(transport=httpx.MockTransport(antwort)) as client:
+        jobs = client.hole_jobs(was="Python", mit_details=False)
+    assert [j.titel for j in jobs] == ["Python Engineer"]
+    assert jobs[0].arbeitgeber == "Beispiel GmbH"
+    assert jobs[0].ort == "München"
+    assert jobs[0].detail_url == "https://www.get-in-it.de/jobsuche/p1"
+    assert jobs[0].ref.startswith("get-in-it:")
 
 def test_detail_anreicherung():
     job = _job_aus_treffer(BEISPIEL_TREFFER)

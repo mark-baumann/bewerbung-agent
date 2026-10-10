@@ -214,7 +214,13 @@ with tab2:
                             if bew['url']:
                                 st.write(f"**URL:** {bew['url']}")
                             if bew['ergebnis']:
-                                st.text_area("Ergebnis", value=bew['ergebnis'], disabled=True, height=100)
+                                st.text_area(
+                                    "Ergebnis",
+                                    value=bew['ergebnis'],
+                                    disabled=True,
+                                    height=100,
+                                    key=f"verlauf_ergebnis_{job.ref}_{idx}",
+                                )
                 else:
                     st.info("Noch keine Bewerbungen für diesen Job.")
 
@@ -256,7 +262,7 @@ with tab3:
                 st.markdown("---")
 
                 # Liste
-                for item in sorted(alle_bewerbungen, key=lambda x: x["bewerbung"]["zeitpunkt"], reverse=True)[:20]:
+                for pos, item in enumerate(sorted(alle_bewerbungen, key=lambda x: x["bewerbung"]["zeitpunkt"], reverse=True)[:20]):
                     job = item["job"]
                     bew = item["bewerbung"]
 
@@ -284,7 +290,14 @@ with tab3:
                             st.write(f"**Dry Run:** {'Ja' if bew.get('dry_run', True) else 'Nein'}")
 
                         if bew['ergebnis']:
-                            st.text_area("Ergebnis", value=bew['ergebnis'], disabled=True, height=80, label_visibility="collapsed")
+                            st.text_area(
+                                "Ergebnis",
+                                value=bew['ergebnis'],
+                                disabled=True,
+                                height=80,
+                                label_visibility="collapsed",
+                                key=f"uebersicht_ergebnis_{pos}",
+                            )
 
             else:
                 st.info("📭 Noch keine Bewerbungen vorhanden. Starte deine erste Bewerbung!")
