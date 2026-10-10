@@ -23,6 +23,17 @@ log = logging.getLogger(__name__)
 
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "glm-5.3-flash"
+# Modelle der Ollama-Cloud-API (Stand: ollama.com/v1/models, Oktober 2026)
+OLLAMA_MODELLE = [
+    "glm-5.3-flash", "glm-5.3", "glm-5.2",
+    "deepseek-v4.1-flash", "deepseek-v4-pro:0813",
+    "kimi-k3", "kimi-k2.7-code", "kimi-k2.6",
+    "minimax-m3", "minimax-m2.7",
+    "mistral-large-4", "mistral-large-3:675b",
+    "nemotron-3-ultra", "nemotron-3-super", "nemotron-3-nano:30b",
+    "gpt-oss:120b", "gpt-oss:20b",
+    "gemma4:31b",
+]
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 OPENAI_BASE_URL = "https://api.openai.com"
 
@@ -123,7 +134,9 @@ def ist_claude_modell(modell: str | None) -> bool:
 
 
 def ist_openai_modell(modell: str | None) -> bool:
-    return bool(modell and modell.strip().lower().startswith(("gpt-", "o1", "o3", "o4")))
+    m = (modell or "").strip().lower()
+    # gpt-oss ist ein offenes Modell und laeuft ueber Ollama
+    return m.startswith(("gpt-", "o1", "o3", "o4")) and not m.startswith("gpt-oss")
 
 
 def provider(modell: str | None = None) -> str | None:

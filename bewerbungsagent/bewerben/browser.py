@@ -247,6 +247,14 @@ class BewerbungsBrowser:
         anhaenge = self.profil.anhaenge()
         ergebnis_modell = _ergebnis_modell()
         llm = _browser_llm(self.modell)
+        # Die meisten Ollama-Cloud-Modelle sind reine Textmodelle und antworten
+        # auf Screenshots mit HTTP 500. Vision dort nur per BROWSER_VISION=1.
+        from ..scoring import llm as llm_modul
+
+        if llm_modul.provider(self.modell) == "ollama":
+            vision = os.environ.get("BROWSER_VISION", "").lower() in ("1", "true", "ja")
+        else:
+            vision = True
 
         aufgabe = AUFGABE.format(
             name=self.profil.person.name,
@@ -294,7 +302,7 @@ class BewerbungsBrowser:
             output_model_schema=ergebnis_modell,
             directly_open_url=url,
             save_conversation_path=self.aufzeichnung,
-            use_vision=True,
+            use_vision=vision,
         )
 
     async def bewerbe(

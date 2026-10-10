@@ -172,3 +172,10 @@ def test_llmbewerter_ollama_bewerte(tmp_path, monkeypatch):
 def test_llmbewerter_ohne_key_schlaegt_fehl(tmp_path):
     with pytest.raises(llm.LLMNichtVerfuegbar):
         llm.LLMBewerter(_profil(tmp_path))
+
+
+def test_gpt_oss_laeuft_ueber_ollama(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    assert llm.provider("gpt-oss:120b") == "ollama"
+    assert llm.provider("gpt-4o-mini") == "openai"

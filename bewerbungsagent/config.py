@@ -36,7 +36,7 @@ class Person:
 @dataclass
 class Suche:
     was: list[str] = field(default_factory=list)
-    wo: str = ""
+    wo: str = "München"
     umkreis: int = 25
     veroeffentlicht_seit_tagen: int = 30
     nur_vollzeit: bool = False
