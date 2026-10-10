@@ -62,7 +62,7 @@ OPENAI_MODEL=gpt-4o-mini
 # ODER Ollama (lokal oder zentral)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_API_KEY=                      # nur falls der Server einen Key verlangt
-OLLAMA_MODEL=glm-5.3-flash           # z.B. glm-5.3-flash, deepseek-v4.1-flash, qwen3
+OLLAMA_MODEL=glm-5.3-flash           # z.B. glm-5.3-flash, deepseek-v4.1-flash, kimi-k3, gpt-oss:120b
 ```
 
 Claude-Modelle (`claude-*`) laufen über Anthropic, GPT-/o-Modelle über die

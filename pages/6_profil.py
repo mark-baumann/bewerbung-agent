@@ -14,6 +14,7 @@ from bewerbungsagent.config import (
     ermittle_profil_pfad,
     erstelle_profil,
 )
+from bewerbungsagent.scoring.llm import OLLAMA_MODELLE
 
 st.set_page_config(page_title="Profil", page_icon="👤", layout="wide")
 
@@ -337,7 +338,7 @@ with tab3:
         model_options = [
             "claude-opus-5", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-latest",
             "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini",
-            "glm-5.3-flash", "glm-5.1", "deepseek-v4.1-flash", "qwen3:latest",
+            *OLLAMA_MODELLE, "glm-5.1", "qwen3:latest",
         ]
         if env_default_model not in model_options:
             model_options.append(env_default_model)
