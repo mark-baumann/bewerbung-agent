@@ -78,7 +78,14 @@ docker run --rm -it \
 ```
 
 Weitere Befehle: `bewerten`, `top`, `zeigen <ref>`, `anschreiben <ref>`,
-`bewerben <ref>` (Standard: Probelauf), `status`, `pipeline`.
+`bewerben <ref>` (Standard: Probelauf), `status`, `pipeline`, sowie für den
+Ablauf mit Freigabe `automatik`, `warteschlange`, `vorbereiten <ref>`,
+`freigeben <ref>`, `ablehnen <ref>`, `senden`, `tick`, `vorschlaege`, `nachweis`.
+
+Ohne Argumente startet der Container die Web-UI und einen Cron, der alle 5
+Minuten `bewerbungsagent tick` aufruft (Zeitplan aus dem Profil, Versand
+freigegebener Bewerbungen). Für den E-Mail-Versand `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_BENUTZER`, `SMTP_PASSWORT` als Umgebungsvariablen mitgeben.
 
 > **Hinweis:** `bewerben` startet Chromium. Im Container läuft es als root,
 > daher deaktiviert der Code die Chromium-Sandbox automatisch
@@ -106,9 +113,13 @@ ghcr.io/mark-baumann/bewerbung-agent:latest
 
 ## 6. Sicherheitsnetze
 
+- **Freigabe:** Automatisch vorbereitete Bewerbungen gehen erst nach deinem
+  „Ja“ (Cockpit oder `freigeben`) raus; fehlgeschlagene Sendungen werden nie
+  automatisch wiederholt; `max_pro_tag` begrenzt die Sendungen pro Tag.
 - **Probelauf-Standard:** `bewerben` schickt ohne `--absenden` nichts ab.
-- **Domain-Schranke:** Der Browser-Agent ist auf die Ziel-Domain + Arbeitsagentur
-  beschränkt (`--domains-offen` hebt das auf).
+- **Domain-Schranke:** Der Browser-Agent ist auf die Ziel-Domain, die
+  Arbeitsagentur und gängige Bewerbermanagement-Systeme beschränkt
+  (`--domains-offen` hebt das auf).
 - **Keine erfundenen Angaben:** Der Agent füllt nur Profildaten ein; fehlende
   Pflichtfelder werden gemeldet statt erfunden.
 - **Zugangsdaten:** `BA_BENUTZER`/`BA_PASSWORT` erreichen das Modell nie im
@@ -130,20 +141,4 @@ Browser-Agent-Konfiguration (ohne echten Browser) ab.
 
 ## 8. Projektstruktur
 
-```
-bewerbung-agent/
-├── bewerbungsagent/
-│   ├── cli.py                    # Kommandozeile
-│   ├── config.py                 # Profil-YAML
-│   ├── models.py                 # Job, Score, Application
-│   ├── db.py                     # SQLite-Speicher
-│   ├── sources/arbeitsagentur.py # API-Client
-│   ├── scoring/                  # sentiment, heuristik, llm
-│   ├── anschreiben.py            # Anschreiben-Generator
-│   └── bewerben/browser.py       # browser-use-Agent
-├── config/profil.example.yaml
-├── unterlagen/                   # Lebenslauf, Zeugnisse (nicht im Git)
-├── Dockerfile
-├── .github/workflows/build.yml
-└── tests/
-```
+Siehe [README.md](README.md#-projektstruktur).

@@ -6,26 +6,40 @@
 [![Browser-Use](https://img.shields.io/badge/Automation-browser--use-green)](https://github.com/browser-use/browser-use)
 [![Tests](https://img.shields.io/badge/Tests-Pytest-green?logo=pytest)](https://pytest.org)
 
-**Vollautomatischer Bewerbungs-Workflow:** Stellen der Bundesagentur für Arbeit suchen, semantisch bewerten, Anschreiben generieren und per Browser-Agent bewerben — alles per CLI.
+**Vom Suchen bis zum Absenden – du sagst nur noch Ja oder Nein.** Der Agent sucht
+Stellen bei der Bundesagentur für Arbeit und GET IN IT, bewertet sie gegen dein
+Profil und deinen Lebenslauf, schreibt Anschreiben, testet Online-Formulare im
+Probelauf und schickt Bewerbungen nach deinem **Ja** per E-Mail oder Formular ab.
 
 ```
-suchen  ──►  bewerten  ──►  top / zeigen  ──►  anschreiben  ──►  bewerben
- (API)      (Sentiment       (Auswahl)         (LLM)         (browser-use)
-             + LLM)
+Zeitplan (Cron) oder Knopf
+  └─ suchen ─► bewerten ─► beste Stellen vorbereiten (Anschreiben, PDF, Versandweg, Probelauf)
+        └─ Startseite: ✅ Ja / ❌ Nein ─► Versand per E-Mail oder Online-Formular
+              └─ Tracker: Rückmeldungen, Nachfassen, Nachweis der Eigenbemühungen
 ```
 
 ---
 
 ## ✨ Features
 
-- **🔍 Jobsuche:** Stellen der [Bundesagentur für Arbeit](https://www.arbeitsagentur.de/jobsuche/) per API und von GET IN IT
-- **📊 Intelligente Bewertung:** Skill-Matching + Sentiment-Analyse speziell für deutsche Stellenanzeigen
-- **🤖 LLM-unterstützt:** Claude oder Ollama bewertet semantische Passung und generiert Anschreiben
-- **🌐 Browser-Automation:** browser-use füllt Bewerbungsformulare automatisch aus
-- **🖥️ Web-UI:** Moderne Streamlit-Oberfläche als Alternative zum CLI
-- **🛡️ Sicherheitsnetze:** Probelauf-Standard, Domain-Schranke, keine erfundenen Angaben
-- **💾 SQLite-Speicher:** Alle Jobs, Scores und Bewerbungen persistent
-- **📋 Pipeline-Modus:** `suchen → bewerten → top` in einem Befehl
+- **🏠 Cockpit mit Ja/Nein:** Vorbereitete Bewerbungen als Karten mit Passung, Gründen,
+  Versandweg, Probelauf-Ergebnis und bearbeitbarem Anschreiben – ein Klick schickt ab
+- **🤖 Automatik per Zeitplan:** Suchen, bewerten und die besten Stellen vorbereiten
+  (z. B. täglich 6:00); Modus *Automatisch*, *Nur suchen* oder *Aus*
+- **🧭 Schritt für Schritt:** Geführter manueller Prozess Suchen → Auswählen →
+  Prüfen & freigeben → Status
+- **💡 Suchvorschläge:** Ähnliche Jobtitel aus gut passenden Treffern, KI-Ideen
+  (Synonyme, Nachbarrollen, englische Titel) und Tipps, welche Suchbegriffe nichts bringen
+- **📧 Versand per E-Mail:** Aus deinem Postfach (SMTP) mit Anschreiben-PDF, Lebenslauf
+  und Zeugnissen, Kopie per Bcc an dich
+- **🌐 Online-Formulare:** browser-use füllt Bewerbungsformulare aus – inklusive
+  gängiger Bewerbermanagement-Systeme (softgarden, Personio, Workday, …)
+- **📊 Bewertung:** Skill-Matching, Tonalität der Anzeige und LLM-Bewertung (Claude,
+  ChatGPT oder Ollama) mit deinem Lebenslauf als Kontext
+- **📬 Tracker & Nachweis:** Rückmeldungen eintragen, fällige Nachfragen, Export der
+  Eigenbemühungen als PDF/CSV für Agentur für Arbeit oder Jobcenter
+- **🛡️ Sicherheitsnetze:** Nichts geht ohne dein Ja raus, Tageslimit, kein automatisches
+  Wiederholen fehlgeschlagener Sendungen, keine erfundenen Angaben
 
 ---
 
@@ -69,75 +83,90 @@ Claude-Modelle (`claude-*`) laufen über Anthropic, GPT-/o-Modelle über die
 OpenAI-API und die übrigen Modelle über Ollama. Ohne Key fällt die Bewertung
 auf die Heuristik und das Anschreiben auf die Vorlage zurück.
 
-### ⏰ Automatische Suche per Cron
+### 📧 Bewerbungen per E-Mail
 
-Wenn die Docker-Web-UI ohne Argumente gestartet wird, führt der Container die
-Pipeline **jeden Tag um 02:30 deutscher Zeit** automatisch aus. Der Abruf verwendet immer
-Ort und Umkreis aus `suche` im Profil – etwa
-`wo: München` und `umkreis: 30`. Alle aktivierten Quellen werden abgefragt.
-Für lokale Installationen können Zeitplan und Aktivierung unter
-`automatisierung` im Profil (oder in der Profil-UI) verwaltet werden. Eine
-Cron-Zeile wird bewusst nur ausgegeben (sie verändert keine Crontab):
+Für den E-Mail-Versand trägst du die Zugangsdaten deines Postfachs in die `.env`
+ein (bzw. in die Umgebung des Containers):
 
 ```bash
-bewerbungsagent cron
-# Ausgabe mit `crontab -e` einfügen; Standard: täglich um 02:30 Uhr
+SMTP_HOST=smtp.example.de
+SMTP_PORT=465                 # 465 = SSL, 587 = STARTTLS
+SMTP_BENUTZER=ich@example.de
+SMTP_PASSWORT=...
+SMTP_ABSENDER=ich@example.de  # optional
 ```
 
-Jeder Abruf wird in der SQLite-Datenbank mit Quelle, Suchbegriff, verwendeten
-Filtern, Zeitpunkt, Trefferzahl sowie neuen/aktualisierten Stellen protokolliert.
-Das Dashboard zeigt diesen Abrufverlauf; bei jeder Stelle ist außerdem die
-Jobbörse sichtbar. So bleiben auch automatisch per Cron geladene Daten
-nachvollziehbar.
+Unter **Profil → Automatik & Versand** kannst du eine Testmail an dich selbst
+schicken. Jede Bewerbung geht als Bcc auch an dich.
+
+### ⏰ Automatik und Zeitplan
+
+Im Docker-Container ruft Cron alle 5 Minuten `bewerbungsagent tick` auf. Der Tick
+startet den Automatiklauf, sobald der Zeitplan aus dem Profil fällig ist
+(Standard: täglich 06:00 deutscher Zeit), und verschickt freigegebene
+Bewerbungen. Modus und Zeitplan änderst du im Cockpit bzw. unter
+**Profil → Automatik & Versand** – ohne Neustart.
+
+```yaml
+automatisierung:
+  modus: automatisch    # automatisch | nur_suchen | aus
+  cron: "0 6 * * *"     # Minute Stunde Tag Monat Wochentag
+  max_pro_lauf: 5       # so viele Bewerbungen bereitet ein Lauf vor
+  max_pro_tag: 10       # Sicherheitsgrenze für Sendungen pro Tag
+  probelauf_vorab: true # Online-Formular vorab testweise ausfüllen
+  ziel_pro_woche: 5
+```
+
+Lokal gibt `bewerbungsagent cron` die passende Crontab-Zeile aus (sie wird nicht
+selbst installiert). Jeder Abruf und jeder Lauf wird in der SQLite-Datenbank
+protokolliert und im Cockpit angezeigt.
 
 ---
 
 ## 🖥️ Nutzung
 
-### 🌐 Web UI (NEU!)
+### 🌐 Web-UI
 
 ```bash
-# UI installieren
-pip install -e ".[ui]"
-
-# Starten
-streamlit run app.py
-# oder
-./start-ui.sh
+pip install -e ".[ui,browser]"
+streamlit run app.py        # oder ./start-ui.sh
 ```
 
-Öffne `http://localhost:8501` im Browser für die interaktive Web-Oberfläche!
+Öffne `http://localhost:8501`:
 
-Siehe [UI_README.md](UI_README.md) für Details zur Web-UI.
+1. **👤 Profil & Einstellungen** – Daten, Formular-Angaben, Lebenslauf, Suchbegriffe, Automatik
+2. **🏠 Cockpit** – hier wartet jeden Morgen die Auswahl: **✅ Ja** schickt ab, **❌ Nein** blendet aus
+3. **🧭 Schritt für Schritt** – selbst suchen (mit Vorschlägen), Stellen auswählen, freigeben
+4. **📬 Bewerbungen** – Rückmeldungen, Nachfassen, Nachweis der Eigenbemühungen
+
+Siehe [UI_README.md](UI_README.md) für Details.
 
 ### 💻 CLI (Kommandozeile)
 
 ```bash
-# 1. Stellen suchen
-bewerbungsagent suchen
-bewerbungsagent suchen --was "Data Engineer" --wo Hamburg --umkreis 50 --tage 7
+# Automatik: suchen, bewerten, beste Stellen vorbereiten
+bewerbungsagent automatik
+bewerbungsagent warteschlange            # was wartet auf dein Ja?
+bewerbungsagent freigeben <ref> --senden # Ja + sofort verschicken
+bewerbungsagent ablehnen <ref> --grund "zu weit weg"
 
-# 2. Bewerten: Skill-Passung + Tonalität
-bewerbungsagent bewerten
-bewerbungsagent bewerten --ohne-llm      # rein heuristisch, ohne API-Kosten
-
-# 3. Bestenliste
+# Einzelschritte
+bewerbungsagent suchen --was "Data Engineer" --wo Hamburg --umkreis 50
+bewerbungsagent bewerten [--ohne-llm]
 bewerbungsagent top --limit 15 --offen
+bewerbungsagent vorbereiten <ref> [<ref> ...]
+bewerbungsagent senden
 
-# 4. Details + Anschreiben
-bewerbungsagent zeigen 10001-1003353506-S
-bewerbungsagent anschreiben 10001-1003353506-S
+# Suche verbessern und Nachweis
+bewerbungsagent vorschlaege --ki
+bewerbungsagent nachweis --von 2026-10-01 --bis 2026-10-31 --format pdf
 
-# 5. Bewerben — Probelauf (Standard)
-bewerbungsagent bewerben 10001-1003353506-S
+# Browser-Agent direkt (Standard: Probelauf, mit --absenden echt)
+bewerbungsagent bewerben <ref> [--absenden]
 
-# 6. Bewerben — echtes Absenden
-bewerbungsagent bewerben 10001-1003353506-S --absenden
-
-# Alles in einem Lauf
-bewerbungsagent pipeline
-
-# Übersicht
+# Zeitplan
+bewerbungsagent tick                     # Cron-Einstieg
+bewerbungsagent cron                     # Crontab-Zeile ausgeben
 bewerbungsagent status
 ```
 
@@ -161,11 +190,14 @@ Der Gesamtscore ist `Passung × 0,7 + Ton × 0,3`.
 
 | Komponente | Technologie |
 |---|---|
+| **UI** | Streamlit |
 | **CLI** | Python argparse + Rich |
 | **API** | Bundesagentur für Arbeit Jobsuche-API |
-| **LLM** | Anthropic Claude oder Ollama (OpenAI-kompatibel) |
+| **LLM** | Anthropic Claude, OpenAI oder Ollama |
 | **Browser** | browser-use + Playwright |
 | **Storage** | SQLite |
+| **Dokumente** | fpdf2 (PDF), pypdf (Lebenslauf) |
+| **Versand** | SMTP, browser-use |
 | **Konfiguration** | YAML-Profil |
 | **Sprache** | Python 3.11+ |
 
@@ -175,18 +207,23 @@ Der Gesamtscore ist `Passung × 0,7 + Ton × 0,3`.
 
 ```
 bewerbung-agent/
+├── app.py                        # Web-UI: Navigation
+├── seiten/                       # Cockpit, Schritt für Schritt, Bewerbungen, Profil
 ├── bewerbungsagent/
+│   ├── ablauf.py                 # suchen → bewerten → vorbereiten → freigeben → senden
+│   ├── zeitplan.py               # Cron-Ausdrücke (Tick-Logik)
+│   ├── vorschlaege.py            # Suchvorschläge und Such-Tipps
+│   ├── dokumente.py              # Anschreiben-PDF, Lebenslauftext, Nachweis
+│   ├── hintergrund.py            # Hintergrundprozesse und Sperren
+│   ├── ui.py                     # gemeinsame UI-Bausteine (Ja/Nein-Karte …)
 │   ├── cli.py                    # Kommandozeile
 │   ├── config.py                 # Profil-YAML
-│   ├── models.py                 # Job, Score, Application
+│   ├── models.py                 # Job, Score, Application, Vorgang
 │   ├── db.py                     # SQLite-Speicher
-│   ├── sources/arbeitsagentur.py # API-Client
-│   ├── scoring/
-│   │   ├── sentiment.py          # Lexikon für Anzeigen-Tonalität
-│   │   ├── heuristik.py          # Skill-Match, Ausschlüsse
-│   │   └── llm.py                # Semantische Bewertung (Claude/Ollama)
+│   ├── sources/                  # Bundesagentur für Arbeit, GET IN IT
+│   ├── scoring/                  # Sentiment, Heuristik, LLM
 │   ├── anschreiben.py            # Anschreiben-Generator
-│   └── bewerben/browser.py       # browser-use-Agent
+│   └── bewerben/                 # browser.py (Formulare), mail.py (SMTP), kanal.py
 ├── config/profil.example.yaml
 ├── tests/
 └── pyproject.toml

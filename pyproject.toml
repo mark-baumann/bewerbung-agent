@@ -9,6 +9,8 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.7",
     "anthropic>=0.69",
+    "fpdf2>=2.7",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -17,7 +19,7 @@ browser = [
     "playwright>=1.40",
 ]
 ui = [
-    "streamlit>=1.30",
+    "streamlit>=1.50",
 ]
 dev = [
     "pytest>=8.0",

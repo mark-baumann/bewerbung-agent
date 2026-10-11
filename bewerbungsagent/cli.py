@@ -13,11 +13,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from . import ablauf
 from .anschreiben import erzeuge as erzeuge_anschreiben
-from .config import lade_profil
+from .config import lade_env, lade_profil
 from .db import Speicher
-from .models import Application, Job, Score
-from .jobsuche import hole_jobs
+from .hintergrund import sperre
+from .models import Application
 from .scoring import llm as llm_modul
 from .sources import QUELLEN
 
@@ -30,41 +31,22 @@ console = Console()
 
 def cmd_suchen(args: argparse.Namespace) -> int:
     profil = lade_profil(args.profil)
-    s = profil.suche
-    begriffe = args.was or s.was
-    ort = args.wo if args.wo is not None else s.wo
-
-    alle: dict[str, Job] = {}
-    neu = aktualisiert = 0
-    quellen = args.quelle or s.quellen
     with Speicher(args.db) as db:
-        for quelle in quellen:
-            for begriff in begriffe:
-                console.print(f"[cyan]Suche ({quelle})[/] '{begriff}' in '{ort or 'ganz DE'}' ...")
-                try:
-                    jobs, neue, aktualisierte = hole_jobs(
-                        db, quelle=quelle, suchbegriff=begriff, wo=ort,
-                        umkreis=args.umkreis or s.umkreis,
-                        tage=args.tage or s.veroeffentlicht_seit_tagen,
-                        nur_vollzeit=s.nur_vollzeit,
-                        max_treffer=args.limit or s.max_pro_query,
-                        mit_details=not args.ohne_details,
-                    )
-                except Exception as e:
-                    console.print(f"[red]Suche fehlgeschlagen ({quelle}):[/] {e}")
-                    continue
-                console.print(f"  {len(jobs)} Treffer")
-                neu += neue
-                aktualisiert += aktualisierte
-                for j in jobs:
-                    alle.setdefault(j.ref, j)
-
-    if not alle:
+        ergebnis = ablauf.suche_ausfuehren(
+            db, profil,
+            begriffe=args.was, wo=args.wo, umkreis=args.umkreis, tage=args.tage,
+            max_treffer=args.limit, quellen=args.quelle, mit_details=not args.ohne_details,
+            fortschritt=lambda text, _anteil: console.print(f"[cyan]{text}[/]"),
+        )
+    for fehler in ergebnis.fehler:
+        console.print(f"[red]Suche fehlgeschlagen:[/] {fehler}")
+    for begriff, anzahl in ergebnis.je_begriff.items():
+        console.print(f"  {begriff}: {anzahl} Treffer")
+    if not ergebnis.refs:
         console.print("[yellow]Keine Stellen gefunden.[/]")
         return 1
-
-    console.print(f"[green]{neu} neue[/] und {aktualisiert} aktualisierte Stellen gespeichert "
-                  f"({len(alle)} eindeutige Treffer).")
+    console.print(f"[green]{ergebnis.neu} neue[/] und {ergebnis.aktualisiert} aktualisierte Stellen "
+                  f"gespeichert ({len(ergebnis.refs)} eindeutige Treffer).")
     return 0
 
 
@@ -75,20 +57,16 @@ def cmd_suchen(args: argparse.Namespace) -> int:
 def cmd_bewerten(args: argparse.Namespace) -> int:
     profil = lade_profil(args.profil)
     with Speicher(args.db) as db:
-        jobs = db.jobs(nur_ohne_score=not args.alle, limit=args.limit)
-        if not jobs:
-            console.print("[yellow]Nichts zu bewerten. Erst 'suchen' ausfuehren.[/]")
-            return 1
-
         mit_llm = not args.ohne_llm
         if mit_llm and not llm_modul.client_verfuegbar():
             console.print("[yellow]Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY/OPENAI_API_KEY/OLLAMA_API_KEY) - bewerte rein heuristisch.[/]")
             mit_llm = False
 
-        console.print(f"Bewerte {len(jobs)} Stellen ({'LLM + Heuristik' if mit_llm else 'Heuristik'}) ...")
-        scores = llm_modul.bewerte_jobs(jobs, profil, mit_llm=mit_llm)
-        for score in scores:
-            db.speichere_score(score)
+        scores = ablauf.bewerte_neue(db, profil, alle=args.alle, mit_llm=mit_llm, limit=args.limit)
+        if not scores:
+            console.print("[yellow]Nichts zu bewerten. Erst 'suchen' ausfuehren.[/]")
+            return 1
+        console.print(f"{len(scores)} Stellen bewertet ({'LLM + Heuristik' if mit_llm else 'Heuristik'}).")
 
         ausgeschlossen = sum(1 for s in scores if s.ausgeschlossen)
         ueber_schwelle = sum(
@@ -364,17 +342,166 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
 
 
 def cmd_cron(args: argparse.Namespace) -> int:
-    """Gibt eine sichere, installierbare Cron-Zeile aus (keine Crontab-Aenderung)."""
+    """Gibt eine sichere, installierbare Cron-Zeile aus (keine Crontab-Aenderung).
+
+    Cron ruft alle 5 Minuten `tick` auf; ob der im Profil hinterlegte Zeitplan
+    faellig ist, entscheidet `tick` selbst. So greifen Aenderungen aus der UI sofort.
+    """
     profil_obj = lade_profil(args.profil)
-    if not profil_obj.automatisierung.aktiv:
-        console.print("[yellow]Automatisierung ist im Profil deaktiviert (automatisierung.aktiv: false).[/]")
+    if profil_obj.automatisierung.effektiver_modus == "aus":
+        console.print("[yellow]Automatisierung ist im Profil ausgeschaltet (automatisierung.modus: aus).[/]")
         return 1
     executable = args.executable or "bewerbungsagent"
     profil = f" --profil {args.profil}" if args.profil else ""
     db = f" --db {args.db}" if args.db else ""
-    console.print("Cron installiert sich nicht selbst. Fuege diese Zeile mit `crontab -e` ein:")
-    zeitplan = args.zeitplan or profil_obj.automatisierung.cron
-    console.print(f"{zeitplan} {executable}{profil}{db} pipeline --offen >> daten/cron.log 2>&1")
+    console.print("Cron installiert sich nicht selbst. Fuege diese Zeile mit `crontab -e` ein "
+                  f"(Arbeitsverzeichnis: {Path.cwd()}):")
+    console.print(f"*/5 * * * * cd {Path.cwd()} && {executable}{profil}{db} tick >> daten/cron.log 2>&1",
+                  soft_wrap=True)
+    console.print(f"[dim]Zeitplan laut Profil: {profil_obj.automatisierung.cron} "
+                  f"(Modus {profil_obj.automatisierung.effektiver_modus})[/]")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Automatik, Freigabe und Versand
+# --------------------------------------------------------------------------- #
+
+def _zeige_zusammenfassung(titel: str, daten: dict) -> None:
+    zeilen = [f"{k}: {v}" for k, v in daten.items() if v not in (None, [], "")]
+    console.print(Panel("\n".join(zeilen) or "-", title=titel))
+
+
+def cmd_automatik(args: argparse.Namespace) -> int:
+    """Ein kompletter Lauf jetzt: suchen, bewerten, Bewerbungen vorbereiten."""
+    profil = lade_profil(args.profil)
+    with sperre("automatik") as frei:
+        if not frei:
+            console.print("[yellow]Ein Automatiklauf läuft bereits.[/]")
+            return 1
+        with Speicher(args.db) as db:
+            ergebnis = ablauf.automatik_lauf(
+                db, profil, ausloeser=args.ausloeser, nur_suchen=args.nur_suchen,
+                mit_llm=not args.ohne_llm,
+            )
+    _zeige_zusammenfassung("Automatiklauf", ergebnis)
+    return 0
+
+
+def cmd_tick(args: argparse.Namespace) -> int:
+    """Cron-Einstieg: faelligen Automatiklauf starten und Freigaben senden."""
+    profil = lade_profil(args.profil)
+    with Speicher(args.db) as db:
+        ergebnis = ablauf.tick(db, profil)
+    # Nur protokollieren, wenn etwas passiert ist (cron.log klein halten)
+    if ergebnis.get("automatik") or any(
+        v for k, v in (ergebnis.get("senden") or {}).items() if k != "abgeschickt" or v
+    ) or ergebnis.get("zeitplan_fehler"):
+        console.print(ergebnis)
+    return 0
+
+
+def cmd_vorbereiten(args: argparse.Namespace) -> int:
+    profil = lade_profil(args.profil)
+    # Wartet, bis ein laufender Automatiklauf fertig ist, statt abzubrechen
+    with sperre("automatik", warten=True):
+        with Speicher(args.db) as db:
+            ergebnis = ablauf.vorbereiten_lauf(
+                db, profil, args.refs, ausloeser=args.ausloeser, mit_llm=not args.ohne_llm,
+                probelauf=False if args.ohne_probelauf else None,
+            )
+    _zeige_zusammenfassung("Vorbereitung", ergebnis)
+    return 0
+
+
+def cmd_senden(args: argparse.Namespace) -> int:
+    profil = lade_profil(args.profil)
+    with Speicher(args.db) as db:
+        ergebnis = ablauf.senden_lauf(db, profil, ausloeser=args.ausloeser)
+    _zeige_zusammenfassung("Versand", ergebnis)
+    return 1 if ergebnis.get("fehlgeschlagen") else 0
+
+
+def cmd_warteschlange(args: argparse.Namespace) -> int:
+    with Speicher(args.db) as db:
+        vorgaenge = db.vorgaenge(args.status or None)
+        t = Table(title="Bewerbungsvorgänge")
+        for spalte in ("Status", "Kanal", "Titel", "Arbeitgeber", "Referenz", "Hinweis"):
+            t.add_column(spalte, overflow="fold")
+        for v in vorgaenge:
+            job = db.job(v.ref)
+            t.add_row(v.status, v.kanal, job.titel if job else "-", job.arbeitgeber if job else "-",
+                      v.ref, textwrap.shorten(v.hinweis or "", 60))
+    console.print(t)
+    return 0
+
+
+def cmd_freigeben(args: argparse.Namespace) -> int:
+    profil = lade_profil(args.profil)
+    with Speicher(args.db) as db:
+        for ref in args.refs:
+            try:
+                ablauf.freigeben(db, profil, ref)
+                console.print(f"[green]Freigegeben:[/] {ref}")
+            except ValueError as e:
+                console.print(f"[red]{ref}:[/] {e}")
+    if args.senden:
+        return cmd_senden(args)
+    return 0
+
+
+def cmd_ablehnen(args: argparse.Namespace) -> int:
+    profil = lade_profil(args.profil)
+    with Speicher(args.db) as db:
+        for ref in args.refs:
+            ablauf.ablehnen(db, profil, ref, grund=args.grund or "",
+                            arbeitgeber_sperren=args.arbeitgeber_sperren, profil_pfad=args.profil)
+            console.print(f"Abgelehnt: {ref}")
+    return 0
+
+
+def cmd_vorschlaege(args: argparse.Namespace) -> int:
+    from . import vorschlaege
+
+    profil = lade_profil(args.profil)
+    with Speicher(args.db) as db:
+        liste = vorschlaege.aus_treffern(db, profil)
+        if args.ki:
+            gute = [j.titel for j, _ in db.bestenliste(min_score=profil.bewertung.min_score, limit=20)]
+            try:
+                liste += vorschlaege.per_llm(profil, gute)
+            except Exception as e:
+                console.print(f"[yellow]KI-Vorschläge nicht verfügbar:[/] {e}")
+        tipps = vorschlaege.such_tipps(db, profil)
+    t = Table(title="Vorschläge für weitere Suchbegriffe")
+    t.add_column("Suchbegriff")
+    t.add_column("Warum")
+    t.add_column("Quelle", style="dim")
+    for v in liste:
+        t.add_row(v.begriff, v.grund, v.quelle)
+    console.print(t)
+    for tipp in tipps:
+        console.print(f"[cyan]Tipp:[/] {tipp.text}")
+    return 0
+
+
+def cmd_nachweis(args: argparse.Namespace) -> int:
+    from datetime import date, timedelta
+
+    from . import dokumente
+
+    profil = lade_profil(args.profil)
+    bis = date.fromisoformat(args.bis) if args.bis else date.today()
+    von = date.fromisoformat(args.von) if args.von else bis - timedelta(days=30)
+    with Speicher(args.db) as db:
+        zeilen = dokumente.nachweis_zeilen(db, von, bis)
+    ziel = Path(args.ausgabe or f"daten/nachweis_{von}_{bis}.{args.format}")
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    if args.format == "csv":
+        ziel.write_text(dokumente.nachweis_csv(zeilen), encoding="utf-8-sig")
+    else:
+        ziel.write_bytes(dokumente.nachweis_pdf(zeilen, profil, von, bis))
+    console.print(f"[green]{len(zeilen)} Bewerbungen[/] von {von:%d.%m.%Y} bis {bis:%d.%m.%Y} → {ziel}")
     return 0
 
 
@@ -458,14 +585,61 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--offen", action="store_true")
     pl.set_defaults(func=cmd_pipeline)
 
-    cr = sub.add_parser("cron", help="Cron-Zeile fuer die regelmaessige Pipeline ausgeben")
-    cr.add_argument("--zeitplan", default=None, help="Cron-Ausdruck (Standard: automatisierung.cron im Profil)")
+    cr = sub.add_parser("cron", help="Cron-Zeile fuer den regelmaessigen Tick ausgeben")
     cr.add_argument("--executable", default="bewerbungsagent", help="Absoluter Pfad zur CLI, falls noetig")
     cr.set_defaults(func=cmd_cron)
+
+    au = sub.add_parser("automatik", help="Jetzt suchen, bewerten und Bewerbungen vorbereiten")
+    au.add_argument("--nur-suchen", action="store_true", help="Nur suchen und bewerten, nichts vorbereiten")
+    au.add_argument("--ohne-llm", action="store_true")
+    au.add_argument("--ausloeser", default="cli", help=argparse.SUPPRESS)
+    au.set_defaults(func=cmd_automatik)
+
+    ti = sub.add_parser("tick", help="Cron-Einstieg: faelligen Lauf starten, Freigaben senden")
+    ti.set_defaults(func=cmd_tick)
+
+    vb = sub.add_parser("vorbereiten", help="Bewerbungen fuer diese Referenzen vorbereiten")
+    vb.add_argument("refs", nargs="+")
+    vb.add_argument("--ohne-llm", action="store_true")
+    vb.add_argument("--ohne-probelauf", action="store_true", help="Formular nicht testweise ausfuellen")
+    vb.add_argument("--ausloeser", default="cli", help=argparse.SUPPRESS)
+    vb.set_defaults(func=cmd_vorbereiten)
+
+    se = sub.add_parser("senden", help="Alle freigegebenen Bewerbungen verschicken")
+    se.add_argument("--ausloeser", default="cli", help=argparse.SUPPRESS)
+    se.set_defaults(func=cmd_senden)
+
+    ws = sub.add_parser("warteschlange", help="Bewerbungsvorgaenge anzeigen")
+    ws.add_argument("--status", action="append", help="Nur diese Status (mehrfach moeglich)")
+    ws.set_defaults(func=cmd_warteschlange)
+
+    fg = sub.add_parser("freigeben", help="Vorbereitete Bewerbungen freigeben (Ja)")
+    fg.add_argument("refs", nargs="+")
+    fg.add_argument("--senden", action="store_true", help="Direkt im Anschluss verschicken")
+    fg.add_argument("--ausloeser", default="cli", help=argparse.SUPPRESS)
+    fg.set_defaults(func=cmd_freigeben)
+
+    ab = sub.add_parser("ablehnen", help="Vorgeschlagene Stellen ablehnen (Nein)")
+    ab.add_argument("refs", nargs="+")
+    ab.add_argument("--grund", default=None)
+    ab.add_argument("--arbeitgeber-sperren", action="store_true", help="Arbeitgeber nie wieder vorschlagen")
+    ab.set_defaults(func=cmd_ablehnen)
+
+    vs = sub.add_parser("vorschlaege", help="Weitere Suchbegriffe und Such-Tipps")
+    vs.add_argument("--ki", action="store_true", help="Zusaetzlich Vorschlaege vom LLM holen")
+    vs.set_defaults(func=cmd_vorschlaege)
+
+    nw = sub.add_parser("nachweis", help="Nachweis der Eigenbemuehungen exportieren")
+    nw.add_argument("--von", default=None, help="Startdatum JJJJ-MM-TT (Standard: vor 30 Tagen)")
+    nw.add_argument("--bis", default=None, help="Enddatum JJJJ-MM-TT (Standard: heute)")
+    nw.add_argument("--format", choices=["csv", "pdf"], default="pdf")
+    nw.add_argument("--ausgabe", default=None)
+    nw.set_defaults(func=cmd_nachweis)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
+    lade_env()
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,

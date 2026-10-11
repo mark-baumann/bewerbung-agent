@@ -225,6 +225,14 @@ def _detail_anreichern(job: Job, d: dict[str, Any]) -> None:
         job.befristung = "unbefristet"
     verg = d.get("verguetungsangabe")
     job.verguetung = None if verg in (None, "KEINE_ANGABEN") else str(verg)
+    von, bis = d.get("gehaltsspanneVon"), d.get("gehaltsspanneBis")
+    if von or bis:
+        spanne = " – ".join(f"{_als_float(w):,.0f}".replace(",", ".") for w in (von, bis) if _als_float(w))
+        job.verguetung = f"{spanne} EUR" if spanne else job.verguetung
+    if d.get("istArbeitnehmerUeberlassung"):
+        # Strukturiertes Merkmal der Jobboerse - damit greifen Ausschluesse wie
+        # "Zeitarbeit" auch, wenn die Anzeige es selbst nicht erwaehnt.
+        job.beschreibung = ((job.beschreibung or "") + "\n\n[Jobbörse: Arbeitnehmerüberlassung / Zeitarbeit]").strip()
 
     lokationen = d.get("stellenlokationen") or []
     if lokationen and not job.ort:

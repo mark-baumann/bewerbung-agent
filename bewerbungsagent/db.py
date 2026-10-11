@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .models import Application, Job, Score
+from .models import Application, Job, Score, Vorgang
 
 # "daten/" ist der einzige Pfad, der in Dockerfile/ONBOARDING als Volume-Mount
 # dokumentiert ist (`-v $PWD/daten:/app/daten`) und im Deployment-Stack persistent
@@ -98,6 +100,51 @@ CREATE TABLE IF NOT EXISTS suchen (
     parameter TEXT NOT NULL,
     refs TEXT NOT NULL
 );
+
+-- Welche Abfrage hat welche Stelle geliefert (Suchbegriff-Statistik)
+CREATE TABLE IF NOT EXISTS abruf_treffer (
+    abruf_id INTEGER NOT NULL REFERENCES abrufe(id) ON DELETE CASCADE,
+    ref TEXT NOT NULL,
+    PRIMARY KEY (abruf_id, ref)
+);
+CREATE INDEX IF NOT EXISTS idx_abruf_treffer_ref ON abruf_treffer(ref);
+
+-- Aktueller Stand der Bewerbung je Stelle (Freigabe-Warteschlange + Tracker)
+CREATE TABLE IF NOT EXISTS vorgaenge (
+    ref TEXT PRIMARY KEY REFERENCES jobs(ref) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    kanal TEXT,
+    empfaenger TEXT,
+    bewerbungs_url TEXT,
+    betreff TEXT,
+    anschreiben TEXT,
+    anschreiben_pdf TEXT,
+    email_text TEXT,
+    probelauf TEXT,
+    hinweis TEXT,
+    herkunft TEXT,
+    erstellt_am TEXT,
+    aktualisiert_am TEXT,
+    freigegeben_am TEXT,
+    gesendet_am TEXT,
+    rueckmeldung TEXT,
+    rueckmeldung_am TEXT,
+    notiz TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_vorgaenge_status ON vorgaenge(status);
+
+-- Protokoll der Hintergrundlaeufe (Automatik, Vorbereiten, Senden)
+CREATE TABLE IF NOT EXISTS laeufe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    art TEXT NOT NULL,
+    ausloeser TEXT NOT NULL,
+    gestartet_am TEXT NOT NULL,
+    beendet_am TEXT,
+    status TEXT NOT NULL,
+    zusammenfassung TEXT,
+    fehler TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_laeufe_art ON laeufe(art, id DESC);
 """
 
 # Spalten, die nach dem urspruenglichen Schema per ALTER TABLE ergaenzt wurden.
@@ -114,13 +161,38 @@ JOBS_MIGRATIONS: dict[str, str] = {
 }
 
 
+# Vorgaenge in diesen Status gelten als "erledigt beworben" (Wochenziel, Nachweis).
+BEWORBEN_STATUS = ("abgeschickt", "selbst_beworben")
+
+
+def _jetzt() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def dubletten_schluessel(arbeitgeber: str | None, titel: str | None) -> str:
+    """Gleiche Stelle aus zwei Quellen erkennen: Arbeitgeber + Titel ohne (m/w/d)."""
+
+    def norm(text: str | None) -> str:
+        text = (text or "").casefold()
+        text = re.sub(r"\((?:[mwdfx]\s*/\s*)+[mwdfx]\)|\b[mwd]/[mwd]/[mwd]\b", " ", text)
+        text = re.sub(r"\b(gmbh|ag|se|kg|co|mbh|ug|e\.?v\.?)\b", " ", text)
+        text = re.sub(r"[^\w]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    return f"{norm(arbeitgeber)}|{norm(titel)}"
+
+
 class Speicher:
     def __init__(self, pfad: str | Path | None = None):
         self.pfad = Path(pfad or STANDARD_DB)
         self.pfad.parent.mkdir(parents=True, exist_ok=True)
-        self.con = sqlite3.connect(self.pfad)
+        # UI, Cron und Hintergrund-Worker greifen parallel zu: WAL + Wartezeit
+        # statt sofortigem "database is locked".
+        self.con = sqlite3.connect(self.pfad, timeout=30)
         self.con.row_factory = sqlite3.Row
         self.con.execute("PRAGMA foreign_keys = ON")
+        if str(self.pfad) != ":memory:":
+            self.con.execute("PRAGMA journal_mode = WAL")
         self.con.executescript(SCHEMA)
         self._migriere_jobs_spalten()
         self.con.commit()
@@ -324,6 +396,214 @@ class Speicher:
             "probelaeufe": z("SELECT COUNT(*) FROM applications WHERE status='probelauf'"),
         }
 
+    # ---------------- Abruf-Treffer ----------------
+
+    def merke_abruf_treffer(self, abruf_id: int, refs: Iterable[str]) -> None:
+        self.con.executemany(
+            "INSERT OR IGNORE INTO abruf_treffer (abruf_id, ref) VALUES (?, ?)",
+            [(abruf_id, r) for r in dict.fromkeys(refs)],
+        )
+        self.con.commit()
+
+    def suchbegriff_statistik(self, min_score: float = 0.0) -> list[dict[str, Any]]:
+        """Je Suchbegriff: Abrufe, eindeutige Treffer, passende und beworbene Stellen."""
+        rows = self.con.execute(
+            """
+            SELECT a.suchbegriff AS begriff,
+                   COUNT(DISTINCT a.id) AS abrufe,
+                   COUNT(DISTINCT t.ref) AS treffer,
+                   COUNT(DISTINCT CASE WHEN s.ausgeschlossen = 0 AND s.gesamt >= ?
+                                       THEN t.ref END) AS passend,
+                   COUNT(DISTINCT CASE WHEN v.status IN ('abgeschickt', 'selbst_beworben',
+                                                         'freigegeben', 'wird_gesendet')
+                                       THEN t.ref END) AS beworben,
+                   MAX(a.gestartet_am) AS zuletzt
+            FROM abrufe a
+            LEFT JOIN abruf_treffer t ON t.abruf_id = a.id
+            LEFT JOIN scores s ON s.ref = t.ref
+            LEFT JOIN vorgaenge v ON v.ref = t.ref
+            WHERE a.status = 'erfolgreich'
+            GROUP BY a.suchbegriff
+            ORDER BY passend DESC, treffer DESC
+            """,
+            (min_score,),
+        )
+        ergebnis = [dict(r) for r in rows]
+        # Treffer des jeweils letzten Abrufs je Begriff (fuer "liefert nichts mehr")
+        for zeile in ergebnis:
+            letzte = self.con.execute(
+                "SELECT COALESCE(SUM(treffer), 0) FROM abrufe WHERE suchbegriff = ? "
+                "AND gestartet_am = ?",
+                (zeile["begriff"], zeile["zuletzt"]),
+            ).fetchone()[0]
+            zeile["letzte_treffer"] = int(letzte or 0)
+        return ergebnis
+
+    # ---------------- Vorgaenge ----------------
+
+    def setze_vorgang(self, vorgang: Vorgang) -> None:
+        vorgang.aktualisiert_am = _jetzt()
+        d = vorgang.as_dict()
+        spalten = ", ".join(d)
+        platzhalter = ", ".join(f":{k}" for k in d)
+        updates = ", ".join(f"{k}=excluded.{k}" for k in d if k not in ("ref", "erstellt_am"))
+        self.con.execute(
+            f"INSERT INTO vorgaenge ({spalten}) VALUES ({platzhalter}) "
+            f"ON CONFLICT(ref) DO UPDATE SET {updates}",
+            d,
+        )
+        self.con.commit()
+
+    def aktualisiere_vorgang(self, ref: str, **felder: Any) -> None:
+        erlaubt = set(Vorgang.__dataclass_fields__) - {"ref", "erstellt_am"}
+        unbekannt = set(felder) - erlaubt
+        if unbekannt:
+            raise ValueError(f"Unbekannte Vorgangsfelder: {sorted(unbekannt)}")
+        felder["aktualisiert_am"] = _jetzt()
+        zuweisung = ", ".join(f"{k} = :{k}" for k in felder)
+        self.con.execute(f"UPDATE vorgaenge SET {zuweisung} WHERE ref = :ref", {**felder, "ref": ref})
+        self.con.commit()
+
+    def vorgang(self, ref: str) -> Vorgang | None:
+        row = self.con.execute("SELECT * FROM vorgaenge WHERE ref = ?", (ref,)).fetchone()
+        return _zu_vorgang(row) if row else None
+
+    def vorgaenge(self, status: str | Iterable[str] | None = None) -> list[Vorgang]:
+        sql = "SELECT * FROM vorgaenge"
+        params: list[Any] = []
+        if status:
+            liste = [status] if isinstance(status, str) else list(status)
+            sql += f" WHERE status IN ({', '.join('?' for _ in liste)})"
+            params = liste
+        sql += " ORDER BY aktualisiert_am DESC"
+        return [_zu_vorgang(r) for r in self.con.execute(sql, params)]
+
+    def loesche_vorgang(self, ref: str) -> None:
+        self.con.execute("DELETE FROM vorgaenge WHERE ref = ?", (ref,))
+        self.con.commit()
+
+    def beanspruche_zum_senden(self, ref: str) -> bool:
+        """Atomar: nur ein Worker darf eine freigegebene Bewerbung senden."""
+        cur = self.con.execute(
+            "UPDATE vorgaenge SET status = 'wird_gesendet', aktualisiert_am = ? "
+            "WHERE ref = ? AND status = 'freigegeben'",
+            (_jetzt(), ref),
+        )
+        self.con.commit()
+        return cur.rowcount == 1
+
+    def haengende_vorgaenge(self, status: str, minuten: int = 30) -> list[Vorgang]:
+        grenze = (datetime.now(timezone.utc) - timedelta(minutes=minuten)).isoformat(timespec="seconds")
+        rows = self.con.execute(
+            "SELECT * FROM vorgaenge WHERE status = ? AND aktualisiert_am < ?", (status, grenze)
+        )
+        return [_zu_vorgang(r) for r in rows]
+
+    def beworben_seit(self, zeitpunkt_iso: str, status: Iterable[str] = BEWORBEN_STATUS) -> int:
+        """Anzahl Bewerbungen mit diesem Status seit dem Zeitpunkt (UTC-ISO)."""
+        status = list(status)
+        platzhalter = ", ".join("?" for _ in status)
+        return int(self.con.execute(
+            f"SELECT COUNT(*) FROM vorgaenge WHERE status IN ({platzhalter}) "
+            "AND COALESCE(gesendet_am, aktualisiert_am) >= ?",
+            (*status, zeitpunkt_iso),
+        ).fetchone()[0])
+
+    def kandidaten(
+        self,
+        min_score: float = 0.0,
+        limit: int = 20,
+        refs: Iterable[str] | None = None,
+        ausschluss_arbeitgeber: Iterable[str] = (),
+    ) -> list[tuple[Job, Score]]:
+        """Bestbewertete Stellen ohne Vorgang/Bewerbung, Dubletten zusammengefasst."""
+        sql = """
+            SELECT j.*, s.gesamt, s.passung, s.sentiment, s.treffer, s.gruen, s.rot,
+                   s.begruendung, s.ausgeschlossen, s.ausschlussgrund, s.bewerter, s.bewertet_am
+            FROM jobs j JOIN scores s ON s.ref = j.ref
+            WHERE s.ausgeschlossen = 0 AND s.gesamt >= ?
+              AND j.ref NOT IN (SELECT ref FROM vorgaenge)
+              AND j.ref NOT IN (SELECT ref FROM applications
+                                WHERE status IN ('abgeschickt', 'manuell_beworben', 'uebersprungen'))
+        """
+        params: list[Any] = [min_score]
+        if refs is not None:
+            refs = list(dict.fromkeys(refs))
+            if not refs:
+                return []
+            sql += f" AND j.ref IN ({', '.join('?' for _ in refs)})"
+            params += refs
+        sql += " ORDER BY s.gesamt DESC"
+        gesperrt = {a.strip().casefold() for a in ausschluss_arbeitgeber if a.strip()}
+        bekannt = {
+            dubletten_schluessel(r["arbeitgeber"], r["titel"])
+            for r in self.con.execute(
+                "SELECT j.arbeitgeber, j.titel FROM vorgaenge v JOIN jobs j ON j.ref = v.ref"
+            )
+        }
+        ergebnis: list[tuple[Job, Score]] = []
+        for row in self.con.execute(sql, params):
+            job = _zu_job(row)
+            if gesperrt and (job.arbeitgeber or "").strip().casefold() in gesperrt:
+                continue
+            schluessel = dubletten_schluessel(job.arbeitgeber, job.titel)
+            if schluessel in bekannt:
+                continue
+            bekannt.add(schluessel)
+            ergebnis.append((job, _zu_score(row)))
+            if len(ergebnis) >= limit:
+                break
+        return ergebnis
+
+    # ---------------- Laeufe ----------------
+
+    def starte_lauf(self, art: str, ausloeser: str) -> int:
+        cur = self.con.execute(
+            "INSERT INTO laeufe (art, ausloeser, gestartet_am, status) VALUES (?, ?, ?, 'laeuft')",
+            (art, ausloeser, _jetzt()),
+        )
+        self.con.commit()
+        return int(cur.lastrowid)
+
+    def beende_lauf(
+        self, lauf_id: int, zusammenfassung: dict[str, Any] | None = None, fehler: str | None = None,
+    ) -> None:
+        self.con.execute(
+            "UPDATE laeufe SET beendet_am = ?, status = ?, zusammenfassung = ?, fehler = ? WHERE id = ?",
+            (
+                _jetzt(),
+                "fehler" if fehler else "erfolgreich",
+                json.dumps(zusammenfassung or {}, ensure_ascii=False),
+                fehler,
+                lauf_id,
+            ),
+        )
+        self.con.commit()
+
+    def letzte_laeufe(self, art: str | Iterable[str] | None = None, limit: int = 10) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM laeufe"
+        params: list[Any] = []
+        if art:
+            arten = [art] if isinstance(art, str) else list(art)
+            sql += f" WHERE art IN ({', '.join('?' for _ in arten)})"
+            params = arten
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        ergebnis = []
+        for row in self.con.execute(sql, params):
+            d = dict(row)
+            d["zusammenfassung"] = json.loads(d["zusammenfassung"] or "{}")
+            ergebnis.append(d)
+        return ergebnis
+
+    def laufende_laeufe(self, art: str | Iterable[str] | None = None, minuten: int = 120) -> list[dict[str, Any]]:
+        """Laeufe mit Status 'laeuft', die juenger als `minuten` sind (aeltere gelten als abgestuerzt)."""
+        grenze = (datetime.now(timezone.utc) - timedelta(minutes=minuten)).isoformat(timespec="seconds")
+        return [
+            l for l in self.letzte_laeufe(art, limit=20)
+            if l["status"] == "laeuft" and l["gestartet_am"] >= grenze
+        ]
+
 
 def _zu_job(row: sqlite3.Row) -> Job:
     felder = set(Job.__dataclass_fields__)
@@ -349,3 +629,12 @@ def _zu_score(row: sqlite3.Row) -> Score:
         bewerter=row["bewerter"] or "heuristik",
         bewertet_am=row["bewertet_am"] or "",
     )
+
+
+def _zu_vorgang(row: sqlite3.Row) -> Vorgang:
+    felder = set(Vorgang.__dataclass_fields__)
+    daten = {k: row[k] for k in row.keys() if k in felder}
+    daten["rueckmeldung"] = daten.get("rueckmeldung") or ""
+    daten["kanal"] = daten.get("kanal") or "manuell"
+    daten["herkunft"] = daten.get("herkunft") or "manuell"
+    return Vorgang(**daten)

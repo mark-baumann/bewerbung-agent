@@ -40,6 +40,7 @@ def hole_jobs(
         for job in jobs:
             job.quelle = job.quelle or quelle
         neu, aktualisiert = db.speichere_jobs(jobs)
+        db.merke_abruf_treffer(abruf_id, [j.ref for j in jobs])
     except Exception as exc:
         db.beende_abruf(abruf_id, fehler=str(exc)[:1000])
         raise
