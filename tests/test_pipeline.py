@@ -323,9 +323,10 @@ def test_speicher_protokolliert_datenabruf(tmp_path):
     assert (abruf["treffer"], abruf["neu"], abruf["aktualisiert"]) == (3, 2, 1)
 
 
-def test_docker_startet_taeglichen_abruf():
+def test_docker_startet_zeitplan_tick_mit_umgebung():
     entrypoint = Path("docker-entrypoint.sh").read_text(encoding="utf-8")
-    assert "30 2 * * * root cd /app && bewerbungsagent pipeline --offen" in entrypoint
+    assert "*/5 * * * * root . /etc/bewerbungsagent.env; cd /app && bewerbungsagent tick" in entrypoint
+    assert "/etc/bewerbungsagent.env" in entrypoint and "0o600" in entrypoint
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     assert "cron" in dockerfile
     assert "tzdata" in dockerfile

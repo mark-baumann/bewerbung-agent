@@ -38,11 +38,28 @@ suche:
     - arbeitsagentur
     - get-in-it
 
-# Cron wird ausserhalb der Web-App ausgefuehrt. `bewerbungsagent cron` gibt
-# die passende Crontab-Zeile aus; jeder Lauf wird im Dashboard protokolliert.
+# Automatischer Ablauf. Cron ruft alle 5 Minuten `bewerbungsagent tick` auf
+# (im Docker-Container eingebaut, lokal: `bewerbungsagent cron`); der Tick
+# startet den Lauf, sobald der Zeitplan faellig ist. Vorbereitete Bewerbungen
+# gehen erst nach deinem "Ja" auf der Startseite raus.
 automatisierung:
   aktiv: true
-  cron: "30 2 * * *"             # taeglich um 02:30 Uhr (deutsche Zeit)
+  modus: automatisch             # automatisch | nur_suchen | aus
+  cron: "0 6 * * *"              # taeglich um 06:00 Uhr (deutsche Zeit)
+  max_pro_lauf: 5                # so viele Bewerbungen bereitet ein Lauf vor
+  max_pro_tag: 10                # Sicherheitsgrenze fuer Sendungen pro Tag
+  probelauf_vorab: true          # Online-Formular vorab testweise ausfuellen
+  ziel_pro_woche: 5              # Wochenziel (z. B. aus der Eingliederungsvereinbarung)
+
+# Angaben, die Bewerbungsformulare oft als Pflichtfeld abfragen
+angaben:
+  anrede: Herr                   # Herr | Frau | divers
+  verfuegbar_ab: ab sofort
+  kuendigungsfrist: keine
+  gehaltsvorstellung: "60.000 EUR brutto/Jahr"
+  arbeitserlaubnis: deutsche Staatsangehoerigkeit
+  fuehrerschein: Klasse B
+  sprachen: Deutsch (Muttersprache), Englisch (C1)
 
 bewertung:
   # Pflicht-Skills: bestimmen die fachliche Passung
@@ -70,6 +87,8 @@ bewertung:
   min_score: 60
   modell: claude-opus-5
   effort: medium                   # low | medium | high | xhigh | max
+  # Wird ueber "Nein - Arbeitgeber nie wieder vorschlagen" gefuellt
+  ausschluss_arbeitgeber: []
 
 unterlagen:
   lebenslauf: unterlagen/lebenslauf.pdf

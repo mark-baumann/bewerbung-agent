@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -25,6 +26,19 @@ log = logging.getLogger(__name__)
 STANDARD_DOMAINS = [
     "*.arbeitsagentur.de",
     "arbeitsagentur.de",
+]
+
+# Verbreitete Bewerbermanagementsysteme (ATS), auf die Karriereseiten weiterleiten.
+# Ohne sie bricht der Agent an der Domain-Schranke ab, sobald "Jetzt bewerben"
+# auf das System des Arbeitgebers springt.
+ATS_DOMAINS = [
+    "softgarden.io", "softgarden.de", "personio.de", "personio.com", "jobs.personio.de",
+    "myworkdayjobs.com", "myworkdaysite.com", "successfactors.com", "successfactors.eu",
+    "sapsf.com", "sapsf.eu", "smartrecruiters.com", "greenhouse.io", "lever.co", "join.com",
+    "recruitee.com", "dvinci-hr.com", "dvinci.de", "rexx-systems.com", "onlyfy.jobs",
+    "prescreen.io", "concludis.de", "umantis.com", "b-ite.com", "b-ite.de", "workable.com",
+    "teamtailor.com", "bewerbermanagement.net", "jobbase.io", "taleo.net", "oraclecloud.com",
+    "icims.com", "jobvite.com", "ashbyhq.com", "kenjo.io", "factorial.de",
 ]
 
 
@@ -88,6 +102,10 @@ def _ergebnis_modell():
             default="",
             description="Login-Pflicht, Captcha, kein Formular, Bewerbung nur per E-Mail o. Ae.",
         )
+        bewerbungs_email: str = Field(
+            default="",
+            description="E-Mail-Adresse fuer Bewerbungen, falls die Seite nur diesen Weg anbietet",
+        )
         letzte_url: str = Field(default="")
 
     return BewerbungsErgebnis
@@ -98,14 +116,22 @@ def _sandbox_moeglich() -> bool:
     return getattr(os, "geteuid", lambda: 1000)() != 0
 
 
+def _host_domains(url: str) -> list[str]:
+    host = urlparse(url).hostname or ""
+    if not host:
+        return []
+    teile = host.split(".")
+    basis = ".".join(teile[-2:]) if len(teile) >= 2 else host
+    return [host, basis, f"*.{basis}"]
+
+
 def _erlaubte_domains(url: str, extra: list[str] | None = None) -> list[str]:
     domains = list(STANDARD_DOMAINS)
-    host = urlparse(url).hostname or ""
-    if host:
-        teile = host.split(".")
-        basis = ".".join(teile[-2:]) if len(teile) >= 2 else host
-        domains += [host, basis, f"*.{basis}"]
-    domains += extra or []
+    domains += _host_domains(url)
+    for ats in ATS_DOMAINS:
+        domains += [ats, f"*.{ats}"]
+    for eintrag in extra or []:
+        domains += _host_domains(eintrag) if "/" in eintrag else [eintrag]
     return sorted(set(domains))
 
 
@@ -124,6 +150,18 @@ def _profilblock(profil: Profil) -> str:
     if p.geburtsdatum:
         zeilen.append(f"Geburtsdatum: {p.geburtsdatum}")
     for label, wert in (("LinkedIn", p.linkedin), ("GitHub", p.github), ("Website", p.website)):
+        if wert:
+            zeilen.append(f"{label}: {wert}")
+    a = profil.angaben
+    for label, wert in (
+        ("Anrede", a.anrede),
+        ("Verfuegbar ab / fruehester Eintrittstermin", a.verfuegbar_ab),
+        ("Kuendigungsfrist", a.kuendigungsfrist),
+        ("Gehaltsvorstellung", a.gehaltsvorstellung),
+        ("Arbeitserlaubnis / Staatsangehoerigkeit", a.arbeitserlaubnis),
+        ("Fuehrerschein", a.fuehrerschein),
+        ("Sprachkenntnisse", a.sprachen),
+    ):
         if wert:
             zeilen.append(f"{label}: {wert}")
     return "\n".join(zeilen)
@@ -149,6 +187,8 @@ ANSCHREIBEN (woertlich in ein Freitext-/Motivationsfeld einfuegen, falls vorhand
 ANHAENGE
 Diese Dateien stehen zum Hochladen bereit (Pfade exakt so verwenden):
 {anhaenge}
+Gibt es ein eigenes Upload-Feld fuer das Anschreiben, lade dort die
+Anschreiben-PDF hoch; Lebenslauf und Zeugnisse in die passenden Felder.
 
 ABLAUF
 1. Oeffne die Bewerbungsseite.
@@ -169,7 +209,8 @@ ABLAUF
 ABBRUCHREGELN - brich ab und berichte in "hindernis":
 - Login oder Registrierung noetig und keine Zugangsdaten vorhanden.
 - Captcha, das du nicht loesen kannst.
-- Bewerbung ist nur per E-Mail oder Post moeglich (kein Formular).
+- Bewerbung ist nur per E-Mail oder Post moeglich (kein Formular). Steht dort
+  eine Bewerbungs-E-Mail-Adresse, trage sie in "bewerbungs_email" ein.
 - Die Seite verlangt eine Zahlung oder wirkt unserioes.
 - Nach {max_schritte} Schritten kein Fortschritt.
 
@@ -236,15 +277,29 @@ class BewerbungsBrowser:
         self.domains_offen = domains_offen
         self.aufzeichnung = aufzeichnung
 
-    def baue_agent(self, job: Job, anschreiben: str, dry_run: bool = True):
-        """Konfiguriert den browser-use-Agenten, ohne ihn zu starten."""
+    def baue_agent(
+        self,
+        job: Job,
+        anschreiben: str,
+        dry_run: bool = True,
+        start_url: str | None = None,
+        anschreiben_pdf: str | None = None,
+    ):
+        """Konfiguriert den browser-use-Agenten, ohne ihn zu starten.
+
+        `start_url` ist der bereits aufgeloeste Bewerbungslink (z. B. das
+        Bewerbermanagementsystem hinter GET IN IT), `anschreiben_pdf` wird
+        zusaetzlich zum Hochladen angeboten.
+        """
         from browser_use import Agent, BrowserProfile
 
-        url = job.bewerbungs_url
+        url = start_url or job.bewerbungs_url
         if not url:
             raise ValueError(f"{job.ref}: keine Bewerbungs-URL")
 
         anhaenge = self.profil.anhaenge()
+        if anschreiben_pdf and Path(anschreiben_pdf).exists():
+            anhaenge = [str(Path(anschreiben_pdf).resolve()), *anhaenge]
         ergebnis_modell = _ergebnis_modell()
         llm = _browser_llm(self.modell)
         # Die meisten Ollama-Cloud-Modelle sind reine Textmodelle und antworten
@@ -272,7 +327,9 @@ class BewerbungsBrowser:
 
         browser_profil = BrowserProfile(
             headless=self.headless,
-            allowed_domains=None if self.domains_offen else _erlaubte_domains(url, self.extra_domains),
+            allowed_domains=None if self.domains_offen else _erlaubte_domains(
+                url, [*self.extra_domains, *([job.bewerbungs_url] if job.bewerbungs_url else [])]
+            ),
             downloads_path="daten/downloads",
             # Chromium startet als root nicht mit aktivierter Sandbox (Container,
             # CI). Lokal als normaler Nutzer bleibt die Sandbox an.
@@ -310,8 +367,10 @@ class BewerbungsBrowser:
         job: Job,
         anschreiben: str,
         dry_run: bool = True,
+        start_url: str | None = None,
+        anschreiben_pdf: str | None = None,
     ) -> BewerbungsLauf:
-        url = job.bewerbungs_url
+        url = start_url or job.bewerbungs_url
         if not url:
             return BewerbungsLauf(
                 ref=job.ref,
@@ -322,7 +381,9 @@ class BewerbungsBrowser:
                 url=None,
             )
 
-        agent = self.baue_agent(job, anschreiben, dry_run=dry_run)
+        agent = self.baue_agent(
+            job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
+        )
         history = await agent.run(max_steps=self.max_schritte)
 
         strukturiert = None
@@ -374,4 +435,6 @@ def _zusammenfassen(e: Any, dry_run: bool) -> str:
         teile.append("Offen: " + ", ".join(e.fehlende_angaben[:10]))
     if e.hindernis:
         teile.append(f"Hindernis: {e.hindernis}")
+    if getattr(e, "bewerbungs_email", ""):
+        teile.append(f"Bewerbungs-E-Mail: {e.bewerbungs_email}")
     return " | ".join(teile)

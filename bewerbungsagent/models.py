@@ -109,3 +109,58 @@ class Application:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+# Status eines Bewerbungsvorgangs (eine Zeile pro Stelle in `vorgaenge`).
+VORGANG_STATUS = (
+    "vorbereitung",     # Anschreiben/Probelauf laufen gerade
+    "wartet",           # bereit, wartet auf Ja/Nein des Nutzers
+    "freigegeben",      # Ja gesagt, Versand steht aus
+    "wird_gesendet",    # ein Worker sendet gerade
+    "abgeschickt",
+    "fehlgeschlagen",
+    "abgelehnt",        # Nein gesagt / nicht interessant
+    "selbst_beworben",  # Nutzer hat sich selbst beworben
+)
+
+KANAELE = ("email", "formular", "manuell")
+
+RUECKMELDUNGEN = ("", "eingangsbestaetigung", "einladung", "absage", "zusage")
+
+
+@dataclass
+class Vorgang:
+    """Aktueller Stand einer Bewerbung auf genau eine Stelle."""
+
+    ref: str
+    status: str = "vorbereitung"
+    kanal: str = "manuell"
+    empfaenger: str | None = None
+    bewerbungs_url: str | None = None
+    betreff: str | None = None
+    anschreiben: str | None = None
+    anschreiben_pdf: str | None = None
+    email_text: str | None = None
+    probelauf: str | None = None  # JSON des Probelauf-Ergebnisses
+    hinweis: str | None = None
+    herkunft: str = "manuell"  # automatik | manuell
+    erstellt_am: str = field(default_factory=_now)
+    aktualisiert_am: str = field(default_factory=_now)
+    freigegeben_am: str | None = None
+    gesendet_am: str | None = None
+    rueckmeldung: str = ""
+    rueckmeldung_am: str | None = None
+    notiz: str | None = None
+
+    @property
+    def probelauf_daten(self) -> dict[str, Any]:
+        if not self.probelauf:
+            return {}
+        try:
+            daten = json.loads(self.probelauf)
+        except json.JSONDecodeError:
+            return {}
+        return daten if isinstance(daten, dict) else {}
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)

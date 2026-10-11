@@ -54,6 +54,8 @@ class Bewertung:
     min_score: float = 60.0
     modell: str = "claude-opus-5"
     effort: str = "medium"
+    # Per "Nein - Arbeitgeber nie wieder vorschlagen" gefuellt
+    ausschluss_arbeitgeber: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -66,11 +68,41 @@ class Unterlagen:
 
 
 @dataclass
+class Angaben:
+    """Zusatzangaben, die Bewerbungsformulare haeufig als Pflichtfeld verlangen."""
+
+    anrede: str = ""                 # Herr | Frau | divers
+    verfuegbar_ab: str = "ab sofort"
+    kuendigungsfrist: str = "keine"
+    gehaltsvorstellung: str = ""     # z. B. "55.000 EUR brutto/Jahr"
+    arbeitserlaubnis: str = ""       # z. B. "deutsche Staatsangehoerigkeit"
+    fuehrerschein: str = ""          # z. B. "Klasse B"
+    sprachen: str = ""               # z. B. "Deutsch (Muttersprache), Englisch (C1)"
+
+
+MODI = ("automatisch", "nur_suchen", "aus")
+
+
+@dataclass
 class Automatisierung:
-    """Einstellungen fuer den extern ausgefuehrten Cron-Job."""
+    """Zeitplan und Grenzen fuer den automatischen Ablauf (Cron ruft `tick` auf)."""
 
     aktiv: bool = True
-    cron: str = "30 2 * * *"
+    # automatisch: suchen + bewerten + Bewerbungen vorbereiten (warten auf Ja/Nein)
+    # nur_suchen:  suchen + bewerten, Auswahl manuell
+    # aus:         kein Zeitplan, nur der manuelle Prozess
+    modus: str = "automatisch"
+    cron: str = "0 6 * * *"
+    max_pro_lauf: int = 5       # so viele Bewerbungen bereitet ein Lauf hoechstens vor
+    max_pro_tag: int = 10       # Schutz vor Versehen: hoechstens so viele Sendungen pro Tag
+    probelauf_vorab: bool = True  # Online-Formular schon beim Vorbereiten testweise ausfuellen
+    ziel_pro_woche: int = 5
+
+    @property
+    def effektiver_modus(self) -> str:
+        if not self.aktiv:
+            return "aus"
+        return self.modus if self.modus in MODI else "automatisch"
 
 
 @dataclass
@@ -80,6 +112,7 @@ class Profil:
     bewertung: Bewertung = field(default_factory=Bewertung)
     unterlagen: Unterlagen = field(default_factory=Unterlagen)
     automatisierung: Automatisierung = field(default_factory=Automatisierung)
+    angaben: Angaben = field(default_factory=Angaben)
     kurzprofil: str = ""
 
     # --- Zugangsdaten kommen ausschliesslich aus der Umgebung, nie aus der YAML ---
@@ -123,7 +156,8 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
         bewertung=_fill(Bewertung, roh.get("bewertung")),
         unterlagen=_fill(Unterlagen, roh.get("unterlagen")),
         automatisierung=_fill(Automatisierung, roh.get("automatisierung")),
-        kurzprofil=roh.get("kurzprofil", ""),
+        angaben=_fill(Angaben, roh.get("angaben")),
+        kurzprofil=roh.get("kurzprofil", "") or "",
     )
     if not profil.suche.was:
         raise ValueError("suche.was ist leer - mindestens ein Suchbegriff noetig.")
@@ -160,6 +194,7 @@ def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
         "bewertung": _to_dict(profil.bewertung),
         "unterlagen": _to_dict(profil.unterlagen),
         "automatisierung": _to_dict(profil.automatisierung),
+        "angaben": _to_dict(profil.angaben),
     }
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
@@ -167,3 +202,33 @@ def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
         encoding="utf-8",
     )
     return p
+
+
+def lade_env(pfad: str | Path = ".env") -> int:
+    """Liest KEY=VALUE-Zeilen aus einer .env, ohne gesetzte Variablen zu ueberschreiben.
+
+    Docker uebergibt die Umgebung direkt; lokal (CLI, Cron, UI) reicht so eine
+    .env im Arbeitsverzeichnis. Liefert die Anzahl neu gesetzter Variablen.
+    """
+    p = Path(pfad)
+    if not p.is_file():
+        return 0
+    gesetzt = 0
+    for zeile in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        zeile = zeile.strip()
+        if not zeile or zeile.startswith("#") or "=" not in zeile:
+            continue
+        if zeile.startswith("export "):
+            zeile = zeile[7:].lstrip()
+        name, _, wert = zeile.partition("=")
+        name, wert = name.strip(), wert.strip()
+        if wert[:1] in ("'", '"') and wert[-1:] == wert[:1] and len(wert) >= 2:
+            wert = wert[1:-1]
+        elif " #" in wert:
+            wert = wert.split(" #", 1)[0].rstrip()
+        if wert.endswith("..."):  # Platzhalter aus .env.example
+            continue
+        if name and wert and name not in os.environ:
+            os.environ[name] = wert
+            gesetzt += 1
+    return gesetzt
