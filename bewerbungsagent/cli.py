@@ -403,10 +403,8 @@ def cmd_tick(args: argparse.Namespace) -> int:
 
 def cmd_vorbereiten(args: argparse.Namespace) -> int:
     profil = lade_profil(args.profil)
-    with sperre("automatik") as frei:
-        if not frei:
-            console.print("[yellow]Ein anderer Lauf bereitet gerade vor – bitte gleich erneut versuchen.[/]")
-            return 1
+    # Wartet, bis ein laufender Automatiklauf fertig ist, statt abzubrechen
+    with sperre("automatik", warten=True):
         with Speicher(args.db) as db:
             ergebnis = ablauf.vorbereiten_lauf(
                 db, profil, args.refs, ausloeser=args.ausloeser, mit_llm=not args.ohne_llm,

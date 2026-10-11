@@ -15,6 +15,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from . import dokumente, zeitplan
@@ -154,13 +155,17 @@ def bewerte_neue(
     if not jobs:
         return []
 
-    def melde(erledigt: int, gesamt: int) -> None:
+    scores: list[Score] = []
+    # In kleinen Paketen bewerten und sofort speichern: bricht die Seite oder
+    # der Prozess ab, bleibt der bisherige Fortschritt erhalten.
+    paket = 5
+    for start in range(0, len(jobs), paket):
+        teil = llm_modul.bewerte_jobs(jobs[start:start + paket], profil, mit_llm=mit_llm)
+        for score in teil:
+            db.speichere_score(score)
+        scores += teil
         if fortschritt:
-            fortschritt(f"Bewerte Stellen … {erledigt}/{gesamt}", erledigt / gesamt)
-
-    scores = llm_modul.bewerte_jobs(jobs, profil, mit_llm=mit_llm, fortschritt=melde)
-    for score in scores:
-        db.speichere_score(score)
+            fortschritt(f"Bewerte Stellen … {len(scores)}/{len(jobs)}", len(scores) / len(jobs))
     return scores
 
 
@@ -257,7 +262,8 @@ def vorbereiten(
         v.anschreiben_pdf = str(dokumente.anschreiben_pdf(job, profil, v.anschreiben))
         v.betreff = dokumente.betreff(job)
         v.email_text = mail.begleittext(job, profil, [v.anschreiben_pdf, *profil.anhaenge()])
-        v.hinweis = wahl.grund
+        # Der Versandweg steht schon auf der Karte; Hinweise nur fuer Auffaelliges
+        v.hinweis = wahl.grund if wahl.kanal == "manuell" or (wahl.kanal == "email" and "einzige" in wahl.grund) else None
 
         if probelauf is None:
             probelauf = profil.automatisierung.probelauf_vorab
@@ -401,7 +407,7 @@ def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender
     konfig = mail.smtp_konfig(profil)
     if konfig is None:
         return False, "E-Mail-Versand ist nicht eingerichtet (SMTP_HOST etc. in der .env fehlen)."
-    anhaenge = [p for p in [v.anschreiben_pdf, *profil.anhaenge()] if p]
+    anhaenge = [p for p in [v.anschreiben_pdf, *profil.anhaenge()] if p and Path(p).exists()]
     nachricht = mail.baue_nachricht(
         absender=konfig.absender, absender_name=profil.person.name,
         empfaenger=v.empfaenger or "", betreff=v.betreff or dokumente.betreff(job),

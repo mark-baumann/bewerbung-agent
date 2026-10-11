@@ -1,212 +1,88 @@
-# 🌐 Bewerbungsagent Web UI
+# 🌐 Bewerbungsagent – Web-UI
 
-Eine moderne Streamlit-basierte Web-Oberfläche für den Bewerbungsagenten.
+Streamlit-Oberfläche für den kompletten Bewerbungsablauf. Ziel: Der Agent erledigt
+Suche, Bewertung, Anschreiben und Versand – du entscheidest nur noch **Ja** oder **Nein**.
 
-## ✨ Features
-
-- **📊 Dashboard** - Übersicht über Jobs, Bewertungen und Bewerbungen
-- **🔍 Jobsuche** - Interaktive Suche mit Filtern
-- **📊 Bewertung** - Jobs bewerten mit Heuristik und/oder LLM
-- **✉️ Bewerbungen** - Anschreiben generieren und Bewerbungen verwalten
-- **👤 Profil** - Persönliche Daten, Sucheinstellungen und Unterlagen verwalten
-
-## 🚀 Installation
+## 🚀 Start
 
 ```bash
-# UI-Abhängigkeiten installieren
-pip install -e ".[ui]"
-
-# Optional: Auch Browser-Automation
-pip install -e ".[ui,browser]"
+pip install -e ".[ui,browser]"     # browser = Online-Formulare per browser-use
 playwright install chromium
+streamlit run app.py               # http://localhost:8501
 ```
 
-## 🖥️ Nutzung
+Zugangsdaten (LLM, SMTP, optional BA-Login) liegen in der `.env` im Projektordner;
+die UI liest sie beim Start ein. Im Docker-Container kommen sie aus der Umgebung.
 
-### Starten der Web-UI
+## 🧭 Seiten
 
-```bash
-streamlit run app.py
+### 🏠 Cockpit (Startseite)
+- **Einrichtungs-Check:** zeigt, was noch fehlt (Lebenslauf, KI-Key, SMTP, Browser-Agent, Formular-Angaben)
+- **Kennzahlen:** wartet auf dich · diese Woche beworben (mit Wochenziel) · Rückmeldungen · weitere passende Stellen
+- **Automatik:** Modus *Automatisch* / *Nur suchen* / *Aus*, Zeitplan mit nächstem Lauf,
+  Knopf **„Jetzt suchen & vorbereiten“** (läuft im Hintergrund)
+- **Deine Entscheidung:** pro vorbereiteter Bewerbung eine Karte mit Passung, Gründen,
+  Versandweg (E-Mail-Empfänger bzw. Formular-Domain), Probelauf-Ergebnis und
+  bearbeitbarem Anschreiben. **✅ Ja, absenden** verschickt sofort, **❌ Nein** (mit Grund,
+  optional „Arbeitgeber nie wieder“) blendet die Stelle aus, **🔄 Neu** erzeugt Anschreiben
+  und Probelauf neu.
+- **Braucht deine Hilfe:** fehlgeschlagene Sendungen mit Ursache, „Nochmal senden“,
+  Link zum Selbstbewerben, Anschreiben zum Kopieren und „Selbst erledigt“.
+
+### 🧭 Schritt für Schritt
+Der manuelle Weg als geführter Prozess mit Fortschrittsleiste:
+1. **Suchen** – Suchbegriffe, Ort, Umkreis, Zeitraum, Jobbörsen. Daneben **Ideen für deine Suche**:
+   ähnliche Jobtitel aus gut passenden Treffern, KI-Vorschläge, Tipps (z. B. Umkreis erweitern)
+   und eine Auswertung, welche Suchbegriffe passende Stellen bringen. Nach der Suche wird
+   automatisch bewertet.
+2. **Auswählen** – offene Stellen nach Passung, Anzeige lesen, 👍 anhaken oder 👎 „nicht interessant“.
+3. **Prüfen & freigeben** – Anschreiben und Probelauf entstehen im Hintergrund; danach dieselben
+   Ja/Nein-Karten wie im Cockpit.
+4. **Status** – was gerade verschickt wird, was heute rausging, was Hilfe braucht.
+
+### 📬 Bewerbungen
+- **Übersicht:** alle Vorgänge mit Status; Rückmeldung (Eingang, Einladung, Absage, Zusage)
+  und Notiz direkt in der Tabelle eintragen; Details mit Anschreiben und Protokoll.
+- **Nachfassen:** Bewerbungen ohne Rückmeldung nach 14 Tagen, mit Textvorschlag für die Nachfrage.
+- **Nachweis fürs Amt:** Eigenbemühungen eines Zeitraums als PDF oder CSV.
+
+### 👤 Profil & Einstellungen
+- **Persönliche Daten** inkl. **Angaben für Formulare** (Anrede, verfügbar ab, Kündigungsfrist,
+  Gehaltsvorstellung, Arbeitserlaubnis, Führerschein, Sprachen)
+- **Suche & Bewertung** (Suchbegriffe, Skills, Ausschlüsse, gesperrte Arbeitgeber, Mindest-Passung)
+- **Unterlagen** (Lebenslauf, Zeugnisse, Anschreiben-Stil; Vorschau des gelesenen Lebenslauftexts)
+- **Automatik & Versand** (Modus, Zeitplan, Limits, Probelauf, Wochenziel, SMTP-Testmail, KI-Modell)
+
+## ⚙️ Wie Hintergrundarbeit läuft
+
+Vorbereiten (mit Probelauf) und Versand dauern Minuten. Die UI startet dafür
+`bewerbungsagent vorbereiten …` bzw. `bewerbungsagent senden` als eigenen Prozess
+(Ausgabe in `daten/worker.log`) und aktualisiert die Anzeige automatisch. Der
+Cron-Tick (alle 5 Minuten) verschickt freigegebene Bewerbungen auch dann, wenn die
+Seite geschlossen ist. Dateisperren verhindern doppelte Läufe; jede Bewerbung kann
+nur einmal beansprucht und gesendet werden.
+
+## 🛠️ Struktur
+
+```
+app.py                       # Navigation (st.navigation)
+seiten/
+├── cockpit.py               # Startseite: Automatik + Ja/Nein
+├── schritt_fuer_schritt.py  # geführter manueller Prozess
+├── bewerbungen.py           # Tracker, Nachfassen, Nachweis
+└── profil.py                # Profil & Einstellungen
+bewerbungsagent/ui.py        # gemeinsame Bausteine (Karten, Einrichtungs-Check, Laufstatus)
 ```
 
-Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
-
-### Workflow
-
-1. **Dashboard** (Startseite `/`) für die Übersicht
-2. **Jobsuche** - Neue Jobs suchen
-3. **Bewertung** - Jobs bewerten lassen
-4. **Bewerbungen** - Anschreiben generieren und bewerben
-
-## 📋 Voraussetzungen
-
-### Konfiguration
-
-Die Web-UI nutzt dieselbe Konfiguration wie das CLI:
-
-1. **Profil erstellen:** Öffne in der Web-UI die Seite **👤 Profil** und klicke
-   auf **✨ Profil über die UI anlegen**. Anschließend kannst du alle Daten
-   direkt in den Formularen ausfüllen und speichern.
-
-2. **API-Key setzen:**
-   ```bash
-   cp .env.example .env
-   # Trage ANTHROPIC_API_KEY in .env ein
-   ```
-
-3. **Unterlagen:**
-   - Lege Lebenslauf, Zeugnisse etc. im Ordner `unterlagen/` ab
-   - Lade die Unterlagen auf der Seite **👤 Profil** hoch
-
-### Datenbank
-
-Die Web-UI nutzt dieselbe SQLite-Datenbank wie das CLI:
-- Standardpfad: `~/.bewerbungsagent/jobs.db`
-- Wird automatisch beim ersten Gebrauch erstellt
-- Kompatibel mit CLI-Befehlen
-
-## 🎨 Seitenübersicht
-
-### 🏠 Dashboard (Startseite / Root)
-Das Dashboard ist die Startseite (Root `/`) der Web-UI:
-- Metriken: Gefundene Jobs, Bewertungen, Bewerbungen, Abgeschickt
-- Neueste Jobs
-- Schnellaktionen
-- Onboarding-Hinweis bei leerer Datenbank
-
-### 1. Jobsuche
-- Suchformular mit Filtern:
-  - Was (Suchbegriffe)
-  - Wo (Ort)
-  - Umkreis
-  - Veröffentlichungsdatum
-  - Nur Vollzeit
-- Live-Suche über Arbeitsagentur-API
-- Vorschau der Ergebnisse
-- Automatisches Speichern in DB
-
-### 2. Bewertung
-- Optionen:
-  - Nur unbewertete Jobs
-  - Mit/ohne LLM (Claude)
-  - Anzahl Jobs
-- Fortschrittsanzeige
-- Ergebnisvorschau mit Top-Jobs
-- Statistiken
-
-### 3. Bewerbungen
-Drei Tabs:
-
-**Anschreiben generieren:**
-- Job auswählen
-- Mit/ohne LLM generieren
-- Anzeigen und speichern
-
-**Bewerbung abschicken:**
-- Manuell: URL öffnen und als beworben markieren
-- Browser-Automation: (CLI empfohlen)
-
-**Bewerbungsübersicht:**
-- Alle Bewerbungen
-- Statistiken (Gesamt, Abgeschickt, Probelauf, Fehlgeschlagen)
-- Bewerbungsverlauf
-
-### 4. Profil
-- Persönliche Daten bearbeiten
-- Suchparameter anpassen
-- Unterlagen (Lebenslauf, Zeugnisse) direkt hochladen
-- API-Keys und Datenbank-Informationen
-
-## 🔄 CLI vs. Web-UI
-
-### Kompatibilität
-- Beide nutzen dieselbe Datenbank
-- Dieselbe Konfiguration (profil.yaml)
-- Können parallel verwendet werden
-
-### Wann CLI nutzen?
-- Schnelle Operationen
-- Scripting/Automation
-- Browser-Automation für Bewerbungen
-
-### Wann Web-UI nutzen?
-- Interaktive Exploration
-- Übersichtliche Darstellung
-- Komfortable Job-Bewertung
-- Anschreiben-Vorschau
-
-## 📊 Deployment
-
-### Lokal
-```bash
-streamlit run app.py
-```
-
-### Docker
-Die UI kann zusammen mit dem Bewerbungsagenten deployed werden:
-
-```dockerfile
-# Im Dockerfile ergänzen:
-RUN pip install -e ".[ui]"
-CMD ["streamlit", "run", "app.py", "--server.port=8501"]
-```
-
-### Empfohlener Port
-- Standard: `8501`
-- Im infrastruktur-deployment: Port kann angepasst werden
-
-## 🛠️ Entwicklung
-
-### Struktur
-```
-bewerbung-agent/
-├── app.py                    # Dashboard / Startseite (Root)
-├── pages/
-│   ├── 2_jobsuche.py        # Jobsuche
-│   ├── 3_bewertung.py       # Bewertung
-│   ├── 5_bewerbungen.py     # Bewerbungen
-│   └── 6_profil.py          # Profil
-└── bewerbungsagent/         # Python-Package (unverändert)
-```
-
-### Streamlit Pages
-Streamlit nutzt automatisch Dateien in `pages/` als Navigation.
-Die Nummerierung bestimmt die Reihenfolge.
-
-### Eigene Anpassungen
-- Farben und Styling in den einzelnen Pages
-- Zusätzliche Metriken im Dashboard
-- Weitere Filteroptionen
-- Custom Bewertungslogik
+Die Seiten liegen bewusst nicht in `pages/`, damit Streamlit nur die Navigation aus
+`app.py` verwendet.
 
 ## 🐛 Troubleshooting
 
-### "Datenbank nicht gefunden"
-→ Führe zuerst eine Jobsuche durch (CLI oder UI)
-
-### "ANTHROPIC_API_KEY fehlt"
-→ Setze den Key in `.env` oder als Umgebungsvariable
-
-### "Profil konnte nicht geladen werden"
-→ Öffne die Seite **👤 Profil** und lege das Profil über die UI an
-
-### Browser-Automation funktioniert nicht
-→ Nutze das CLI für Browser-Automation: `bewerbungsagent bewerben <ref>`
-
-## 📝 To-Do / Erweiterungen
-
-- [ ] Live-Update der Bewerbungsstatus
-- [ ] Export-Funktionen (CSV, PDF)
-- [ ] Statistik-Dashboards
-- [ ] Email-Benachrichtigungen
-- [ ] Multi-User Support
-- [ ] Browser-Automation direkt in UI integrieren
-
-## 👤 Autor
-
-**Mark Baumann** — [GitHub](https://github.com/mark-baumann) · [markb.de](https://markb.de)
-
----
-
-**Hinweis:** Die Web-UI ergänzt das CLI, ersetzt es aber nicht vollständig.
-Für volle Funktionalität (besonders Browser-Automation) wird das CLI weiterhin empfohlen.
+- **„E-Mail-Versand ist nicht eingerichtet“** → `SMTP_*` in der `.env` setzen, unter Profil Testmail senden.
+- **„Browser-Agent ist nicht installiert“** → `pip install -e ".[browser]"` und `playwright install chromium`.
+- **Formular braucht Login/Captcha** → Die Karte schlägt „Selbst bewerben“ vor; Link öffnen,
+  Anschreiben kopieren, danach „Erledigt“.
+- **Es passiert nichts nach „Ja“** → `daten/worker.log` bzw. `daten/cron.log` ansehen.
+- **Keine Vorschläge im Cockpit** → Mindest-Passung im Profil senken oder unter „Schritt für Schritt“
+  die Suchvorschläge nutzen.

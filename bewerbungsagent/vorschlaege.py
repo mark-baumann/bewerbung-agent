@@ -60,36 +60,43 @@ def _schon_gesucht(begriff: str, vorhandene: list[str]) -> bool:
 def aus_treffern(db: Speicher, profil: Profil, limit: int = 8) -> list[Vorschlag]:
     """Haeufige Berufe/Titel passender Stellen, nach denen noch nicht gesucht wird."""
     schwelle = profil.bewertung.min_score
-    zaehler: Counter[str] = Counter()
+    gewicht: Counter[str] = Counter()
+    stellen: dict[str, set[str]] = {}
     anzeige: dict[str, str] = {}
 
-    def zaehle(text: str | None, gewicht: int) -> None:
+    def zaehle(ref: str, text: str | None, faktor: int, max_worte: int) -> None:
         kern = titel_kern(text or "")
-        if len(kern) < 4:
+        if len(kern) < 4 or len(kern.split()) > max_worte:
             return
         schluessel = kern.casefold()
-        zaehler[schluessel] += gewicht
+        gewicht[schluessel] += faktor
+        stellen.setdefault(schluessel, set()).add(ref)
         anzeige.setdefault(schluessel, kern)
 
     gute = {j.ref: j for j, _ in db.bestenliste(min_score=schwelle, limit=300)}
-    for job in gute.values():
-        zaehle(job.beruf, 1)
-        zaehle(job.titel, 1)
-    # Stellen, auf die sich der Nutzer beworben hat, zaehlen doppelt
-    for v in db.vorgaenge(("wartet", "freigegeben", "wird_gesendet", "abgeschickt", "selbst_beworben")):
-        job = gute.get(v.ref) or db.job(v.ref)
-        if job:
-            zaehle(job.beruf, 2)
-            zaehle(job.titel, 2)
+    beworben = {v.ref for v in db.vorgaenge(
+        ("wartet", "freigegeben", "wird_gesendet", "abgeschickt", "selbst_beworben")
+    )}
+    for ref in set(gute) | beworben:
+        job = gute.get(ref) or db.job(ref)
+        if not job:
+            continue
+        # Stellen, die der Nutzer gewaehlt hat, zaehlen doppelt
+        faktor = 2 if ref in beworben else 1
+        zaehle(ref, job.beruf, faktor, max_worte=4)   # BA-Berufsbezeichnung, meist sauber
+        zaehle(ref, job.titel, faktor, max_worte=3)   # freie Titel nur, wenn kurz
 
     ergebnis: list[Vorschlag] = []
-    for schluessel, anzahl in zaehler.most_common():
+    for schluessel, _ in gewicht.most_common():
         begriff = anzeige[schluessel]
         if _schon_gesucht(begriff, profil.suche.was) or _schon_gesucht(
             begriff, [v.begriff for v in ergebnis]
         ):
             continue
-        ergebnis.append(Vorschlag(begriff, f"in {anzahl}× gut passenden Stellen", "treffer"))
+        anzahl = len(stellen[schluessel])
+        ergebnis.append(Vorschlag(
+            begriff, f"aus {anzahl} passenden Stelle{'n' if anzahl != 1 else ''}", "treffer",
+        ))
         if len(ergebnis) >= limit:
             break
     return ergebnis
@@ -186,11 +193,11 @@ def such_tipps(db: Speicher, profil: Profil) -> list[Tipp]:
                 "oder genauer formulieren."
             ))
 
-    offen = len(db.kandidaten(min_score=profil.bewertung.min_score, limit=50))
-    if offen < 5:
+    passend = len(db.bestenliste(min_score=profil.bewertung.min_score, limit=50))
+    if passend < 5:
         if s.wo and s.umkreis < 50:
             tipps.append(Tipp(
-                f"Nur {offen} passende offene Stellen – Umkreis von {s.umkreis} auf 50 km erweitern?",
+                f"Bisher nur {passend} passende Stelle(n) – Umkreis von {s.umkreis} auf 50 km erweitern?",
                 {"umkreis": 50},
             ))
         if s.veroeffentlicht_seit_tagen < 30:

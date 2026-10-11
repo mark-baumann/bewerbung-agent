@@ -76,9 +76,17 @@ def _browser_llm(modell: str):
             api_key=key,
             temperature=0.2,
         )
+    if anbieter == "openai":
+        from browser_use import ChatOpenAI
+
+        return ChatOpenAI(
+            model=llm_modul.effektives_modell("openai", modell),
+            api_key=llm_modul._env("OPENAI_API_KEY"),
+            temperature=0.2,
+        )
     from browser_use import ChatAnthropic
 
-    return ChatAnthropic(model=modell)
+    return ChatAnthropic(model=llm_modul.effektives_modell("anthropic", modell))
 
 
 def _ergebnis_modell():

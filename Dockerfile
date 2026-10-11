@@ -69,7 +69,7 @@ RUN python -m playwright install chromium
 # Streamlit-UI-Code (Hauptseite + Unterseiten). Läuft nur, wenn der
 # Container ohne Argumente gestartet wird (siehe docker-entrypoint.sh).
 COPY app.py ./
-COPY pages ./pages
+COPY seiten ./seiten
 COPY config ./config
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

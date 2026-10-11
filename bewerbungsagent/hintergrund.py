@@ -21,8 +21,8 @@ WORKER_LOG = DATEN_DIR / "worker.log"
 
 
 @contextmanager
-def sperre(name: str, verzeichnis: str | Path | None = None) -> Iterator[bool]:
-    """Nicht blockierende Dateisperre. Liefert False, wenn sie schon gehalten wird."""
+def sperre(name: str, verzeichnis: str | Path | None = None, warten: bool = False) -> Iterator[bool]:
+    """Dateisperre. Liefert False, wenn sie schon gehalten wird (oder wartet mit `warten=True`)."""
     pfad = Path(verzeichnis or DATEN_DIR) / f"{name}.lock"
     pfad.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -32,7 +32,7 @@ def sperre(name: str, verzeichnis: str | Path | None = None) -> Iterator[bool]:
         return
     with open(pfad, "w") as datei:
         try:
-            fcntl.flock(datei.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(datei.fileno(), fcntl.LOCK_EX | (0 if warten else fcntl.LOCK_NB))
         except BlockingIOError:
             yield False
             return

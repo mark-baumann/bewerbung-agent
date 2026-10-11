@@ -30,15 +30,15 @@ Regeln:
 
 VORLAGE = """Sehr geehrte Damen und Herren,
 
-auf Ihre Ausschreibung "{titel}" bei {arbeitgeber} bewerbe ich mich hiermit.
+Ihre Ausschreibung „{titel}“ bei {arbeitgeber} hat mein Interesse geweckt, deshalb bewerbe ich mich um diese Stelle.
 
 {profilsatz}
 
 {trefferblock}
 
-Ueber ein Gespraech freue ich mich.
+Ich bin {verfuegbar} verfügbar und freue mich auf ein persönliches Gespräch.
 
-Mit freundlichen Gruessen
+Mit freundlichen Grüßen
 {name}
 """
 
@@ -46,15 +46,16 @@ Mit freundlichen Gruessen
 def _vorlage(job: Job, profil: Profil, score: Score | None) -> str:
     treffer = (score.treffer if score else []) or profil.bewertung.skills[:5]
     trefferblock = (
-        "Fachlich decke ich unter anderem ab: " + ", ".join(treffer[:8]) + "."
+        "Fachlich bringe ich unter anderem mit: " + ", ".join(treffer[:8]) + "."
         if treffer
         else "Meine Unterlagen mit allen Details finden Sie im Anhang."
     )
     return VORLAGE.format(
         titel=job.titel,
         arbeitgeber=job.arbeitgeber or "Ihrem Unternehmen",
-        profilsatz=profil.kurzprofil or "Mein Profil entnehmen Sie bitte dem beigefuegten Lebenslauf.",
+        profilsatz=profil.kurzprofil.strip() or "Mein Profil entnehmen Sie bitte dem beigefügten Lebenslauf.",
         trefferblock=trefferblock,
+        verfuegbar=profil.angaben.verfuegbar_ab or "ab sofort",
         name=profil.person.name,
     )
 
