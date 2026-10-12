@@ -79,10 +79,20 @@ with tab_person:
             kuendigungsfrist = st.text_input("Kündigungsfrist", value=a.kuendigungsfrist)
             gehaltsvorstellung = st.text_input("Gehaltsvorstellung", value=a.gehaltsvorstellung,
                                                placeholder="z. B. 55.000 EUR brutto/Jahr")
+            titel = st.text_input("Akademischer Titel", value=a.titel, placeholder="z. B. Dr.")
+            abschluss = st.text_input("Höchster Abschluss", value=a.abschluss, placeholder="z. B. B.Sc. Informatik")
         with c4:
-            arbeitserlaubnis = st.text_input("Arbeitserlaubnis / Staatsangehörigkeit", value=a.arbeitserlaubnis)
+            arbeitserlaubnis = st.text_input("Arbeitserlaubnis", value=a.arbeitserlaubnis)
+            nationalitaet = st.text_input("Staatsangehörigkeit", value=a.nationalitaet)
             fuehrerschein = st.text_input("Führerschein", value=a.fuehrerschein)
             sprachen = st.text_input("Sprachkenntnisse", value=a.sprachen)
+            erfahrung = st.text_input("Berufserfahrung (Jahre)", value=a.berufserfahrung_jahre)
+            umzug = st.text_input("Umzugsbereitschaft", value=a.umzugsbereitschaft, placeholder="z. B. nein")
+        weitere_text = st.text_area(
+            "Weitere Antworten für Formulare (eine pro Zeile: Frage = Antwort)",
+            value="\n".join(f"{k} = {v}" for k, v in a.weitere.items()), height=90,
+            help="Füllt der Agent automatisch, wenn du auf einer Karte fehlende Angaben beantwortest.",
+        )
 
         if st.form_submit_button("💾 Speichern", type="primary"):
             p.vorname, p.nachname, p.email, p.telefon, p.geburtsdatum = vorname, nachname, email, telefon, geburtsdatum
@@ -91,6 +101,10 @@ with tab_person:
             a.anrede, a.verfuegbar_ab, a.kuendigungsfrist = anrede, verfuegbar_ab, kuendigungsfrist
             a.gehaltsvorstellung, a.arbeitserlaubnis = gehaltsvorstellung, arbeitserlaubnis
             a.fuehrerschein, a.sprachen = fuehrerschein, sprachen
+            a.titel, a.abschluss, a.nationalitaet = titel, abschluss, nationalitaet
+            a.berufserfahrung_jahre, a.umzugsbereitschaft = erfahrung, umzug
+            a.weitere = {k.strip(): v.strip() for k, _, v in (z.partition("=") for z in zeilen(weitere_text))
+                         if k.strip() and v.strip()}
             speichern("Persönliche Daten gespeichert.")
 
 # --------------------------------------------------------------------------- #
@@ -236,10 +250,37 @@ with tab_automatik:
         "Online-Formulare beim Vorbereiten testweise ausfüllen (Probelauf)", value=au.probelauf_vorab,
         help="Du siehst dann schon vor dem Ja, welche Felder klappen. Kostet pro Stelle 1–3 Minuten und KI-Tokens.",
     )
+    with st.expander("🧠 Selbstständig dazulernen", expanded=False):
+        erkunden = st.checkbox("Neue Suchbegriffe selbst ausprobieren", value=au.erkunden,
+                               help="Der Agent testet je Lauf ein paar verwandte Jobtitel und behält nur, "
+                                    "was passende Stellen bringt.")
+        erkundung_max = st.number_input("Neue Suchbegriffe pro Lauf", 0, 5, int(au.erkundung_max_begriffe))
+        postfach_an = st.checkbox("Antworten im Postfach erkennen (IMAP, nur lesend)", value=au.postfach)
+        nachfassen_tage = st.number_input("Nachfass-Mail vorschlagen nach … Tagen ohne Antwort (0 = nie)", 0, 60,
+                                          int(au.nachfassen_tage))
+        kosten = st.number_input("Höchstens so viele KI-Bewertungen pro Lauf (Kostenbremse)", 5, 500,
+                                 int(profil.bewertung.max_llm_pro_lauf))
+
+    with st.expander("🤖 Autopilot – die KI bewirbt sich allein", expanded=au.effektiver_autopilot != "aus"):
+        st.caption("Standard ist **aus**: jede Bewerbung braucht dein Ja. Eingeschaltet schickt die KI nur "
+                   "Bewerbungen allein ab, die alle Schutzgrenzen erfüllen – alles andere wartet wie gewohnt.")
+        pilot = st.radio("Modus", ["aus", "mit_frist", "sofort"], index=["aus", "mit_frist", "sofort"].index(
+            au.effektiver_autopilot), horizontal=True,
+            format_func={"aus": "✋ Aus", "mit_frist": "⏳ Mit Einspruchsfrist", "sofort": "🚀 Sofort"}.get)
+        p1, p2, p3 = st.columns(3)
+        frist = p1.number_input("Einspruchsfrist (Stunden)", 0, 72, int(au.autopilot_frist_stunden))
+        min_passung = p2.slider("Mindest-Passung", 50, 100, int(au.autopilot_min_passung))
+        min_qualitaet = p3.slider("Mindest-Qualität des Anschreibens", 50, 100, int(au.autopilot_min_qualitaet))
+
     if st.button("💾 Automatik speichern", type="primary", disabled=bool(fehler)):
         au.modus, au.aktiv, au.cron = modus, modus != "aus", ausdruck.strip()
         au.max_pro_lauf, au.max_pro_tag, au.ziel_pro_woche = int(max_pro_lauf), int(max_pro_tag), int(ziel)
         au.probelauf_vorab = probelauf
+        au.erkunden, au.erkundung_max_begriffe = erkunden, int(erkundung_max)
+        au.postfach, au.nachfassen_tage = postfach_an, int(nachfassen_tage)
+        profil.bewertung.max_llm_pro_lauf = int(kosten)
+        au.autopilot, au.autopilot_frist_stunden = pilot, int(frist)
+        au.autopilot_min_passung, au.autopilot_min_qualitaet = float(min_passung), float(min_qualitaet)
         speichern("Automatik gespeichert – gilt ab dem nächsten Tick (spätestens in 5 Minuten).")
 
     st.divider()

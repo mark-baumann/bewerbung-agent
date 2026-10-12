@@ -105,9 +105,17 @@ def lauf_zusammenfassung(lauf: dict) -> str:
     teile = [zeit(lauf["gestartet_am"])]
     for schluessel, text in (("gefunden", "gefunden"), ("neu", "neu"), ("passend", "passend"),
                              ("vorbereitet", "vorbereitet"), ("abgeschickt", "abgeschickt"),
-                             ("fehlgeschlagen", "fehlgeschlagen")):
-        if z.get(schluessel) is not None:
+                             ("fehlgeschlagen", "fehlgeschlagen"), ("zugeordnet", "Antworten erkannt")):
+        if z.get(schluessel):
             teile.append(f"{z[schluessel]} {text}")
+    autopilot = z.get("autopilot") or {}
+    if autopilot.get("freigegeben") or autopilot.get("mit_frist"):
+        teile.append(f"🤖 {autopilot.get('freigegeben', 0) + autopilot.get('mit_frist', 0)} vom Autopilot")
+    erkundung = z.get("erkundung") or {}
+    if erkundung.get("aktiv"):
+        teile.append("neue Suchbegriffe: " + ", ".join(erkundung["aktiv"]))
+    if z.get("suchfehler"):
+        teile.append(f"⚠️ {len(z['suchfehler'])} Abfrage(n) fehlgeschlagen")
     if lauf.get("fehler"):
         teile.append(f"Fehler: {lauf['fehler'][:120]}")
     return " · ".join(teile)
@@ -338,12 +346,146 @@ def _probelauf_anzeige(v: Vorgang) -> None:
         if ausgefuellt:
             st.markdown("**Ausgefüllt:** " + ", ".join(ausgefuellt))
         if fehlend:
-            st.warning("**Konnte nicht ausgefüllt werden:** " + ", ".join(fehlend)
-                       + " – ergänze die Angaben im Profil und bereite neu vor.")
+            st.warning("**Konnte nicht ausgefüllt werden:** " + ", ".join(str(f) for f in fehlend))
         if daten.get("hindernis"):
             st.markdown(f"**Hindernis:** {daten['hindernis']}")
         if daten.get("zusammenfassung"):
             st.caption(f"{daten['zusammenfassung']} · {daten.get('schritte', '?')} Schritte")
+
+
+QUALITAET_HILFE = ("Selbstprüfung des Anschreibens: Sind alle Aussagen durch Lebenslauf/Profil belegt, "
+                   "werden die Muss-Anforderungen angesprochen, passen Anrede und Länge?")
+
+
+def _pruefung_anzeige(v: Vorgang) -> None:
+    bericht = v.pruefung_daten
+    if v.qualitaet is None and not bericht:
+        return
+    if v.anschreiben_quelle == "vorlage":
+        st.badge("Anschreiben aus Vorlage – bitte prüfen/anpassen", icon="📝", color="orange")
+    elif v.qualitaet is not None:
+        farbe = score_farbe(v.qualitaet)
+        text = f"Anschreiben-Qualität {v.qualitaet:.0f}/100" + (" · überarbeitet" if bericht.get("ueberarbeitet") else "")
+        st.badge(text, icon="✍️", color=farbe, help=QUALITAET_HILFE)
+    if bericht.get("unbelegt"):
+        st.warning("**Nicht durch deinen Lebenslauf belegt:** " + "; ".join(bericht["unbelegt"][:4])
+                   + " – bitte im Text korrigieren oder streichen.")
+    rest = [*bericht.get("maengel", []), *(f"Nicht angesprochen: {m}" for m in bericht.get("fehlende_muss", [])[:3]),
+            *bericht.get("hinweise", [])]
+    if rest:
+        with st.expander(f"🔎 Prüfbericht ({len(rest)} Punkte)"):
+            st.markdown("\n".join(f"- {r}" for r in rest))
+
+
+def _cb_autopilot_stopp(ref: str) -> None:
+    from . import autopilot
+
+    with oeffne_db() as db:
+        autopilot.stoppen(db, ref)
+    st.toast("Angehalten – diese Bewerbung geht nur mit deinem Ja raus.", icon="✋")
+
+
+def _autopilot_anzeige(v: Vorgang, praefix: str) -> None:
+    info = v.pruefung_daten.get("autopilot") or {}
+    if v.auto_senden_ab:
+        c1, c2 = st.columns([4, 1], vertical_alignment="center")
+        c1.info(f"🤖 **Autopilot:** geht **{zeit(v.auto_senden_ab)}** automatisch raus, wenn du nichts tust.")
+        c2.button("✋ Stopp", key=f"{praefix}_stopp_{v.ref}", on_click=_cb_autopilot_stopp, args=(v.ref,),
+                  width="stretch", help="Nicht automatisch senden – wartet dann auf dein Ja.")
+    elif info.get("gruende") and info.get("freigabe") is False:
+        st.caption("🤖 Autopilot sendet diese nicht allein: " + "; ".join(info["gruende"][:3]))
+
+
+_ANGABE_FELDER = [
+    (r"gehalt|salary", "gehaltsvorstellung"),
+    (r"eintritt|verfügbar|verfuegbar|start|beginn", "verfuegbar_ab"),
+    (r"kündigung|kuendigung|notice", "kuendigungsfrist"),
+    (r"staatsangeh|nationalit|citizenship", "nationalitaet"),
+    (r"arbeitserlaubnis|work permit|visa", "arbeitserlaubnis"),
+    (r"führerschein|fuehrerschein|driving", "fuehrerschein"),
+    (r"anrede|salutation|geschlecht", "anrede"),
+    (r"abschluss|degree|studium", "abschluss"),
+    (r"berufserfahrung|experience", "berufserfahrung_jahre"),
+    (r"umzug|relocat", "umzugsbereitschaft"),
+    (r"sprach|language", "sprachen"),
+    (r"titel|title", "titel"),
+]
+
+
+def angabe_merken(profil: Profil, frage: str, antwort: str) -> str:
+    """Speichert eine Formular-Antwort im passenden Profilfeld oder unter `weitere`."""
+    import re as _re
+
+    antwort = antwort.strip()
+    for muster, feld in _ANGABE_FELDER:
+        if _re.search(muster, frage, _re.IGNORECASE):
+            setattr(profil.angaben, feld, antwort)
+            return feld
+    profil.angaben.weitere[frage.strip()] = antwort
+    return "weitere"
+
+
+def _cb_angaben(ref: str, praefix: str, fragen: list[str]) -> None:
+    from .config import ermittle_profil_pfad, speichere_profil
+
+    profil = lade_profil()
+    gemerkt = 0
+    for i, frage in enumerate(fragen):
+        antwort = (st.session_state.get(f"{praefix}_angabe_{ref}_{i}") or "").strip()
+        if antwort:
+            angabe_merken(profil, frage, antwort)
+            gemerkt += 1
+    if not gemerkt:
+        st.session_state[_schluessel(praefix, ref, "fehler")] = "Bitte mindestens eine Angabe ausfüllen."
+        return
+    speichere_profil(profil, ermittle_profil_pfad())
+    _cb_neu_vorbereiten(ref)
+    st.toast(f"{gemerkt} Angabe(n) im Profil gemerkt – wird neu vorbereitet.", icon="💾")
+
+
+def _fehlende_angaben(v: Vorgang, praefix: str) -> None:
+    fehlend = [str(f) for f in (v.probelauf_daten.get("fehlende_angaben") or []) if str(f).strip()]
+    if not fehlend:
+        return
+    with st.container(border=True):
+        st.markdown("**📝 Das Formular fragt noch nach:** (einmal beantworten – der Agent merkt es sich)")
+        for i, eintrag in enumerate(fehlend[:6]):
+            feld, _, frage = eintrag.partition(":")
+            st.text_input(frage.strip() or feld.strip(), key=f"{praefix}_angabe_{v.ref}_{i}")
+        st.button("💾 Merken & neu vorbereiten", key=f"{praefix}_angaben_{v.ref}", on_click=_cb_angaben,
+                  args=(v.ref, praefix, fehlend[:6]))
+
+
+VORSCHLAG_ICON = {"nachfassen": "📨", "ausschluss": "🚫", "umkreis": "📍", "min_score": "🎯", "arbeitgeber": "🏢",
+                  "stil": "✍️", "suchbegriff": "🔍"}
+
+
+def _cb_vorschlag(vorschlag_id: int, ja: bool, praefix: str) -> None:
+    from . import lernen
+
+    profil = lade_profil()
+    text = st.session_state.get(f"{praefix}_vtext_{vorschlag_id}")
+    with oeffne_db() as db:
+        meldung = lernen.wende_an(db, profil, vorschlag_id, ja, text=text)
+    st.toast(meldung, icon="✅" if ja else "👌")
+
+
+def vorschlag_karte(vorschlag: dict, praefix: str = "vk") -> None:
+    """Ja/Nein-Karte fuer einen Vorschlag des Agenten (Nachfassen, Profil-Aenderung ...)."""
+    with st.container(border=True):
+        st.markdown(f"{VORSCHLAG_ICON.get(vorschlag['art'], '💡')} **{vorschlag['titel']}**")
+        if vorschlag["art"] == "nachfassen":
+            st.caption(f"An {vorschlag['daten'].get('empfaenger', '?')} · Betreff: {vorschlag['daten'].get('betreff', '')}")
+            st.text_area("Text", value=vorschlag["text"], key=f"{praefix}_vtext_{vorschlag['id']}", height=200,
+                         label_visibility="collapsed")
+        elif vorschlag.get("text"):
+            st.markdown(vorschlag["text"])
+        c1, c2, _ = st.columns([1, 1, 3])
+        c1.button("✅ Ja" + (", senden" if vorschlag["art"] == "nachfassen" else ""), type="primary",
+                  key=f"{praefix}_vja_{vorschlag['id']}", on_click=_cb_vorschlag, args=(vorschlag["id"], True, praefix),
+                  width="stretch")
+        c2.button("❌ Nein", key=f"{praefix}_vnein_{vorschlag['id']}", on_click=_cb_vorschlag,
+                  args=(vorschlag["id"], False, praefix), width="stretch")
 
 
 def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk") -> None:
@@ -362,7 +504,10 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
         if v.hinweis:
             (st.warning if v.kanal == "manuell" or "fehlgeschlagen" in v.hinweis.lower()
              or "unvollständig" in v.hinweis.lower() else st.caption)(v.hinweis)
+        _autopilot_anzeige(v, praefix)
+        _pruefung_anzeige(v)
         _probelauf_anzeige(v)
+        _fehlende_angaben(v, praefix)
 
         with st.expander("✏️ Anschreiben & Versand prüfen / bearbeiten"):
             kanaele = ["email", "formular"] if v.kanal != "manuell" else ["manuell", "email", "formular"]
@@ -378,7 +523,8 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
                               placeholder="bewerbung@firma.de")
                 st.text_area("E-Mail-Text", value=v.email_text or "", key=k("mail"), height=180)
                 if not mail.smtp_eingerichtet():
-                    st.warning("E-Mail-Versand ist noch nicht eingerichtet (SMTP in der .env).")
+                    st.warning("E-Mail-Versand ist noch nicht eingerichtet (Profil → 🔑 Zugänge). "
+                               "Ein Ja gilt trotzdem – die Bewerbung geht raus, sobald SMTP eingetragen ist.")
             elif kanal == "formular":
                 st.caption(f"Bewerbungsseite: {v.bewerbungs_url or job.bewerbungs_url or '–'}")
             st.text_area("Anschreiben", value=v.anschreiben or "", key=k("text"), height=320)

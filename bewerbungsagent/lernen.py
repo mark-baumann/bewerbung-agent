@@ -178,7 +178,7 @@ def schlage_suchbegriff_vor(db: Speicher, begriff: str, passend: int) -> bool:
 
 
 def wende_an(db: Speicher, profil: Profil, vorschlag_id: int, ja: bool, *, profil_pfad: str | None = None,
-             mail_sender: Any = None) -> str:
+             mail_sender: Any = None, text: str | None = None) -> str:
     """Ja/Nein zu einem Vorschlag; liefert eine kurze Rueckmeldung fuer die UI."""
     vorschlag = db.vorschlag(vorschlag_id)
     if vorschlag is None or vorschlag["status"] != "offen":
@@ -192,6 +192,8 @@ def wende_an(db: Speicher, profil: Profil, vorschlag_id: int, ja: bool, *, profi
     if vorschlag["art"] == "nachfassen":
         from . import nachfassen
 
+        if text and text.strip():
+            vorschlag["daten"]["text"] = text.strip()
         return nachfassen.senden(db, profil, vorschlag, mail_sender=mail_sender)
     b, s = profil.bewertung, profil.suche
     if "ausschluss_hinzu" in daten and daten["ausschluss_hinzu"] not in b.ausschluss:

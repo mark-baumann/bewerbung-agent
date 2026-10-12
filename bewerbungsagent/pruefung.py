@@ -39,6 +39,7 @@ _ZAHL = re.compile(r"\b(\d{4}|\d+(?:[.,]\d+)?\s*(?:Jahre?n?|years?|%|Prozent|Mit
                    r"Kunden|Monate?n?))\b", re.IGNORECASE)
 # Fachbegriffe: Woerter mit Grossbuchstaben/Ziffern/Sonderzeichen im Wort (SAP, SQL, C++, Node.js, S/4HANA)
 _FACHWORT = re.compile(r"(?<![\w-])([A-Za-z][A-Za-z0-9]*(?:[A-Z0-9+#/.][A-Za-z0-9+#]*)+)(?![\w-])")
+_DOMAIN = re.compile(r"^[\w-]+\.(de|com|org|net|io|eu|at|ch|info|jobs)$", re.IGNORECASE)
 _KEIN_FACHWORT = {"IT", "AG", "GmbH", "KG", "SE", "UG", "EU", "CV", "PDF", "HR", "Dr", "Prof", "Co", "eV", "z.B",
                   "u.a", "d.h", "ca", "bzw", "inkl", "ggf", "usw", "etc", "m/w/d", "w/m/d", "B.Sc", "M.Sc"}
 
@@ -108,8 +109,8 @@ class Bericht:
 
 
 def fakten(profil: Profil) -> str:
-    teile = [profil.kurzprofil, ", ".join(profil.bewertung.skills), ", ".join(profil.bewertung.wunsch),
-             lebenslauf_text(profil)]
+    # Wunschthemen sind Wuensche, keine Nachweise - sie belegen nichts
+    teile = [profil.kurzprofil, ", ".join(profil.bewertung.skills), lebenslauf_text(profil)]
     a = profil.angaben
     teile += [a.abschluss, a.sprachen, a.berufserfahrung_jahre, a.titel, a.fuehrerschein,
               profil.person.ort, profil.person.name]
@@ -158,9 +159,9 @@ def regelpruefung(text: str, job: Job, profil: Profil, dossier: Dossier | None) 
             b.unbelegt.append(f"„{wert}“ steht nicht im Lebenslauf/Profil")
     # ... und Fachbegriffe aus der Anzeige, die das Anschreiben nennt, der Lebenslauf aber nicht
     for wort in sorted(_fachbegriffe(job, dossier)):
-        if re.search(rf"(?<![\w-]){re.escape(wort)}(?![\w-])", klein) and wort not in belege \
-                and wort not in _normal(job.arbeitgeber or ""):
-            b.unbelegt.append(f"„{wort}“ wird beansprucht, steht aber nicht im Lebenslauf/Profil")
+        treffer = re.search(rf"(?<![\w-]){re.escape(wort)}(?![\w-])", inhalt, re.IGNORECASE)
+        if treffer and wort not in belege and wort not in _normal(job.arbeitgeber or ""):
+            b.unbelegt.append(f"„{treffer.group(0)}“ wird beansprucht, steht aber nicht im Lebenslauf/Profil")
     if dossier:
         for anforderung in dossier.muss[:8]:
             schluessel = [w for w in re.findall(r"[A-Za-zÄÖÜäöüß0-9+#.]{4,}", anforderung)
@@ -176,7 +177,7 @@ def _fachbegriffe(job: Job, dossier: Dossier | None) -> set[str]:
     begriffe: set[str] = set()
     for m in _FACHWORT.finditer(job.beschreibung or ""):
         wort = m.group(1).rstrip(".")
-        if wort not in _KEIN_FACHWORT and len(wort) >= 2:
+        if wort not in _KEIN_FACHWORT and len(wort) >= 2 and not _DOMAIN.match(wort):
             begriffe.add(wort.lower())
     for anforderung in ([*dossier.muss, *dossier.kann] if dossier else []):
         for wort in re.findall(r"[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9+#.\-]{3,}", anforderung):
