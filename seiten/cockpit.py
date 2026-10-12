@@ -48,7 +48,7 @@ with ui.oeffne_db() as db:
     offen = len(db.kandidaten(min_score=profil.bewertung.min_score, limit=200,
                               ausschluss_arbeitgeber=profil.bewertung.ausschluss_arbeitgeber))
     letzte_automatik = db.letzte_laeufe("automatik", limit=1)
-    vorschlaege = db.vorschlaege("offen")
+    vorschlaege = ui.offene_vorschlaege(db)
 
     ui.zeige_einrichtung(profil)
 

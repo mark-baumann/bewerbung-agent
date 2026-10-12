@@ -127,13 +127,88 @@ def _ki_modell(profil: Profil, speichern: Callable[[str], None]) -> None:
         st.rerun()
 
 
+# --------------------------------------------------------------------------- #
+# E-Mail-Konto mit Adresse + Passwort verbinden
+# --------------------------------------------------------------------------- #
+
+def mail_status() -> tuple[bool, str]:
+    """(verbunden, Text) fuer Einrichtungs-Check und Zugaenge."""
+    host, benutzer = os.environ.get("SMTP_HOST", ""), os.environ.get("SMTP_BENUTZER", "")
+    if not host:
+        return False, "Noch kein E-Mail-Konto verbunden."
+    text = f"Verbunden: **{benutzer or '?'}** über `{host}`"
+    if os.environ.get("IMAP_HOST"):
+        text += " · Antworten werden erkannt"
+    return True, text
+
+
+def mailkonto_verbinden(profil: Profil, *, schluessel: str = "mailkonto") -> bool:
+    """Ein-Schritt-Dialog: Adresse + Passwort, Rest automatisch. True, wenn verbunden."""
+    from .bewerben import mailkonto
+
+    verbunden, status = mail_status()
+    ergebnis = st.session_state.get(f"{schluessel}_ergebnis")
+    if verbunden and not st.session_state.get(f"{schluessel}_neu"):
+        st.success(status, icon=":material/mark_email_read:")
+        if ergebnis:
+            for meldung in ergebnis:
+                st.caption(meldung)
+        if st.button("Anderes Konto verbinden", key=f"{schluessel}_wechseln", icon=":material/swap_horiz:"):
+            st.session_state[f"{schluessel}_neu"] = True
+            st.rerun()
+        return True
+
+    st.markdown("Gib die Adresse und das Passwort deines Postfachs ein – Server und Einstellungen "
+                "sucht der Agent selbst heraus und prüft die Anmeldung sofort.")
+    vorschlag = os.environ.get("SMTP_BENUTZER") or profil.person.email
+    with st.form(f"{schluessel}_form", border=False):
+        adresse = st.text_input("E-Mail-Adresse", value=vorschlag, placeholder="vorname@beispiel.de",
+                                autocomplete="email")
+        passwort = st.text_input("Passwort des Postfachs", type="password", autocomplete="current-password")
+        los = st.form_submit_button("Verbinden & testen", type="primary", icon=":material/link:")
+    if not los:
+        return False
+    try:
+        with st.spinner("Suche die Server deines Anbieters …"):
+            konto = mailkonto.erkenne(adresse)
+        with st.spinner(f"Melde mich bei {konto.anbieter} an …"):
+            e = mailkonto.verbinde_konto(konto, passwort)
+    except ValueError as fehler:
+        st.error(str(fehler))
+        return False
+    if e.smtp_ok:
+        st.session_state.pop(f"{schluessel}_neu", None)
+        meldungen = [f"Anbieter: {konto.anbieter} · Versand über {e.smtp.text}"]
+        meldungen.append(f"Antworten erkennen über {e.imap.text}" if e.imap_ok
+                         else "Antworten-Erkennung (IMAP) klappt noch nicht: " + "; ".join(
+                             m for m in e.meldungen if m.startswith("Empfang")))
+        st.session_state[f"{schluessel}_ergebnis"] = meldungen
+        if not profil.person.email:
+            profil.person.email = konto.adresse
+        st.success(f"Dein Postfach {konto.adresse} ist verbunden – Bewerbungen gehen ab jetzt von dort raus.",
+                   icon=":material/check_circle:")
+        st.rerun()
+        return True
+    st.error("Verbinden hat nicht geklappt:\n\n" + "\n".join(f"- {m}" for m in e.meldungen))
+    if konto.hinweis:
+        st.info(konto.hinweis)
+    st.caption(f"Erkannt: {konto.anbieter} · Versand {', '.join(s.text for s in konto.smtp)} · "
+               f"Empfang {', '.join(s.text for s in konto.imap)}")
+    return False
+
+
 def zeige_zugaenge(profil: Profil, speichern: Callable[[str], None]) -> None:
     st.caption(
         "Zugangsdaten werden nur auf diesem Gerät gespeichert (`daten/zugangsdaten.json`, nur für dich lesbar) – "
         "nie im Profil und nie im Git. Was du hier einträgst, hat Vorrang vor der `.env` und gilt sofort, "
         "auch für Automatik und Versand. Passwortfelder leer lassen = unverändert."
     )
+    with st.container(border=True):
+        st.markdown("##### :material/mail: Dein E-Mail-Konto")
+        mailkonto_verbinden(profil)
     for gruppe, titel in zugangsdaten.GRUPPEN.items():
+        if gruppe in ("smtp", "imap"):
+            continue
         with st.container(border=True):
             st.markdown(f"##### {titel}")
             if gruppe == "imap":
@@ -155,6 +230,10 @@ def zeige_zugaenge(profil: Profil, speichern: Callable[[str], None]) -> None:
                     if info.verfuegbar() and c2.button("🔌 Testen", key=f"quelle_test_{name}"):
                         st.session_state[f"zugang_test_{name}"] = zugangsdaten.teste_quelle(name)
                     _testergebnis(name)
+    with st.expander("Mail-Server selbst eintragen (für Fortgeschrittene)", icon=":material/tune:"):
+        for gruppe in ("smtp", "imap"):
+            st.markdown(f"**{zugangsdaten.GRUPPEN[gruppe]}**")
+            _gruppe(gruppe, profil)
 
 
 # --------------------------------------------------------------------------- #

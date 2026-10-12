@@ -470,6 +470,14 @@ def _cb_vorschlag(vorschlag_id: int, ja: bool, praefix: str) -> None:
     st.toast(meldung, icon="✅" if ja else "👌")
 
 
+def offene_vorschlaege(db: Speicher) -> list[dict]:
+    """Offene Vorschlaege des Agenten - unsinnige (z. B. Plattformnamen als Suchbegriff) vorher verwerfen."""
+    from . import lernen
+
+    lernen.verwerfe_unsinnige_vorschlaege(db)
+    return db.vorschlaege("offen")
+
+
 def vorschlag_karte(vorschlag: dict, praefix: str = "vk") -> None:
     """Ja/Nein-Karte fuer einen Vorschlag des Agenten (Nachfassen, Profil-Aenderung ...)."""
     with st.container(border=True):

@@ -97,8 +97,23 @@ def vorlieben(db: Speicher) -> Vorlieben:
 # Vorschlaege ableiten und anwenden
 # --------------------------------------------------------------------------- #
 
+def verwerfe_unsinnige_vorschlaege(db: Speicher) -> int:
+    """Offene Suchbegriff-Vorschlaege wie „Engineering“ oder „Jobicy“ (Plattformname) still verwerfen."""
+    from .vorschlaege import zu_allgemein
+
+    anzahl = 0
+    for vorschlag in db.vorschlaege("offen"):
+        begriff = (vorschlag.get("daten") or {}).get("suchbegriff_hinzu")
+        if vorschlag["art"] == "suchbegriff" and begriff and zu_allgemein(begriff):
+            db.setze_vorschlag(vorschlag["id"], "erledigt", hinweis="automatisch verworfen (zu allgemein)")
+            db.merke_suchbegriff(begriff, "erkundung", "verworfen", "zu allgemein")
+            anzahl += 1
+    return anzahl
+
+
 def leite_vorschlaege_ab(db: Speicher, profil: Profil, *, mit_llm: bool = True) -> int:
     """Erzeugt neue Ja/Nein-Vorschlaege aus den Entscheidungen; liefert die Anzahl neuer."""
+    verwerfe_unsinnige_vorschlaege(db)
     v = vorlieben(db)
     b, s = profil.bewertung, profil.suche
     neu = 0
