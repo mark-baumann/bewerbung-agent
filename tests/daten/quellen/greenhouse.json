@@ -1,0 +1,411 @@
+{
+ "jobs": [
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/celonis/jobs/7816965003?gh_jid=7816965003",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "education": "education_required",
+   "internal_job_id": 5800339003,
+   "location": {
+    "name": "Munich, Germany"
+   },
+   "metadata": [
+    {
+     "id": 4008575003,
+     "name": "Employment Type",
+     "value": null,
+     "value_type": "single_select"
+    },
+    {
+     "id": 13879587003,
+     "name": "Type",
+     "value": "Early Professional Hire",
+     "value_type": "single_select"
+    },
+    {
+     "id": 5699689003,
+     "name": "Company",
+     "value": "Celonis",
+     "value_type": "single_select"
+    },
+    {
+     "id": 4072205003,
+     "name": "Language",
+     "value": "English",
+     "value_type": "single_select"
+    },
+    {
+     "id": 4080290003,
+     "name": "Recruiter",
+     "value": {
+      "name": "Helena Hoyer",
+      "email": "h.hoyer@celonis.de",
+      "user_id": 5403387003,
+      "employee_id": null
+     },
+     "value_type": "user"
+    },
+    {
+     "id": 4080387003,
+     "name": "Referral Reward",
+     "value": {
+      "unit": "USD",
+      "amount": "0.0"
+     },
+     "value_type": "currency"
+    },
+    {
+     "id": 7427826003,
+     "name": "agency engaged deleted",
+     "value": null,
+     "value_type": "yes_no"
+    },
+    {
+     "id": 7465144003,
+     "name": "Agency Engaged",
+     "value": null,
+     "value_type": "yes_no"
+    },
+    {
+     "id": 7427840003,
+     "name": "Agency Name",
+     "value": null,
+     "value_type": "short_text"
+    },
+    {
+     "id": 7427842003,
+     "name": "Agency PO-Number",
+     "value": null,
+     "value_type": "short_text"
+    },
+    {
+     "id": 9155214003,
+     "name": "Job Function",
+     "value": "N/A",
+     "value_type": "single_select"
+    },
+    {
+     "id": 38472466003,
+     "name": "Workday - Integration Date",
+     "value": "",
+     "value_type": "date"
+    },
+    {
+     "id": 11620923003,
+     "name": "Recruitment Campaign",
+     "value": null,
+     "value_type": "single_select"
+    }
+   ],
+   "id": 7816965003,
+   "updated_at": "2026-09-30T08:39:15-04:00",
+   "requisition_id": "664x",
+   "title": "Associate Account Executive (Top Talent Sales Program - Lunar)",
+   "company_name": "Celonis",
+   "first_published": "2026-08-25T11:25:42-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;Celonis is the trusted platform to industrialize Enterprise AI. At our core is the Celonis Context Model — which combines process data, business knowledge, and intelligence into a living digital twin of the enterprise that AI can actually understand, turning AI&#39;s operational blind spots into operational clarity. World&#39;s leading companies trust Celonis and its global ecosystem of partners to make their AI agents, people, systems, and processes work together, achieving transformational outcomes. We believe there&#39;s a massive opportunity to unlock global productivity and sustainability by giving AI the context to understand how every business process really works. Join our mission to make processes work for people, companies, and the planet.&lt;/p&gt;&lt;/div&gt;&lt;h3&gt;&lt;strong&gt;Lunar Sales:&lt;/strong&gt;&lt;/h3&gt;\n&lt;p&gt;The Celonis Lunar Sales is a fast-track, 2-year development programme designed for ambitious professionals who want to accelerate their career at the intersection of AI, enterprise technology, and strategic sales.&amp;nbsp; If you have experience solving complex problems in a client-facing role, in management or strategy consulting or a leading industry strategy function and you are ready to bring that expertise into enterprise sales, this is your launchpad.&lt;/p&gt;\n&lt;p&gt;The Program immerses you in every stage of the customer sales journey, supported by motivating leaders who will h",
+   "departments": [
+    {
+     "id": 4064027003,
+     "name": "Sales & Partner Mgmt",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4001034003,
+     "name": "Munich, Germany",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": null,
+   "include_ai_disclaimer": null,
+   "ai_opt_out_request_url": null
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/celonis/jobs/7814021003?gh_jid=7814021003",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "education": "education_required",
+   "internal_job_id": 5778099003,
+   "location": {
+    "name": "Munich, Germany"
+   },
+   "metadata": [
+    {
+     "id": 4008575003,
+     "name": "Employment Type",
+     "value": "Regular - Unlimited",
+     "value_type": "single_select"
+    },
+    {
+     "id": 13879587003,
+     "name": "Type",
+     "value": "Early Professional Hire",
+     "value_type": "single_select"
+    },
+    {
+     "id": 5699689003,
+     "name": "Company",
+     "value": "Celonis",
+     "value_type": "single_select"
+    },
+    {
+     "id": 4072205003,
+     "name": "Language",
+     "value": "English",
+     "value_type": "single_select"
+    },
+    {
+     "id": 4080290003,
+     "name": "Recruiter",
+     "value": {
+      "name": "Kathrin Waldenmaier",
+      "email": "k.waldenmaier@celonis.com",
+      "user_id": 4709213003,
+      "employee_id": "04693"
+     },
+     "value_type": "user"
+    },
+    {
+     "id": 4080387003,
+     "name": "Referral Reward",
+     "value": {
+      "unit": "USD",
+      "amount": "1500.0"
+     },
+     "value_type": "currency"
+    },
+    {
+     "id": 7427826003,
+     "name": "agency engaged deleted",
+     "value": null,
+     "value_type": "yes_no"
+    },
+    {
+     "id": 7465144003,
+     "name": "Agency Engaged",
+     "value": null,
+     "value_type": "yes_no"
+    },
+    {
+     "id": 7427840003,
+     "name": "Agency Name",
+     "value": null,
+     "value_type": "short_text"
+    },
+    {
+     "id": 7427842003,
+     "name": "Agency PO-Number",
+     "value": null,
+     "value_type": "short_text"
+    },
+    {
+     "id": 9155214003,
+     "name": "Job Function",
+     "value": "Orbit",
+     "value_type": "single_select"
+    },
+    {
+     "id": 38472466003,
+     "name": "Workday - Integration Date",
+     "value": null,
+     "value_type": "date"
+    },
+    {
+     "id": 11620923003,
+     "name": "Recruitment Campaign",
+     "value": null,
+     "value_type": "single_select"
+    }
+   ],
+   "id": 7814021003,
+   "updated_at": "2026-09-30T08:39:15-04:00",
+   "requisition_id": "R14655",
+   "title": "Associate (AI) Solution Consultant - Orbit Program ",
+   "company_name": "Celonis",
+   "first_published": "2026-07-23T12:00:12-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;Celonis is the trusted platform to industrialize Enterprise AI. At our core is the Celonis Context Model — which combines process data, business knowledge, and intelligence into a living digital twin of the enterprise that AI can actually understand, turning AI&#39;s operational blind spots into operational clarity. World&#39;s leading companies trust Celonis and its global ecosystem of partners to make their AI agents, people, systems, and processes work together, achieving transformational outcomes. We believe there&#39;s a massive opportunity to unlock global productivity and sustainability by giving AI the context to understand how every business process really works. Join our mission to make processes work for people, companies, and the planet.&lt;/p&gt;&lt;/div&gt;&lt;p&gt;&lt;strong&gt;&lt;span style=&quot;text-decoration: underline;&quot;&gt;Location: Madrid for an onboarding period of 2 years&lt;/span&gt; and a possible relocation to Munich after. Customer base will be in Germany/DACH area, involving travel to meet clients in person.&lt;/strong&gt;&lt;/p&gt;\n&lt;h3&gt;&lt;strong&gt;Role Description&lt;/strong&gt;&lt;/h3&gt;\n&lt;p&gt;As an (AI) Solution Consultant you are pushing the envelope in solving business-critical problems for our customers. You are part of our Value Engineering team and are the trusted advisor for customers working on the intersection of technology and business. You will be working with our m",
+   "departments": [
+    {
+     "id": 4057030003,
+     "name": "Value Engineering",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4007281003,
+     "name": "Madrid, Spain",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": null,
+   "include_ai_disclaimer": null,
+   "ai_opt_out_request_url": null
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/celonis/jobs/7887061003?gh_jid=7887061003",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5834028003,
+   "location": {
+    "name": "Remote, US, Georgia"
+   },
+   "metadata": [
+    {
+     "id": 4008575003,
+     "name": "Employment Type",
+     "value": "Regular - Unlimited",
+     "value_type": "single_select"
+    },
+    {
+     "id": 13879587003,
+     "name": "Type",
+     "value": "Professional Hire",
+     "value_type": "single_select"
+    },
+    {
+     "id": 5699689003,
+     "name": "Company",
+     "value": "Celonis",
+     "value_type": "single_select"
+    },
+    {
+     "id": 4072205003,
+     "name": "Language",
+     "value": "English",
+     "value_type": "single_select"
+    },
+    {
+     "id": 4080290003,
+     "name": "Recruiter",
+     "value": {
+      "name": "Nick Beaulac",
+      "email": "n.beaulac@celonis.com",
+      "user_id": 5490880003,
+      "employee_id": "08596"
+     },
+     "value_type": "user"
+    },
+    {
+     "id": 4080387003,
+     "name": "Referral Reward",
+     "value": {
+      "unit": "USD",
+      "amount": "1500.0"
+     },
+     "value_type": "currency"
+    },
+    {
+     "id": 7427826003,
+     "name": "agency engaged deleted",
+     "value": null,
+     "value_type": "yes_no"
+    },
+    {
+     "id": 7465144003,
+     "name": "Agency Engaged",
+     "value": null,
+     "value_type": "yes_no"
+    },
+    {
+     "id": 7427840003,
+     "name": "Agency Name",
+     "value": null,
+     "value_type": "short_text"
+    },
+    {
+     "id": 7427842003,
+     "name": "Agency PO-Number",
+     "value": null,
+     "value_type": "short_text"
+    },
+    {
+     "id": 9155214003,
+     "name": "Job Function",
+     "value": null,
+     "value_type": "single_select"
+    },
+    {
+     "id": 38472466003,
+     "name": "Workday - Integration Date",
+     "value": "2026-08-17",
+     "value_type": "date"
+    },
+    {
+     "id": 11620923003,
+     "name": "Recruitment Campaign",
+     "value": null,
+     "value_type": "single_select"
+    }
+   ],
+   "id": 7887061003,
+   "updated_at": "2026-10-06T14:49:46-04:00",
+   "requisition_id": "R15138",
+   "title": "Account Executive - CPG",
+   "company_name": "Celonis",
+   "first_published": "2026-09-03T12:50:00-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;Celonis is the trusted platform to industrialize Enterprise AI. At our core is the Celonis Context Model — which combines process data, business knowledge, and intelligence into a living digital twin of the enterprise that AI can actually understand, turning AI&#39;s operational blind spots into operational clarity. World&#39;s leading companies trust Celonis and its global ecosystem of partners to make their AI agents, people, systems, and processes work together, achieving transformational outcomes. We believe there&#39;s a massive opportunity to unlock global productivity and sustainability by giving AI the context to understand how every business process really works. Join our mission to make processes work for people, companies, and the planet.&lt;/p&gt;&lt;/div&gt;&lt;p&gt;&lt;strong&gt;The Team:&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;The Account Executive, a pivotal member of our enterprise sales team, is dedicated to driving growth by acquiring new clients across the region. This role is solely focused on expanding our footprint in the CPG space. Leveraging top-tier products and effective sales strategies, the Account Executive collaborates closely with Value Engineers, Business Development Representatives, and other cross-functional teams to identify and capture high-value new business opportunities.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;The Role:&lt;/strong&gt;&lt;/p&gt;\n&lt;p&gt;The primary objective is to build and expand ",
+   "departments": [
+    {
+     "id": 4002186003,
+     "name": "Sales",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4030111003,
+     "name": "Remote, US, Georgia",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": null,
+   "include_ai_disclaimer": null,
+   "ai_opt_out_request_url": null
+  }
+ ],
+ "meta": {
+  "total": 3
+ }
+}

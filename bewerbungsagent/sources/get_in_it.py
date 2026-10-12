@@ -35,7 +35,7 @@ MAX_SEITEN = 10
 
 
 class GetInItClient:
-    def __init__(self, timeout: float = 30.0, transport=None):
+    def __init__(self, timeout: float = 30.0, transport=None, profil=None, **_ignoriert: Any):
         self.http = httpx.Client(
             timeout=timeout,
             follow_redirects=True,

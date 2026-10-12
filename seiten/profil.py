@@ -1,14 +1,12 @@
-"""Profil & Einstellungen: Daten, Suche, Unterlagen, Automatik und Versand."""
+"""Profil & Einstellungen: Daten, Suche, Jobbörsen, Unterlagen, Automatik, Zugänge."""
 
-import os
 from pathlib import Path
 
 import streamlit as st
 
-from bewerbungsagent import ablauf, dokumente, zeitplan
+from bewerbungsagent import ablauf, dokumente, ui, ui_einstellungen, zeitplan
 from bewerbungsagent.bewerben import mail
 from bewerbungsagent.config import MODI, erstelle_profil, ermittle_profil_pfad, lade_profil, speichere_profil
-from bewerbungsagent.scoring import llm as llm_modul
 
 st.title("👤 Profil & Einstellungen")
 
@@ -38,8 +36,9 @@ def zeilen(text: str) -> list[str]:
     return [z.strip() for z in text.splitlines() if z.strip()]
 
 
-tab_person, tab_suche, tab_unterlagen, tab_automatik = st.tabs(
-    ["👤 Persönliche Daten", "🔍 Suche & Bewertung", "📄 Unterlagen", "🤖 Automatik & Versand"]
+tab_person, tab_suche, tab_boersen, tab_unterlagen, tab_automatik, tab_zugaenge = st.tabs(
+    ["👤 Persönliche Daten", "🔍 Suche & Bewertung", "🌐 Jobbörsen", "📄 Unterlagen", "🤖 Automatik & Versand",
+     "🔑 Zugänge"]
 )
 
 # --------------------------------------------------------------------------- #
@@ -113,7 +112,9 @@ with tab_suche:
             max_pro_query = st.number_input("Max. Treffer pro Suchbegriff", 5, 300, int(s.max_pro_query))
             nur_vollzeit = st.checkbox("Nur Vollzeit", value=s.nur_vollzeit)
             nur_homeoffice = st.checkbox("Homeoffice bevorzugen", value=s.nur_homeoffice)
-            quellen = st.multiselect("Jobbörsen", ["arbeitsagentur", "get-in-it"], default=s.quellen)
+            quellen = st.multiselect("Jobbörsen", ui.quellen_optionen(), default=ui.quellen_auswahl(s.quellen),
+                                     format_func=ui.quellen_label,
+                                     help="Details und Wunsch-Arbeitgeber im Tab „Jobbörsen“.")
 
         st.markdown("##### Bewertung")
         c3, c4 = st.columns(2)
@@ -256,10 +257,8 @@ with tab_automatik:
                 except Exception as e:
                     st.error(f"Testmail fehlgeschlagen: {e}")
         else:
-            st.warning("Nicht eingerichtet – Bewerbungen per E-Mail sind dann nicht möglich.")
-            st.code("SMTP_HOST=smtp.example.de\nSMTP_PORT=465\nSMTP_BENUTZER=ich@example.de\n"
-                    "SMTP_PASSWORT=...\n# optional: SMTP_ABSENDER=ich@example.de", language="bash")
-            st.caption("In die `.env` (lokal) bzw. die Deployment-Umgebung eintragen und neu starten.")
+            st.warning("Nicht eingerichtet – Bewerbungen per E-Mail sind dann nicht möglich. "
+                       "Zugangsdaten im Tab **🔑 Zugänge** eintragen.")
     with v2, st.container(border=True):
         st.markdown("**🌐 Online-Formulare (Browser-Agent)**")
         if ablauf.browser_verfuegbar():
@@ -269,24 +268,14 @@ with tab_automatik:
         if profil.ba_benutzer and profil.ba_passwort:
             st.caption("BA-Login ist hinterlegt (für „Online bewerben“ bei der Arbeitsagentur).")
         else:
-            st.caption("Optional: BA_BENUTZER / BA_PASSWORT für Bewerbungen über das Konto der Arbeitsagentur.")
+            st.caption("Optional: Login der Arbeitsagentur unter 🔑 Zugänge – für „Online bewerben“ dort.")
 
-    st.divider()
-    st.markdown("##### 🤖 KI-Modell")
-    schluessel = [n for n in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_API_KEY", "OLLAMA_BASE_URL") if os.getenv(n)]
-    if schluessel:
-        st.success(f"KI verfügbar über {llm_modul.provider(profil.bewertung.modell)} ({', '.join(schluessel)} gesetzt)")
-    else:
-        st.warning("Kein KI-Zugang gesetzt – Bewertung per Stichworten, Anschreiben aus einer Vorlage.")
-    modelle = [
-        "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
-        "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", *llm_modul.OLLAMA_MODELLE,
-    ]
-    if profil.bewertung.modell not in modelle:
-        modelle.insert(0, profil.bewertung.modell)
-    with st.form("llm_modell"):
-        gewaehlt = st.selectbox("Modell für Bewertung, Anschreiben und Browser-Agent", modelle,
-                                index=modelle.index(profil.bewertung.modell))
-        if st.form_submit_button("💾 Modell speichern"):
-            profil.bewertung.modell = gewaehlt
-            speichern(f"Modell auf {gewaehlt} gesetzt.")
+# --------------------------------------------------------------------------- #
+# Jobbörsen & Zugänge
+# --------------------------------------------------------------------------- #
+
+with tab_boersen, ui.oeffne_db() as db:
+    ui_einstellungen.zeige_jobboersen(profil, speichern, db)
+
+with tab_zugaenge:
+    ui_einstellungen.zeige_zugaenge(profil, speichern)

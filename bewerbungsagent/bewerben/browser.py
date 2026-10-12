@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,38 +56,37 @@ def _pruefe_browser_use() -> None:
         ) from e
 
 
-def _browser_llm(modell: str):
-    """LangChain-LLM fuer browser-use: Anthropic oder OpenAI-kompatibles Ollama."""
+def _browser_llm(modell: str, ausser: tuple[str, ...] = ()):
+    """LLM fuer browser-use (Anthropic, OpenAI oder OpenAI-kompatibles Ollama).
+
+    Das Modell wird vorher beim Anbieter geprueft: gibt es das gewuenschte
+    nicht, nimmt der Agent ein verfuegbares, statt mit "model not found" zu
+    scheitern.
+    """
     from ..scoring import llm as llm_modul
 
     anbieter = llm_modul.provider(modell)
+    if anbieter is None:
+        raise llm_modul.LLMNichtVerfuegbar(
+            "Kein KI-Zugang eingerichtet – der Browser-Agent braucht ein Modell (Profil → Zugänge)."
+        )
+    ziel, _ = llm_modul.pruefe_modell(anbieter, modell, ausser=ausser)
     if anbieter == "ollama":
         from browser_use import ChatOpenAI
 
         base = (llm_modul._env("OLLAMA_BASE_URL") or llm_modul.OLLAMA_DEFAULT_BASE_URL).rstrip("/")
         key = llm_modul._env("OLLAMA_API_KEY") or "ollama"
-        effektives_modell = modell
-        if llm_modul.ist_claude_modell(modell) or not modell:
-            effektives_modell = (
-                llm_modul._env("OLLAMA_MODEL") or llm_modul._env("LLM_MODEL") or llm_modul.OLLAMA_DEFAULT_MODEL
-            )
-        return ChatOpenAI(
-            model=effektives_modell,
-            base_url=f"{base}/v1",
-            api_key=key,
-            temperature=0.2,
-        )
+        return ChatOpenAI(model=ziel, base_url=f"{base}/v1", api_key=key, temperature=0.2)
     if anbieter == "openai":
         from browser_use import ChatOpenAI
 
-        return ChatOpenAI(
-            model=llm_modul.effektives_modell("openai", modell),
-            api_key=llm_modul._env("OPENAI_API_KEY"),
-            temperature=0.2,
-        )
+        return ChatOpenAI(model=ziel, api_key=llm_modul._env("OPENAI_API_KEY"), temperature=0.2)
     from browser_use import ChatAnthropic
 
-    return ChatAnthropic(model=llm_modul.effektives_modell("anthropic", modell))
+    return ChatAnthropic(model=ziel)
+
+
+_MODELL_FEHLT = re.compile(r"model_not_found|model .{0,80}(does not exist|not found)", re.I)
 
 
 def _ergebnis_modell():
@@ -284,6 +284,8 @@ class BewerbungsBrowser:
         self.extra_domains = extra_domains or []
         self.domains_offen = domains_offen
         self.aufzeichnung = aufzeichnung
+        # Modelle, die der Anbieter in diesem Lauf als unbekannt gemeldet hat
+        self._modell_ausser: tuple[str, ...] = ()
 
     def baue_agent(
         self,
@@ -309,7 +311,7 @@ class BewerbungsBrowser:
         if anschreiben_pdf and Path(anschreiben_pdf).exists():
             anhaenge = [str(Path(anschreiben_pdf).resolve()), *anhaenge]
         ergebnis_modell = _ergebnis_modell()
-        llm = _browser_llm(self.modell)
+        llm = _browser_llm(self.modell, self._modell_ausser)
         # Die meisten Ollama-Cloud-Modelle sind reine Textmodelle und antworten
         # auf Screenshots mit HTTP 500. Vision dort nur per BROWSER_VISION=1.
         from ..scoring import llm as llm_modul
@@ -370,6 +372,27 @@ class BewerbungsBrowser:
             use_vision=vision,
         )
 
+    def _modell_fehlte(self, history: Any, agent: Any) -> bool:
+        """True, wenn der Lauf am unbekannten Modell scheiterte und ein Ersatz bereitsteht."""
+        from ..scoring import llm as llm_modul
+
+        if self._modell_ausser or not history.has_errors():
+            return False
+        fehler = [f for f in history.errors() if f]
+        if not fehler or not _MODELL_FEHLT.search(fehler[-1]):
+            return False
+        genutzt = getattr(getattr(agent, "llm", None), "model", None)
+        anbieter = llm_modul.provider(self.modell)
+        if not genutzt or anbieter is None:
+            return False
+        llm_modul.vergiss_modelle()
+        ersatz, _ = llm_modul.pruefe_modell(anbieter, self.modell, ausser=(genutzt,))
+        if ersatz == genutzt:
+            return False
+        log.warning("Browser-Agent: Modell %s nicht verfuegbar - neuer Versuch mit %s.", genutzt, ersatz)
+        self._modell_ausser = (genutzt,)
+        return True
+
     async def bewerbe(
         self,
         job: Job,
@@ -393,6 +416,12 @@ class BewerbungsBrowser:
             job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
         )
         history = await agent.run(max_steps=self.max_schritte)
+        if self._modell_fehlte(history, agent):
+            # Das Modell gibt es beim Anbieter nicht: einmal mit einem verfuegbaren neu starten
+            agent = self.baue_agent(
+                job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
+            )
+            history = await agent.run(max_steps=self.max_schritte)
 
         strukturiert = None
         try:
@@ -416,6 +445,14 @@ class BewerbungsBrowser:
         if history.has_errors():
             fehler = [f for f in history.errors() if f]
             if fehler:
+                if _MODELL_FEHLT.search(fehler[-1]):
+                    from ..scoring import llm as llm_modul
+
+                    llm_modul.vergiss_modelle()
+                    zusammenfassung += (
+                        "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Profil → Zugänge "
+                        "ein verfügbares Modell wählen und erneut versuchen."
+                    )
                 zusammenfassung += f"\nFehler: {fehler[-1]}"
 
         return BewerbungsLauf(

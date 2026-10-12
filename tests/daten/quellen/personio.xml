@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<workzag-jobs>
+
+<position>
+    <id>2502124</id>
+    <subcompany>tado GmbH</subcompany>
+    <office>Germany - Munich</office>
+    <department>Finance</department>
+    <recruitingCategory>Finance</recruitingCategory>
+    <name>Team Lead Accounting (m/f/d)</name>
+    <jobDescriptions></jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>experienced</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>7-10</yearsOfExperience>
+    <keywords>Accounting, Finance, Buchhaltung,general ledger, account payables,account receivables,financial reporting,IFRS,UGB,HGB,audit</keywords>
+    <occupation>bookkeeping</occupation>
+    <occupationCategory>accounting_and_finance</occupationCategory>
+    <createdAt>2026-01-22T09:48:25+00:00</createdAt>
+    <salaryInformation>
+        <min>80000.00</min>
+        <max>100000.00</max>
+        <currencySymbol>€</currencySymbol>
+        <currencyCode>EUR</currencyCode>
+        <type>yearly</type>
+    </salaryInformation>
+</position>
+
+</workzag-jobs>

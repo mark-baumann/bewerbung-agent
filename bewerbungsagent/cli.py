@@ -640,6 +640,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     lade_env()
+    # In der Web-UI gespeicherte Zugaenge gelten auch fuer CLI, Worker und Cron-Tick
+    from . import zugangsdaten
+
+    zugangsdaten.anwenden()
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,

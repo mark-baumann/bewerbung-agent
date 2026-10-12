@@ -25,7 +25,7 @@ from .bewerben import mail
 from .config import Profil, ermittle_profil_pfad, speichere_profil
 from .db import Speicher
 from .hintergrund import sperre
-from .jobsuche import hole_jobs
+from .jobsuche import WUNSCH_BEGRIFF, aktualisiere_feed, hole_jobs, hole_wunscharbeitgeber, lokale_treffer, orte_fuer
 from .models import Application, Job, Score, Vorgang
 from .scoring import llm as llm_modul
 
@@ -66,7 +66,12 @@ class SuchErgebnis:
     neu: int = 0
     aktualisiert: int = 0
     je_begriff: dict[str, int] = field(default_factory=dict)
+    je_quelle: dict[str, int] = field(default_factory=dict)
     fehler: list[str] = field(default_factory=list)
+    hinweise: list[str] = field(default_factory=list)
+
+
+_ZEITARBEIT = re.compile(r"zeitarbeit|arbeitnehmer.?ueberlassung|arbeitnehmerüberlassung|personaldienstleist", re.I)
 
 
 def suche_ausfuehren(
@@ -84,45 +89,111 @@ def suche_ausfuehren(
     merken: bool = True,
     fortschritt: Fortschritt | None = None,
 ) -> SuchErgebnis:
-    """Fragt alle Quellen x Suchbegriffe ab; ein Fehler bricht nur die eine Abfrage ab."""
+    """Fragt alle Quellen ab; ein Fehler bricht nur die eine Abfrage ab.
+
+    Such-Quellen: eine Abfrage je Suchbegriff. Feed-Quellen: Bestand auffrischen
+    (Mindestabstand beachten) und lokal je Suchbegriff/Ort filtern.
+    Wunsch-Arbeitgeber: Stellen direkt aus deren Bewerbermanagement.
+    """
+    from .sources import QUELLEN, bekannte, label
+
     s = profil.suche
     begriffe = [b.strip() for b in (begriffe or s.was) if b and b.strip()]
-    ort = (s.wo if wo is None else wo) or ""
+    ort = ((s.wo if wo is None else wo) or "").strip()
     umkreis = int(s.umkreis if umkreis is None else umkreis)
     tage = int(s.veroeffentlicht_seit_tagen if tage is None else tage)
     max_treffer = int(s.max_pro_query if max_treffer is None else max_treffer)
     nur_vollzeit = s.nur_vollzeit if nur_vollzeit is None else nur_vollzeit
-    quellen = list(quellen or s.quellen or ["arbeitsagentur"])
+    quellen = bekannte(list(quellen or s.quellen or ["arbeitsagentur"])) or ["arbeitsagentur"]
+    # Suchende Quellen zuerst - aus den Treffern der Arbeitsagentur lernen wir die Orte im Umkreis
+    quellen.sort(key=lambda q: 0 if QUELLEN[q].art == "suche" else 1)
+    extra = {
+        "remote_ok": s.remote,
+        "ohne_zeitarbeit": any(_ZEITARBEIT.search(a) for a in profil.bewertung.ausschluss),
+        "ausbildung": s.ausbildung,
+    }
 
     ergebnis = SuchErgebnis()
     gesehen: dict[str, None] = {}
     schritte = max(1, len(quellen) * len(begriffe))
     nummer = 0
+
+    def uebernehmen(quelle: str, begriff: str, jobs: list[Job], neu: int = 0, aktualisiert: int = 0) -> None:
+        ergebnis.neu += neu
+        ergebnis.aktualisiert += aktualisiert
+        ergebnis.je_begriff[begriff] = ergebnis.je_begriff.get(begriff, 0) + len(jobs)
+        ergebnis.je_quelle[quelle] = ergebnis.je_quelle.get(quelle, 0) + len(jobs)
+        for job in jobs:
+            gesehen.setdefault(job.ref, None)
+
     for quelle in quellen:
-        for begriff in begriffe:
+        info = QUELLEN[quelle]
+        if not info.verfuegbar():
+            ergebnis.hinweise.append(f"{info.label}: API-Schlüssel fehlt (Profil → Zugänge)")
+            nummer += len(begriffe)
+            continue
+
+        if info.art == "suche":
+            for begriff in begriffe:
+                if fortschritt:
+                    fortschritt(f"{info.label}: „{begriff}“ in {ort or 'ganz Deutschland'} …", nummer / schritte)
+                try:
+                    jobs, neu, aktualisiert = hole_jobs(
+                        db, quelle=quelle, suchbegriff=begriff, wo=ort, umkreis=umkreis,
+                        tage=tage, nur_vollzeit=nur_vollzeit, max_treffer=max_treffer,
+                        mit_details=mit_details, profil=profil,
+                        orte=orte_fuer(db, ort, umkreis), **extra,
+                    )
+                except Exception as e:
+                    ergebnis.fehler.append(f"{info.label} / {begriff}: {e}")
+                    log.warning("Suche %s/%s fehlgeschlagen: %s", quelle, begriff, e)
+                else:
+                    uebernehmen(quelle, begriff, jobs, neu, aktualisiert)
+                nummer += 1
+            continue
+
+        orte = orte_fuer(db, ort, umkreis)
+        if info.art == "feed":
             if fortschritt:
-                fortschritt(f"Suche bei {quelle}: „{begriff}“ in {ort or 'ganz Deutschland'} …", nummer / schritte)
+                fortschritt(f"{info.label}: Bestand abrufen …", nummer / schritte)
             try:
-                jobs, neu, aktualisiert = hole_jobs(
-                    db, quelle=quelle, suchbegriff=begriff, wo=ort.strip(), umkreis=umkreis,
-                    tage=tage, nur_vollzeit=nur_vollzeit, max_treffer=max_treffer,
-                    mit_details=mit_details,
-                )
-            except Exception as e:
-                ergebnis.fehler.append(f"{quelle} / {begriff}: {e}")
-                log.warning("Suche %s/%s fehlgeschlagen: %s", quelle, begriff, e)
-            else:
+                neu, aktualisiert, _ = aktualisiere_feed(db, quelle, profil)
                 ergebnis.neu += neu
                 ergebnis.aktualisiert += aktualisiert
-                ergebnis.je_begriff[begriff] = ergebnis.je_begriff.get(begriff, 0) + len(jobs)
-                for job in jobs:
-                    gesehen.setdefault(job.ref, None)
-            nummer += 1
+            except Exception as e:  # mit dem bisherigen Bestand weiterarbeiten
+                ergebnis.fehler.append(f"{info.label}: {e}")
+                log.warning("Feed %s fehlgeschlagen: %s", quelle, e)
+            for begriff in begriffe:
+                try:
+                    jobs = lokale_treffer(
+                        db, quelle, suchbegriff=begriff, orte=orte, remote_ok=s.remote, tage=tage,
+                        nur_vollzeit=nur_vollzeit, max_treffer=max_treffer, mit_details=mit_details, profil=profil,
+                    )
+                except Exception as e:
+                    ergebnis.fehler.append(f"{info.label} / {begriff}: {e}")
+                else:
+                    uebernehmen(quelle, begriff, jobs)
+                nummer += 1
+        elif info.art == "arbeitgeber":
+            nummer += len(begriffe)
+            if not profil.zielfirmen:
+                continue
+            if fortschritt:
+                fortschritt(f"{info.label}: Karriereseiten abrufen …", nummer / schritte)
+            try:
+                jobs, fehler = hole_wunscharbeitgeber(
+                    db, profil, orte=orte, remote_ok=s.remote, begriffe=begriffe, max_treffer=max_treffer * 2,
+                )
+                ergebnis.fehler += [f"{info.label} / {f}" for f in fehler]
+                uebernehmen(quelle, WUNSCH_BEGRIFF, jobs)
+            except Exception as e:
+                ergebnis.fehler.append(f"{info.label}: {e}")
+
     ergebnis.refs = list(gesehen)
     if merken:
         db.speichere_suche(
             {
-                "begriffe": begriffe, "wo": ort.strip(), "umkreis": umkreis, "tage": tage,
+                "begriffe": begriffe, "wo": ort, "umkreis": umkreis, "tage": tage,
                 "max_treffer": max_treffer, "nur_vollzeit": bool(nur_vollzeit),
                 "mit_details": bool(mit_details), "quellen": quellen,
             },

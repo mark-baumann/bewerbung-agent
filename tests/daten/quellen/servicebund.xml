@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>service.bund.de - Stellenangebote der Bundes-, Landes- und Kommunalverwaltung.</title>
+    <link>http://www.service.bund.de/stellenangebote</link>
+    <description>RSS-Feed mit Stellenangeboten der Bundes-, Landes- und Kommunalverwaltung.</description>
+    <language>de-de</language>
+    <pubDate>Sun, 11 Oct 2026 10:51:12 +0200</pubDate>
+    <lastBuildDate>Sun, 11 Oct 2026 10:51:12 +0200</lastBuildDate>
+    <managingEditor>redaktion-support@bva.bund.de</managingEditor>
+    <webMaster>redaktion-support@bva.bund.de</webMaster>
+    <generator>Government Site Builder (GSB7.0)</generator>
+    <image>
+      <url>http://www.service.bund.de/cae/servlet/contentblob/546/normal/66/logo_a.jpg</url>
+      <title>service.bund.de - Stellenangebote im öffentlichen Dienst</title>
+      <link>http://www.service.bund.de/stellenangebote</link>
+    </image>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <ttl>60</ttl>
+    <item>
+<title>Dezernatsleitung &quot;Innerer Dienst und Auskunft&quot; (m/w/d)</title>
+<link>https://www.service.bund.de/IMPORTE/Stellenangebote/interamt/2026/10/1500660.html#track=feed-jobs</link>
+<description>
+<![CDATA[
+Arbeitgeber: <strong>Landesamt f&#252;r Vermessung und Geoinformation Schleswig-Holstein</strong><br />
+    Ort: <strong>25337 Elmshorn</strong>
+ <br />
+<br />Bewerbungsfrist:  <strong>25.10.2026 00:00</strong> <br />Veröffentlichungsende:  <strong>26.10.2026 00:00</strong>  <br /><br />
+]]>
+</description>
+<pubDate>Sun, 11 Oct 2026 00:01:03 +0200</pubDate>
+<guid>https://www.service.bund.de/IMPORTE/Stellenangebote/interamt/2026/10/1500660.html</guid>
+    </item>
+<item>
+<title>Personalsachbearbeitung (m/w/d)</title>
+<link>https://www.service.bund.de/IMPORTE/Stellenangebote/interamt/2026/10/1499984.html#track=feed-jobs</link>
+<description>
+<![CDATA[
+Arbeitgeber: <strong>Landesamt f&#252;r Vermessung und Geoinformation Schleswig-Holstein</strong><br />
+    Ort: <strong>24106 Kiel</strong>
+ <br />
+<br />Bewerbungsfrist:  <strong>08.11.2026 00:00</strong> <br />Veröffentlichungsende:  <strong>09.11.2026 00:00</strong>  <br /><br />
+]]>
+</description>
+<pubDate>Sun, 11 Oct 2026 00:01:02 +0200</pubDate>
+<guid>https://www.service.bund.de/IMPORTE/Stellenangebote/interamt/2026/10/1499984.html</guid>
+    </item>
+
+  </channel>
+</rss>

@@ -8,10 +8,13 @@ zurueck.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import textwrap
+import time
 from typing import Any, Callable
 
 import httpx
@@ -23,18 +26,18 @@ from . import heuristik
 log = logging.getLogger(__name__)
 
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
+# Nur ein Wunsch: ob es das Modell beim Server gibt, prueft `pruefe_modell`.
 OLLAMA_DEFAULT_MODEL = "glm-5.3-flash"
-# Modelle der Ollama-Cloud-API (Stand: ollama.com/v1/models, Oktober 2026)
-OLLAMA_MODELLE = [
-    "glm-5.3-flash", "glm-5.3", "glm-5.2",
-    "deepseek-v4.1-flash", "deepseek-v4-pro:0813",
-    "kimi-k3", "kimi-k2.7-code", "kimi-k2.6",
-    "minimax-m3", "minimax-m2.7",
-    "mistral-large-4", "mistral-large-3:675b",
-    "nemotron-3-ultra", "nemotron-3-super", "nemotron-3-nano:30b",
-    "gpt-oss:120b", "gpt-oss:20b",
-    "gemma4:31b",
-]
+# Wenn das gewuenschte Modell fehlt, wird - falls vorhanden - eines davon genommen.
+BEVORZUGTE_MODELLE = {
+    "anthropic": ("claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-haiku-5-5"),
+    "openai": ("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"),
+    "ollama": (
+        "glm-5.3", "glm-5.2", "deepseek-v4.1-flash", "kimi-k3", "gpt-oss:120b",
+        "qwen3", "llama3.3", "gemma4:31b", "gpt-oss:20b",
+    ),
+}
+MODELL_CACHE_SEKUNDEN = 600
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 OPENAI_BASE_URL = "https://api.openai.com"
 ANTHROPIC_DEFAULT_MODEL = "claude-opus-5"
@@ -117,6 +120,25 @@ Antworte ausschliesslich im vorgegebenen JSON-Schema."""
 
 class LLMNichtVerfuegbar(RuntimeError):
     pass
+
+
+class ModellNichtGefunden(LLMNichtVerfuegbar):
+    """Der Anbieter kennt das angefragte Modell nicht (HTTP 404 / model_not_found)."""
+
+    def __init__(self, modell: str, antwort: str = ""):
+        super().__init__(
+            f"Das Modell „{modell}“ gibt es bei deinem KI-Zugang nicht. "
+            "Wähle unter Profil → Zugänge ein verfügbares Modell."
+            + (f" (Antwort: {antwort[:200]})" if antwort else "")
+        )
+        self.modell = modell
+
+
+def _modell_fehlt(status: int, text: str) -> bool:
+    t = text.lower()
+    if "model_not_found" in t:
+        return True
+    return status in (400, 404) and "model" in t and ("not found" in t or "does not exist" in t)
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -229,6 +251,8 @@ class OllamaClient:
             json=payload,
             headers=self._headers(),
         )
+        if antwort.status_code >= 400 and _modell_fehlt(antwort.status_code, antwort.text):
+            raise ModellNichtGefunden(effektives_modell, antwort.text)
         antwort.raise_for_status()
         daten = antwort.json()
         if daten.get("error"):
@@ -274,6 +298,8 @@ class OpenAIClient:
             json=payload,
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
         )
+        if response.status_code >= 400 and _modell_fehlt(response.status_code, response.text):
+            raise ModellNichtGefunden(payload["model"], response.text)
         response.raise_for_status()
         try:
             return response.json()["choices"][0]["message"]["content"]
@@ -292,6 +318,164 @@ def effektives_modell(anbieter: str, modell: str | None) -> str:
     if not modell or ist_claude_modell(modell):
         return _env("OLLAMA_MODEL") or _env("LLM_MODEL") or OLLAMA_DEFAULT_MODEL
     return modell
+
+
+# --------------------------------------------------------------------------- #
+# Verfuegbare Modelle: nie ein Modell anfragen, das der Server nicht kennt
+# --------------------------------------------------------------------------- #
+
+_modell_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
+# Letzter Hinweis bzw. Fehler je Anbieter (fuer Cockpit und Profil)
+modell_hinweise: dict[str, str] = {}
+modell_fehler: dict[str, str] = {}
+
+
+def _cache_schluessel(anbieter: str) -> tuple[str, str]:
+    if anbieter == "anthropic":
+        geheim = _env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN") or ""
+        ort = _env("ANTHROPIC_BASE_URL") or ""
+    elif anbieter == "openai":
+        geheim, ort = _env("OPENAI_API_KEY") or "", _env("OPENAI_BASE_URL") or OPENAI_BASE_URL
+    else:
+        geheim, ort = _env("OLLAMA_API_KEY") or "", _env("OLLAMA_BASE_URL") or OLLAMA_DEFAULT_BASE_URL
+    return anbieter, ort + "|" + hashlib.sha256(geheim.encode()).hexdigest()[:12]
+
+
+def _chat_tauglich(modell: str) -> bool:
+    m = modell.lower()
+    return not any(w in m for w in ("embed", "whisper", "tts", "dall-e", "moderation", "realtime",
+                                     "transcribe", "audio", "image", "search"))
+
+
+def _lade_modelle(anbieter: str, transport: Any = None) -> list[str]:
+    """Fragt die Modellliste beim Anbieter ab (wirft bei Netz-/Zugangsfehlern)."""
+    if anbieter == "anthropic":
+        import anthropic
+
+        return [m.id for m in anthropic.Anthropic().models.list(limit=100)]
+    if anbieter == "openai":
+        basis = (_env("OPENAI_BASE_URL") or OPENAI_BASE_URL).rstrip("/")
+        kopf = {"Authorization": f"Bearer {_env('OPENAI_API_KEY') or ''}"}
+    else:
+        basis = (_env("OLLAMA_BASE_URL") or OLLAMA_DEFAULT_BASE_URL).rstrip("/")
+        kopf = {"Authorization": f"Bearer {_env('OLLAMA_API_KEY') or 'ollama'}"}
+    with httpx.Client(base_url=basis, timeout=httpx.Timeout(10.0, connect=5.0), transport=transport) as c:
+        antwort = c.get("/v1/models", headers=kopf)
+        ids: list[str] = []
+        if antwort.status_code < 400:
+            ids = [str(m.get("id")) for m in (antwort.json().get("data") or []) if m.get("id")]
+        if not ids and anbieter == "ollama":
+            # Aeltere Ollama-Server kennen nur die eigene API
+            tags = c.get("/api/tags", headers=kopf)
+            tags.raise_for_status()
+            ids = [str(m.get("name") or m.get("model")) for m in (tags.json().get("models") or [])]
+        elif not ids:
+            antwort.raise_for_status()
+    ids = [i for i in ids if i and _chat_tauglich(i)]
+    if anbieter == "openai":
+        ids = [i for i in ids if ist_openai_modell(i) or i.startswith("chatgpt")]
+    return sorted(dict.fromkeys(ids))
+
+
+def verfuegbare_modelle(anbieter: str | None = None, *, neu_laden: bool = False) -> list[str]:
+    """Modelle, die der eingerichtete KI-Zugang wirklich anbietet (10 Minuten gemerkt).
+
+    Leere Liste, wenn kein Zugang eingerichtet ist oder der Server nicht antwortet.
+    """
+    anbieter = anbieter or provider()
+    if anbieter is None:
+        return []
+    schluessel = _cache_schluessel(anbieter)
+    jetzt = time.monotonic()
+    gemerkt = _modell_cache.get(schluessel)
+    if gemerkt and not neu_laden and jetzt < gemerkt[0]:
+        return list(gemerkt[1])
+    try:
+        modelle = _lade_modelle(anbieter)
+        modell_fehler.pop(anbieter, None)
+        gueltig_bis = jetzt + MODELL_CACHE_SEKUNDEN
+    except Exception as e:
+        log.info("Modellliste von %s nicht abrufbar: %s", anbieter, e)
+        modell_fehler[anbieter] = f"Modellliste nicht abrufbar: {str(e)[:200]}"
+        modelle, gueltig_bis = [], jetzt + 60
+    _modell_cache[schluessel] = (gueltig_bis, modelle)
+    return list(modelle)
+
+
+def vergiss_modelle() -> None:
+    _modell_cache.clear()
+
+
+def _familie(modell: str) -> str:
+    return re.split(r"[-:._/ ]", modell.lower(), maxsplit=1)[0]
+
+
+def _finde(wunsch: str, liste: list[str]) -> str | None:
+    w = wunsch.strip().lower()
+    for m in liste:
+        if m.lower() == w:
+            return m
+    for m in liste:
+        name, _, tag = m.lower().partition(":")
+        # "qwen3" passt zu "qwen3:latest", "glm-5.3" zu "glm-5.3:cloud"
+        if ":" not in w and name == w and tag in ("latest", "cloud", ""):
+            return m
+        if w.endswith(":latest") and name == w.removesuffix(":latest"):
+            return m
+    return None
+
+
+def waehle_ersatz(anbieter: str, wunsch: str, liste: list[str]) -> str | None:
+    """Bestes verfuegbares Ausweichmodell: bevorzugt dieselbe Modellfamilie."""
+    if not liste:
+        return None
+    bevorzugt = [b for b in BEVORZUGTE_MODELLE.get(anbieter, ()) if _finde(b, liste)]
+    familie = _familie(wunsch)
+    for b in bevorzugt:
+        if _familie(b) == familie:
+            return _finde(b, liste)
+    gleiche = sorted((m for m in liste if _familie(m) == familie), reverse=True)
+    if gleiche:
+        return gleiche[0]
+    if bevorzugt:
+        return _finde(bevorzugt[0], liste)
+    return liste[0]
+
+
+def pruefe_modell(anbieter: str, modell: str | None, *, ausser: tuple[str, ...] = ()) -> tuple[str, str | None]:
+    """(Modell, das wirklich angefragt wird, Hinweis oder None).
+
+    Gibt es das gewuenschte Modell beim Anbieter nicht, wird ein verfuegbares
+    gewaehlt und ein verstaendlicher Hinweis erzeugt. Ist die Modellliste nicht
+    abrufbar, bleibt es beim Wunsch.
+    """
+    wunsch = effektives_modell(anbieter, modell)
+    liste = [m for m in verfuegbare_modelle(anbieter) if m not in ausser]
+    if not liste:
+        return wunsch, None
+    treffer = _finde(wunsch, liste) if wunsch not in ausser else None
+    if treffer:
+        if not ausser:
+            modell_hinweise.pop(anbieter, None)
+        return treffer, None
+    ersatz = waehle_ersatz(anbieter, wunsch, liste) or wunsch
+    hinweis = (
+        f"Das Modell „{wunsch}“ gibt es bei deinem KI-Zugang nicht – ich nutze stattdessen „{ersatz}“. "
+        "Unter Profil → Zugänge kannst du ein verfügbares Modell fest auswählen."
+    )
+    if modell_hinweise.get(anbieter) != hinweis:
+        log.warning(hinweis)
+    modell_hinweise[anbieter] = hinweis
+    return ersatz, hinweis
+
+
+def modell_fuer(modell: str | None) -> tuple[str | None, str | None, str | None]:
+    """(Anbieter, geprueftes Modell, Hinweis) fuer das Profil-Modell."""
+    anbieter = provider(modell)
+    if anbieter is None:
+        return None, None, None
+    ziel, hinweis = pruefe_modell(anbieter, modell)
+    return anbieter, ziel, hinweis
 
 
 def anthropic_text(
@@ -326,7 +510,12 @@ def anthropic_text(
             # Ausweichlogik nicht verfuegbar (Plattform/Konto) - normale Anfrage
             log.info("Server-Fallback nicht nutzbar (%s) - normale Anfrage.", e)
     if antwort is None:
-        antwort = client.messages.create(**params)
+        try:
+            antwort = client.messages.create(**params)
+        except Exception as e:
+            if type(e).__name__ == "NotFoundError" or _modell_fehlt(getattr(e, "status_code", 0) or 0, str(e)):
+                raise ModellNichtGefunden(modell, str(e)) from e
+            raise
     if antwort.stop_reason == "refusal":
         raise LLMNichtVerfuegbar(f"Anfrage abgelehnt: {antwort.stop_details}")
     text = "\n".join(b.text for b in antwort.content if b.type == "text").strip()
@@ -335,20 +524,10 @@ def anthropic_text(
     return text
 
 
-def chat(
-    modell: str | None,
-    *,
-    system: str,
-    nutzer: str,
-    max_tokens: int = 4000,
-    json_schema: dict | None = None,
-    effort: str = "medium",
+def _chat_einmal(
+    anbieter: str, ziel: str, *, system: str, nutzer: str, max_tokens: int,
+    json_schema: dict | None, effort: str,
 ) -> str:
-    """Eine einzelne Anfrage an den konfigurierten Anbieter (Claude, OpenAI oder Ollama)."""
-    anbieter = provider(modell)
-    if anbieter is None:
-        raise LLMNichtVerfuegbar("Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY, OPENAI_API_KEY oder OLLAMA_*).")
-    ziel = effektives_modell(anbieter, modell)
     if anbieter == "anthropic":
         import anthropic
 
@@ -364,6 +543,63 @@ def chat(
     return OllamaClient().chat(
         modell=ziel, system=system, messages=nachrichten, max_tokens=max_tokens, json_schema=json_schema,
     )
+
+
+def mit_ausweichmodell(anbieter: str, modell: str | None, ziel: str, anfrage: Callable[[str], str]) -> tuple[str, str]:
+    """Fuehrt `anfrage(ziel)` aus; kennt der Server das Modell nicht, einmal mit Ersatz.
+
+    Liefert (Antworttext, tatsaechlich genutztes Modell).
+    """
+    try:
+        return anfrage(ziel), ziel
+    except ModellNichtGefunden:
+        vergiss_modelle()
+        ersatz, _ = pruefe_modell(anbieter, modell, ausser=(ziel,))
+        if ersatz == ziel:
+            raise
+        log.warning("Modell %s nicht gefunden - neuer Versuch mit %s.", ziel, ersatz)
+        return anfrage(ersatz), ersatz
+
+
+def chat(
+    modell: str | None,
+    *,
+    system: str,
+    nutzer: str,
+    max_tokens: int = 4000,
+    json_schema: dict | None = None,
+    effort: str = "medium",
+) -> str:
+    """Eine einzelne Anfrage an den konfigurierten Anbieter (Claude, OpenAI oder Ollama)."""
+    anbieter = provider(modell)
+    if anbieter is None:
+        raise LLMNichtVerfuegbar("Kein LLM-API-Key gesetzt (ANTHROPIC_API_KEY, OPENAI_API_KEY oder OLLAMA_*).")
+    ziel, _ = pruefe_modell(anbieter, modell)
+    text, _ = mit_ausweichmodell(
+        anbieter, modell, ziel,
+        lambda m: _chat_einmal(anbieter, m, system=system, nutzer=nutzer, max_tokens=max_tokens,
+                               json_schema=json_schema, effort=effort),
+    )
+    return text
+
+
+def json_aus_text(text: str) -> dict:
+    """JSON-Objekt aus einer Modellantwort, auch mit Markdown-Zaun oder Vorrede."""
+    text = (text or "").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    zaun = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    if zaun:
+        try:
+            return json.loads(zaun.group(1))
+        except json.JSONDecodeError:
+            pass
+    start, ende = text.find("{"), text.rfind("}")
+    if start >= 0 and ende > start:
+        return json.loads(text[start:ende + 1])
+    raise LLMNichtVerfuegbar(f"Antwort ist kein JSON: {text[:120]}")
 
 
 def lebenslauf_block(profil: Profil, max_zeichen: int = 6000) -> str:
@@ -384,7 +620,7 @@ class LLMBewerter:
             )
         self.profil = profil
         self.effort = profil.bewertung.effort
-        self.modell = effektives_modell(self.anbieter, profil.bewertung.modell)
+        self.modell, self.hinweis = pruefe_modell(self.anbieter, profil.bewertung.modell)
         self._system = SYSTEM.format(
             profil=profil.kurzprofil or "(kein Kurzprofil hinterlegt)",
             skills=", ".join(profil.bewertung.skills) or "-",
@@ -423,13 +659,16 @@ class LLMBewerter:
             f"Anzeigentext:\n{anzeige}"
         )
 
-        if self.anbieter == "anthropic":
-            text = self._anthropic_bewerten(inhalt)
-        elif self.anbieter == "openai":
-            text = self._openai_bewerten(inhalt)
-        else:
-            text = self._ollama_bewerten(inhalt)
-        daten = json.loads(text)
+        def anfrage(modell: str) -> str:
+            self.modell = modell
+            if self.anbieter == "anthropic":
+                return self._anthropic_bewerten(inhalt)
+            if self.anbieter == "openai":
+                return self._openai_bewerten(inhalt)
+            return self._ollama_bewerten(inhalt)
+
+        text, self.modell = mit_ausweichmodell(self.anbieter, self.profil.bewertung.modell, self.modell, anfrage)
+        daten = json_aus_text(text)
 
         passung = float(daten["passung"])
         sent = float(daten["sentiment"])
@@ -486,19 +725,29 @@ def bewerte_jobs(
     profil: Profil,
     mit_llm: bool = True,
     fortschritt: Callable[[int, int], None] | None = None,
+    fehler: list[str] | None = None,
 ) -> list[Score]:
     """Bewertet alle Jobs. Faellt pro Job auf die Heuristik zurueck, wenn das LLM ausfaellt.
 
     `fortschritt(erledigt, gesamt)` wird nach jedem Job aufgerufen (fuer die UI).
+    Gruende fuer das Ausweichen auf die Heuristik landen in `fehler` (fuer die
+    Lauf-Zusammenfassung). Scheitert das LLM dreimal in Folge, wird der Rest
+    direkt heuristisch bewertet, statt jeden Job einzeln scheitern zu lassen.
     """
+    fehler = fehler if fehler is not None else []
     bewerter: LLMBewerter | None = None
     if mit_llm:
         try:
             bewerter = LLMBewerter(profil)
+            if bewerter.hinweis and bewerter.hinweis not in fehler:
+                fehler.append(bewerter.hinweis)
         except LLMNichtVerfuegbar as e:
             log.warning("LLM-Bewertung nicht aktiv (%s) - nutze Heuristik.", e)
+            if client_verfuegbar():
+                fehler.append(f"KI-Bewertung nicht aktiv: {e}")
 
     ergebnisse: list[Score] = []
+    in_folge = 0
     for nummer, job in enumerate(jobs, 1):
         # Harte Ausschluesse gelten immer und sparen einen LLM-Aufruf.
         basis = heuristik.bewerte(job, profil)
@@ -510,9 +759,17 @@ def bewerte_jobs(
                 # Regex-Warnsignale ergaenzen, die das Modell uebersehen hat.
                 score.rot = sorted(set(score.rot) | set(basis.rot))
                 ergebnisse.append(score)
+                in_folge = 0
             except Exception as e:  # Netzwerk, Rate-Limit, kaputtes JSON
                 log.warning("LLM-Bewertung fuer %s fehlgeschlagen (%s) - Heuristik.", job.ref, e)
                 ergebnisse.append(basis)
+                in_folge += 1
+                meldung = f"KI-Bewertung fehlgeschlagen ({type(e).__name__}): {str(e)[:200]}"
+                if meldung not in fehler:
+                    fehler.append(meldung)
+                if in_folge >= 3 or isinstance(e, ModellNichtGefunden):
+                    fehler.append("KI-Bewertung für den Rest dieses Laufs ausgesetzt – Stichwort-Bewertung.")
+                    bewerter = None
         if fortschritt:
             fortschritt(nummer, len(jobs))
     return ergebnisse

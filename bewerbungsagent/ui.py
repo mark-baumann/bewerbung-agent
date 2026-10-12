@@ -19,6 +19,7 @@ from .config import Profil, lade_profil
 from .db import STANDARD_DB, Speicher
 from .models import Job, Score, Vorgang
 from .scoring import llm as llm_modul
+from .sources import QUELLEN, bekannte
 
 STATUS_TEXT = {
     "vorbereitung": "⏳ wird vorbereitet",
@@ -31,7 +32,7 @@ STATUS_TEXT = {
     "selbst_beworben": "✅ selbst beworben",
 }
 KANAL_TEXT = {"email": "📧 E-Mail", "formular": "🌐 Online-Formular", "manuell": "✋ Selbst bewerben"}
-QUELLE_TEXT = {"arbeitsagentur": "Bundesagentur für Arbeit", "get-in-it": "GET IN IT"}
+QUELLE_TEXT = {name: info.label for name, info in QUELLEN.items()}
 RUECKMELDUNG_TEXT = {
     "": "– noch keine –",
     "eingangsbestaetigung": "📨 Eingang bestätigt",
@@ -45,6 +46,22 @@ LAUF_TEXT = {
     "vorbereiten": "Bewerbungen werden vorbereitet (Anschreiben, Probelauf) …",
     "senden": "Bewerbungen werden verschickt …",
 }
+
+
+def quellen_label(quelle: str) -> str:
+    info = QUELLEN.get(quelle)
+    if info is None:
+        return quelle
+    return info.label + ("" if info.verfuegbar() else " (API-Key fehlt)")
+
+
+def quellen_optionen() -> list[str]:
+    return list(QUELLEN)
+
+
+def quellen_auswahl(quellen: list[str] | None) -> list[str]:
+    """Gespeicherte Quellen ohne unbekannte Namen (vermeidet Streamlit-Fehler)."""
+    return bekannte(list(quellen or [])) or ["arbeitsagentur"]
 
 
 def oeffne_db() -> Speicher:
@@ -113,18 +130,30 @@ def zeige_laufstatus(db: Speicher) -> bool:
 # Einrichtung
 # --------------------------------------------------------------------------- #
 
+def ki_status(profil: Profil) -> tuple[bool, str]:
+    """(ok, Text) zum KI-Zugang inkl. Prüfung, ob es das gewählte Modell gibt."""
+    anbieter, ziel, hinweis = llm_modul.modell_fuer(profil.bewertung.modell)
+    if anbieter is None:
+        return False, "Ohne KI-Zugang: Bewertung per Stichworten, Anschreiben aus einer Vorlage. Profil → 🔑 Zugänge."
+    if hinweis:
+        return False, hinweis
+    if llm_modul.modell_fehler.get(anbieter):
+        return False, f"KI-Server antwortet nicht ({llm_modul.modell_fehler[anbieter]}). Profil → 🔑 Zugänge."
+    return True, f"{anbieter} · {ziel}"
+
+
 def einrichtung(profil: Profil) -> list[tuple[bool, bool, str, str]]:
     """(ok, pflicht, Titel, Hinweis) je Baustein."""
     p = profil.person
+    ki_ok, ki_text = ki_status(profil)
     return [
         (bool(p.name and p.email and p.telefon and p.ort), True, "Persönliche Daten",
          "Name, E-Mail, Telefon und Ort im Profil eintragen."),
         (bool(profil.anhaenge()) and bool(profil.unterlagen.lebenslauf), True, "Lebenslauf",
          "Lebenslauf (PDF) unter Profil → Unterlagen hochladen."),
-        (llm_modul.client_verfuegbar(), False, "KI für Bewertung & Anschreiben",
-         "Ohne API-Key: Bewertung per Stichworten, Anschreiben aus einer Vorlage."),
+        (ki_ok, False, "KI für Bewertung & Anschreiben", ki_text),
         (mail.smtp_eingerichtet(), False, "E-Mail-Versand",
-         "SMTP_HOST, SMTP_BENUTZER, SMTP_PASSWORT in der .env setzen – sonst nur Online-Formulare."),
+         "SMTP-Zugang unter Profil → 🔑 Zugänge eintragen – sonst nur Online-Formulare."),
         (ablauf.browser_verfuegbar(), False, "Online-Formulare (Browser-Agent)",
          'browser-use installieren: pip install -e ".[browser]"'),
         (bool(profil.angaben.anrede and profil.angaben.gehaltsvorstellung), False, "Formular-Angaben",
