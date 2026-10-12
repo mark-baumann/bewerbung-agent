@@ -260,14 +260,21 @@ def test_fehlgeschlagener_versand_wird_nicht_wiederholt(umgebung):
     assert db.vorgang("1").status == "fehlgeschlagen"
 
 
-def test_ohne_smtp_schlaegt_email_versand_klar_fehl(umgebung):
+def test_ohne_smtp_wartet_email_auf_einrichtung(umgebung, monkeypatch):
     profil, db, _ = umgebung
     db.speichere_jobs([job("1", beschreibung="Bewerbung an jobs@firma.de")])
     ablauf.vorbereiten(db, profil, "1", mit_llm=False, link_aufloesen=False)
-    ablauf.freigeben(db, profil, "1")
-    ablauf.sende_freigegebene(db, profil)
+    v = ablauf.freigeben(db, profil, "1")
+    # Das Ja gilt, der Hinweis sagt, was noch fehlt
+    assert v.status == "freigegeben" and "SMTP" in v.hinweis
+    assert ablauf.sende_freigegebene(db, profil)["zurueckgestellt"] == 1
     v = db.vorgang("1")
-    assert v.status == "fehlgeschlagen" and "SMTP" in v.hinweis
+    assert v.status == "freigegeben" and "SMTP" in v.hinweis
+    # Sobald SMTP eingerichtet ist, geht sie raus
+    smtp_env(monkeypatch)
+    assert ablauf.sende_freigegebene(db, profil, mail_sender=FakeSmtp())["abgeschickt"] == 1
+    assert db.vorgang("1").message_id == "<id@test>"
+    assert [e["art"] for e in db.entscheidungen()] == ["ja"]
 
 
 def test_tageslimit_stellt_zurueck(umgebung, monkeypatch):

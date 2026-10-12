@@ -385,6 +385,34 @@ def test_agent_absendemodus_erlaubt_absenden(tmp_path, monkeypatch):
     assert "PROBELAUF" not in aufgabe
 
 
+def test_agent_startet_auf_der_bewerbungsseite(tmp_path, monkeypatch):
+    agent = _agent(tmp_path, monkeypatch, dry_run=True)
+    # Feste Start-URL statt Raten aus dem Aufgabentext (dort stehen auch LinkedIn & Co.)
+    assert agent.initial_actions and len(agent.initial_actions) == 1
+    aktion = agent.initial_actions[0].model_dump(exclude_none=True)
+    assert aktion["navigate"]["url"] == _browser_job().bewerbungs_url
+    assert "Wie sind Sie auf uns aufmerksam geworden" in agent.task
+    assert "Als Gast bewerben" in agent.task
+
+
+def test_agent_beschriftet_anhaenge(tmp_path, monkeypatch):
+    pytest.importorskip("browser_use")
+    from bewerbungsagent.bewerben.browser import BewerbungsBrowser
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    p = profil(tmp_path)
+    lebenslauf = tmp_path / "lebenslauf.pdf"
+    lebenslauf.write_bytes(b"%PDF-1.4")
+    pdf = tmp_path / "anschreiben.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    p.unterlagen.lebenslauf, p.unterlagen.zeugnisse = str(lebenslauf), []
+    agent = BewerbungsBrowser(profil=p, headless=True).baue_agent(
+        _browser_job(), "Text", dry_run=True, anschreiben_pdf=str(pdf))
+    assert f"- Anschreiben: {pdf.resolve()}" in agent.task
+    assert f"- Lebenslauf: {lebenslauf.resolve()}" in agent.task
+    assert str(pdf.resolve()) in agent.available_file_paths
+
+
 def test_agent_bekommt_profildaten_und_zieldomain(tmp_path, monkeypatch):
     agent = _agent(tmp_path, monkeypatch, dry_run=True)
     assert "max.mustermann@example.de" in agent.task

@@ -1,11 +1,19 @@
-"""Anschreiben erzeugen - mit Claude oder Ollama, sonst aus einer Vorlage."""
+"""Anschreiben erzeugen - mit KI (Claude, ChatGPT, Ollama), sonst aus einer Vorlage.
+
+`erzeuge_geprueft` ist der Weg der Automatik: Anschreiben auf Basis des
+Stellen-Dossiers (persoenliche Anrede, Muss-Anforderungen), danach
+Selbstpruefung gegen den Lebenslauf und bei Maengeln genau eine Ueberarbeitung.
+"""
 
 from __future__ import annotations
 
 import logging
 import textwrap
+from dataclasses import dataclass, field
+from typing import Any
 
 from .config import Profil
+from .dossier import Dossier
 from .models import Job, Score
 from .scoring.llm import chat, client_verfuegbar, lebenslauf_block
 
@@ -20,15 +28,17 @@ Skills: {skills}
 Stil: {stil}
 
 Regeln:
-- Deutsch, Anrede "Sehr geehrte Damen und Herren," wenn kein Ansprechpartner genannt ist.
+- Sprache: {sprache}. Anrede genau so: "{anrede}"
 - Beziehe dich konkret auf zwei bis drei Anforderungen aus der Anzeige und belege
   sie mit Profil und Lebenslauf. Erfinde keine Erfahrungen, Zahlen, Titel oder Arbeitgeber.
+  Was der Lebenslauf nicht hergibt, wird nicht behauptet (lieber Lernbereitschaft zeigen).
 - Keine Floskeln wie "hiermit bewerbe ich mich" oder "mit grossem Interesse".
-- Nur der Brieftext ab der Anrede bis zur Grussformel. Kein Betreff, kein
-  Briefkopf, keine Platzhalter in eckigen Klammern.
+- Hoechstens eine Seite (etwa 200-350 Woerter).
+- Nur der Brieftext ab der Anrede bis zur Grussformel mit dem Namen. Kein Betreff,
+  kein Briefkopf, keine Platzhalter in eckigen Klammern.
 """
 
-VORLAGE = """Sehr geehrte Damen und Herren,
+VORLAGE = """{anrede}
 
 Ihre Ausschreibung „{titel}“ bei {arbeitgeber} hat mein Interesse geweckt, deshalb bewerbe ich mich um diese Stelle.
 
@@ -43,7 +53,7 @@ Mit freundlichen Grüßen
 """
 
 
-def _vorlage(job: Job, profil: Profil, score: Score | None) -> str:
+def _vorlage(job: Job, profil: Profil, score: Score | None, dossier: Dossier | None = None) -> str:
     treffer = (score.treffer if score else []) or profil.bewertung.skills[:5]
     trefferblock = (
         "Fachlich bringe ich unter anderem mit: " + ", ".join(treffer[:8]) + "."
@@ -51,6 +61,7 @@ def _vorlage(job: Job, profil: Profil, score: Score | None) -> str:
         else "Meine Unterlagen mit allen Details finden Sie im Anhang."
     )
     return VORLAGE.format(
+        anrede=dossier.anrede if dossier else "Sehr geehrte Damen und Herren,",
         titel=job.titel,
         arbeitgeber=job.arbeitgeber or "Ihrem Unternehmen",
         profilsatz=profil.kurzprofil.strip() or "Mein Profil entnehmen Sie bitte dem beigefügten Lebenslauf.",
@@ -60,44 +71,99 @@ def _vorlage(job: Job, profil: Profil, score: Score | None) -> str:
     )
 
 
+def _nutzermeldung(job: Job, score: Score | None, dossier: Dossier | None) -> str:
+    anzeige = textwrap.shorten(job.beschreibung or job.titel, width=10000, placeholder=" [...]")
+    teile = [f"Stelle: {job.titel}", f"Arbeitgeber: {job.arbeitgeber}", f"Ort: {job.ort or '-'}"]
+    if dossier:
+        if dossier.muss:
+            teile.append("Muss-Anforderungen:\n" + "\n".join(f"- {m}" for m in dossier.muss[:10]))
+        if dossier.aufgaben:
+            teile.append("Wichtigste Aufgaben:\n" + "\n".join(f"- {a}" for a in dossier.aufgaben[:5]))
+        if dossier.eintritt_gefragt:
+            teile.append("Die Anzeige fragt nach dem fruehesten Eintrittstermin.")
+        if dossier.gehalt_gefragt:
+            teile.append("Die Anzeige fragt nach der Gehaltsvorstellung.")
+    if score and score.treffer:
+        teile.append("Besonders relevante Uebereinstimmungen: " + ", ".join(score.treffer[:8]))
+    teile.append(f"Anzeigentext:\n{anzeige}")
+    return "\n\n".join(teile)
+
+
+def _system(profil: Profil, dossier: Dossier | None) -> str:
+    a = profil.angaben
+    stil = profil.unterlagen.anschreiben_stil
+    zusatz = []
+    if dossier and dossier.eintritt_gefragt and a.verfuegbar_ab:
+        zusatz.append(f"Fruehester Eintritt: {a.verfuegbar_ab}")
+    if dossier and dossier.gehalt_gefragt and a.gehaltsvorstellung:
+        zusatz.append(f"Gehaltsvorstellung: {a.gehaltsvorstellung}")
+    return SYSTEM.format(
+        name=profil.person.name,
+        kurzprofil=profil.kurzprofil or "(kein Kurzprofil hinterlegt)",
+        skills=", ".join(profil.bewertung.skills) or "-",
+        lebenslauf=lebenslauf_block(profil) + ("\n".join(zusatz) + "\n" if zusatz else ""),
+        stil=stil,
+        sprache="Englisch" if dossier and dossier.sprache == "en" else "Deutsch",
+        anrede=dossier.anrede if dossier else "Sehr geehrte Damen und Herren,",
+    )
+
+
 def erzeuge(
     job: Job,
     profil: Profil,
     score: Score | None = None,
     mit_llm: bool = True,
+    dossier: Dossier | None = None,
 ) -> str:
     """Erzeugt das Anschreiben. Faellt bei Problemen auf die Vorlage zurueck."""
     if not mit_llm or not client_verfuegbar():
-        return _vorlage(job, profil, score)
+        return _vorlage(job, profil, score, dossier)
     try:
-        system = SYSTEM.format(
-            name=profil.person.name,
-            kurzprofil=profil.kurzprofil or "(kein Kurzprofil hinterlegt)",
-            skills=", ".join(profil.bewertung.skills) or "-",
-            lebenslauf=lebenslauf_block(profil),
-            stil=profil.unterlagen.anschreiben_stil,
-        )
-        anzeige = textwrap.shorten(
-            job.beschreibung or job.titel, width=10000, placeholder=" [...]"
-        )
-        hinweis = ""
-        if score and score.treffer:
-            hinweis = "\n\nBesonders relevante Uebereinstimmungen: " + ", ".join(score.treffer[:8])
-        nutzermeldung = (
-            f"Stelle: {job.titel}\n"
-            f"Arbeitgeber: {job.arbeitgeber}\n"
-            f"Ort: {job.ort or '-'}\n\n"
-            f"Anzeigentext:\n{anzeige}{hinweis}"
-        )
-
         text = chat(
             profil.bewertung.modell,
-            system=system,
-            nutzer=nutzermeldung,
+            system=_system(profil, dossier),
+            nutzer=_nutzermeldung(job, score, dossier),
             max_tokens=16000,
             effort="medium",
         ).strip()
-        return text or _vorlage(job, profil, score)
+        return text or _vorlage(job, profil, score, dossier)
     except Exception as e:
         log.warning("Anschreiben per LLM fehlgeschlagen (%s) - nutze Vorlage.", e)
-        return _vorlage(job, profil, score)
+        return _vorlage(job, profil, score, dossier)
+
+
+@dataclass
+class Ergebnis:
+    text: str
+    quelle: str                      # llm | vorlage
+    qualitaet: float
+    bericht: dict[str, Any] = field(default_factory=dict)
+
+
+def erzeuge_geprueft(
+    job: Job,
+    profil: Profil,
+    score: Score | None = None,
+    *,
+    mit_llm: bool = True,
+    dossier: Dossier | None = None,
+) -> Ergebnis:
+    """Schreiben -> pruefen -> bei Maengeln einmal ueberarbeiten -> erneut pruefen."""
+    from . import pruefung
+
+    ki = mit_llm and client_verfuegbar()
+    text = erzeuge(job, profil, score, mit_llm=ki, dossier=dossier)
+    quelle = "llm" if ki and text != _vorlage(job, profil, score, dossier) else "vorlage"
+    bericht = pruefung.pruefe(text, job, profil, dossier, mit_llm=quelle == "llm")
+    if quelle == "llm" and (bericht.unbelegt or bericht.maengel or bericht.qualitaet < 80):
+        try:
+            neu = pruefung.ueberarbeite(text, bericht, job, profil)
+            if neu:
+                neuer_bericht = pruefung.pruefe(neu, job, profil, dossier, mit_llm=True)
+                if neuer_bericht.qualitaet >= bericht.qualitaet:
+                    text, bericht = neu, neuer_bericht
+                    bericht.ueberarbeitet = True
+        except Exception as e:
+            log.info("Überarbeitung fehlgeschlagen (%s) – erste Fassung bleibt.", e)
+    qualitaet = bericht.qualitaet if quelle == "llm" else min(bericht.qualitaet, 50.0)
+    return Ergebnis(text=text, quelle=quelle, qualitaet=qualitaet, bericht=bericht.als_dict())

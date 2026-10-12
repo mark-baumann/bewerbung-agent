@@ -42,6 +42,7 @@ class Job:
     kontakt_email: str | None = None      # strukturiert von der Quelle geliefert
     ansprechpartner: str | None = None    # "Frau Dr. Erika Muster"
     bewerbung_hinweis: str | None = None  # z. B. "Online ueber interamt.de (Konto noetig)"
+    dossier: str | None = None            # JSON aus bewerbungsagent.dossier (Anforderungen, Anrede ...)
     
     # --- Neue strukturierte Details (extrahiert vom LLM) ---
     anforderungen: str | None = None  # Skills, Erfahrung (JSON-String oder Text)

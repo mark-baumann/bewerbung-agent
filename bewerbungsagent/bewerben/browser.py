@@ -40,6 +40,9 @@ ATS_DOMAINS = [
     "prescreen.io", "concludis.de", "umantis.com", "b-ite.com", "b-ite.de", "workable.com",
     "teamtailor.com", "bewerbermanagement.net", "jobbase.io", "taleo.net", "oraclecloud.com",
     "icims.com", "jobvite.com", "ashbyhq.com", "kenjo.io", "factorial.de",
+    "csod.com", "avature.net", "phenompeople.com", "eightfold.ai", "hibob.com", "zohorecruit.eu",
+    "zohorecruit.com", "breezy.hr", "pinpointhq.com", "jobs.ashbyhq.com", "jobylon.com", "haufe-umantis.com",
+    "refline.ch", "milchundzucker.de", "talention.de", "coveto.de", "perbit.com", "interamt.de",
 ]
 
 
@@ -104,7 +107,10 @@ def _ergebnis_modell():
         )
         fehlende_angaben: list[str] = Field(
             default_factory=list,
-            description="Pflichtfelder, die nicht aus dem Profil befuellt werden konnten",
+            description=(
+                "Pflichtfelder, die nicht aus dem Profil befuellt werden konnten, je Eintrag "
+                "'Feldname: Frage wie im Formular' (z. B. 'Gehalt: Wie hoch ist Ihre Gehaltsvorstellung?')"
+            ),
         )
         hindernis: str = Field(
             default="",
@@ -163,16 +169,40 @@ def _profilblock(profil: Profil) -> str:
     a = profil.angaben
     for label, wert in (
         ("Anrede", a.anrede),
+        ("Akademischer Titel", a.titel),
         ("Verfuegbar ab / fruehester Eintrittstermin", a.verfuegbar_ab),
         ("Kuendigungsfrist", a.kuendigungsfrist),
         ("Gehaltsvorstellung", a.gehaltsvorstellung),
-        ("Arbeitserlaubnis / Staatsangehoerigkeit", a.arbeitserlaubnis),
+        ("Arbeitserlaubnis", a.arbeitserlaubnis),
+        ("Staatsangehoerigkeit", a.nationalitaet),
+        ("Hoechster Abschluss", a.abschluss),
+        ("Berufserfahrung (Jahre)", a.berufserfahrung_jahre),
+        ("Umzugsbereitschaft", a.umzugsbereitschaft),
         ("Fuehrerschein", a.fuehrerschein),
         ("Sprachkenntnisse", a.sprachen),
     ):
         if wert:
             zeilen.append(f"{label}: {wert}")
+    for frage, antwort in (a.weitere or {}).items():
+        if frage and antwort:
+            zeilen.append(f"{frage}: {antwort}")
     return "\n".join(zeilen)
+
+
+def _anhang_zeilen(anschreiben_pdf: str | None, profil: Profil) -> tuple[list[str], str]:
+    """(Pfade fuer browser-use, beschriftete Liste fuer die Aufgabe)."""
+    pfade: list[str] = []
+    zeilen: list[str] = []
+    if anschreiben_pdf and Path(anschreiben_pdf).exists():
+        pfad = str(Path(anschreiben_pdf).resolve())
+        pfade.append(pfad)
+        zeilen.append(f"- Anschreiben: {pfad}")
+    lebenslauf = profil.unterlagen.lebenslauf
+    for pfad in profil.anhaenge():
+        pfade.append(pfad)
+        art = "Lebenslauf" if lebenslauf and Path(pfad) == Path(lebenslauf).expanduser().resolve() else "Zeugnis/Anlage"
+        zeilen.append(f"- {art}: {pfad}")
+    return pfade, "\n".join(zeilen) or "- (keine Dateien hinterlegt)"
 
 
 AUFGABE = """Du bewirbst dich im Auftrag von {name} auf eine konkrete Stelle.
@@ -197,6 +227,7 @@ Diese Dateien stehen zum Hochladen bereit (Pfade exakt so verwenden):
 {anhaenge}
 Gibt es ein eigenes Upload-Feld fuer das Anschreiben, lade dort die
 Anschreiben-PDF hoch; Lebenslauf und Zeugnisse in die passenden Felder.
+Gibt es nur EIN Upload-Feld, lade den Lebenslauf hoch.
 
 ABLAUF
 1. Oeffne die Bewerbungsseite.
@@ -205,14 +236,26 @@ ABLAUF
    Weiterleitungen auf das Bewerbermanagementsystem des Arbeitgebers.
 3. Cookie-Banner: klicke "Nur notwendige" / "Ablehnen", falls vorhanden,
    sonst akzeptiere, damit die Seite nutzbar wird.
-4. Fuelle alle Pflichtfelder ausschliesslich aus den Bewerberdaten. Feldnamen
-   variieren (Vorname/First name, PLZ/Zip). Bei Auswahlfeldern waehle die
-   Option, die den Bewerberdaten am naechsten kommt.
-5. Lade den Lebenslauf hoch, wenn ein Datei-Upload existiert.
-6. Erfinde niemals Angaben. Wenn ein Pflichtfeld nicht aus den Bewerberdaten
+4. Bietet die Seite "Als Gast bewerben", "Ohne Konto bewerben" oder "Schnell-
+   bewerbung" an, nimm diesen Weg statt einer Registrierung. Eine Bewerbung
+   per LinkedIn/XING/Indeed-Login nutzt du NICHT.
+5. Fuelle alle Pflichtfelder ausschliesslich aus den Bewerberdaten. Feldnamen
+   variieren (Vorname/First name, PLZ/Zip, Anrede/Salutation). Bei Auswahl-
+   feldern waehle die Option, die den Bewerberdaten am naechsten kommt.
+   Formate: Datum als TT.MM.JJJJ (bzw. wie das Feld es vorgibt), Gehalt als
+   Zahl in EUR brutto pro Jahr ohne Tausenderpunkte, wenn das Feld nur Zahlen
+   annimmt. Englische Formulare fuellst du sinngemaess auf Englisch aus.
+6. "Wie sind Sie auf uns aufmerksam geworden?": waehle {quelle}, sonst
+   "Jobboerse"/"Internet"/"Sonstiges". "Haben Sie sich schon einmal bei uns
+   beworben?": nein. Datenschutzerklaerung/Einwilligung zur Verarbeitung der
+   Bewerbungsdaten: zustimmen (Pflicht fuer die Bewerbung). Newsletter,
+   Talentpool-Werbung und Marketing-Einwilligungen: NICHT ankreuzen.
+7. Lade die Unterlagen hoch, wenn ein Datei-Upload existiert.
+8. Erfinde niemals Angaben. Wenn ein Pflichtfeld nicht aus den Bewerberdaten
    befuellbar ist (Gehaltsvorstellung, Verfuegbarkeit, Sicherheitsfragen),
-   fuelle es NICHT, sondern vermerke es in "fehlende_angaben".
-7. {absende_regel}
+   fuelle es NICHT, sondern vermerke es in "fehlende_angaben" mit dem
+   Feldnamen und der Frage, wie sie im Formular steht.
+9. {absende_regel}
 
 ABBRUCHREGELN - brich ab und berichte in "hindernis":
 - Login oder Registrierung noetig und keine Zugangsdaten vorhanden.
@@ -307,9 +350,7 @@ class BewerbungsBrowser:
         if not url:
             raise ValueError(f"{job.ref}: keine Bewerbungs-URL")
 
-        anhaenge = self.profil.anhaenge()
-        if anschreiben_pdf and Path(anschreiben_pdf).exists():
-            anhaenge = [str(Path(anschreiben_pdf).resolve()), *anhaenge]
+        anhaenge, anhang_text = _anhang_zeilen(anschreiben_pdf, self.profil)
         ergebnis_modell = _ergebnis_modell()
         llm = _browser_llm(self.modell, self._modell_ausser)
         # Die meisten Ollama-Cloud-Modelle sind reine Textmodelle und antworten
@@ -330,7 +371,8 @@ class BewerbungsBrowser:
             url=url,
             profilblock=_profilblock(self.profil),
             anschreiben=anschreiben.strip(),
-            anhaenge="\n".join(f"- {p}" for p in anhaenge) or "- (keine Dateien hinterlegt)",
+            anhaenge=anhang_text,
+            quelle=_quelle_text(job),
             absende_regel=REGEL_PROBELAUF if dry_run else REGEL_ABSENDEN,
             max_schritte=self.max_schritte,
         )
@@ -367,7 +409,10 @@ class BewerbungsBrowser:
             available_file_paths=anhaenge or None,
             sensitive_data=sensitive or None,
             output_model_schema=ergebnis_modell,
-            directly_open_url=url,
+            # Start-URL fest vorgeben: automatisch aus dem Aufgabentext geraten
+            # wuerde sonst evtl. ein LinkedIn-/GitHub-Link aus dem Profil.
+            directly_open_url=False,
+            initial_actions=[{"navigate": {"url": url, "new_tab": False}}],
             save_conversation_path=self.aufzeichnung,
             use_vision=vision,
         )
@@ -437,6 +482,11 @@ class BewerbungsBrowser:
             zusammenfassung = _zusammenfassen(strukturiert, dry_run)
             rohdaten = strukturiert.model_dump()
             letzte_url = strukturiert.letzte_url or letzte_url
+            if dry_run and (strukturiert.abgeschickt or strukturiert.bestaetigung):
+                # Der Probelauf hat trotz Verbot abgeschickt: nicht noch einmal senden
+                rohdaten["versehentlich_abgeschickt"] = True
+                zusammenfassung = ("ACHTUNG: Der Probelauf hat die Bewerbung offenbar abgeschickt. "
+                                   + zusammenfassung)
         else:
             abgeschickt = False
             zusammenfassung = (history.final_result() or "Kein Ergebnis vom Agenten.")[:2000]
@@ -464,6 +514,17 @@ class BewerbungsBrowser:
             url=letzte_url,
             rohdaten=rohdaten,
         )
+
+
+def _quelle_text(job: Job) -> str:
+    from ..sources import QUELLEN
+
+    if job.quelle == "arbeitsagentur":
+        return '"Bundesagentur fuer Arbeit" bzw. "Jobboerse"'
+    if job.quelle == "wunscharbeitgeber":
+        return '"Karriereseite/Unternehmenswebsite"'
+    info = QUELLEN.get(job.quelle or "")
+    return f'"{info.label}" bzw. "Jobboerse/Internet"' if info else '"Jobboerse/Internet"'
 
 
 def _zusammenfassen(e: Any, dry_run: bool) -> str:

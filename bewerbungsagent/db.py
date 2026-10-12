@@ -639,10 +639,14 @@ class Speicher:
             )
         }
         ergebnis: list[tuple[Job, Score]] = []
+        heute = datetime.now(timezone.utc).date().isoformat()
         for row in self.con.execute(sql, params):
             job = _zu_job(row)
             if gesperrt and (job.arbeitgeber or "").strip().casefold() in gesperrt:
                 continue
+            frist = (job.bewerbungsfrist or "")[:10]
+            if len(frist) == 10 and frist[4] == "-" and frist < heute:
+                continue  # Bewerbungsfrist abgelaufen
             schluessel = dubletten_schluessel(job.arbeitgeber, job.titel)
             if schluessel in bekannt:
                 continue
@@ -651,6 +655,19 @@ class Speicher:
             if len(ergebnis) >= limit:
                 break
         return ergebnis
+
+    def heuristisch_bewertet(self, min_gesamt: float = 0.0, limit: int = 20) -> list[str]:
+        """Offene Stellen, die bisher nur per Stichworten bewertet wurden (neueste zuerst)."""
+        rows = self.con.execute(
+            """
+            SELECT s.ref FROM scores s JOIN jobs j ON j.ref = s.ref
+            WHERE s.bewerter = 'heuristik' AND s.ausgeschlossen = 0 AND s.gesamt >= ?
+              AND j.ref NOT IN (SELECT ref FROM vorgaenge)
+            ORDER BY j.geholt_am DESC, s.gesamt DESC LIMIT ?
+            """,
+            (min_gesamt, limit),
+        )
+        return [r["ref"] for r in rows]
 
     # ---------------- Laeufe ----------------
 
@@ -798,6 +815,9 @@ class Speicher:
         )
         self.con.commit()
         return cur.rowcount == 1
+
+    def vorschlag_existiert(self, schluessel: str) -> bool:
+        return self.con.execute("SELECT 1 FROM vorschlaege WHERE schluessel = ?", (schluessel,)).fetchone() is not None
 
     def vorschlaege(self, status: str | Iterable[str] | None = "offen") -> list[dict[str, Any]]:
         sql = "SELECT * FROM vorschlaege"
