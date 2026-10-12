@@ -132,7 +132,7 @@ def regelpruefung(text: str, job: Job, profil: Profil, dossier: Dossier | None) 
     if _PLATZHALTER.search(inhalt):
         b.maengel.append(f"Platzhalter im Text: {_PLATZHALTER.search(inhalt).group(0)}")
     woerter = len(re.findall(r"\w+", inhalt))
-    if woerter < 120:
+    if woerter < 80:
         b.maengel.append(f"Sehr kurz ({woerter} Wörter).")
     elif woerter > 480:
         b.maengel.append(f"Zu lang ({woerter} Wörter, besser höchstens eine Seite).")
@@ -149,8 +149,14 @@ def regelpruefung(text: str, job: Job, profil: Profil, dossier: Dossier | None) 
         if f in klein:
             b.hinweise.append(f"Floskel: „{f}“")
 
-    # Belegpruefung: Zahlen ...
-    for m in _ZAHL.finditer(inhalt):
+    # Belegpruefung nur auf eigenen Aussagen: zitierter Stellentitel und Arbeitgeber sind keine Behauptung
+    aussagen = inhalt
+    for zitat in (job.titel, job.arbeitgeber):
+        if zitat:
+            aussagen = aussagen.replace(zitat, " ")
+    aussagen = re.sub(r"„[^“]{0,200}“|\"[^\"]{0,200}\"", " ", aussagen)
+    # Zahlen ...
+    for m in _ZAHL.finditer(aussagen):
         wert = m.group(1)
         kern = re.match(r"\d+(?:[.,]\d+)?", wert).group(0)
         if kern in anzeige and kern not in belege:
@@ -159,7 +165,7 @@ def regelpruefung(text: str, job: Job, profil: Profil, dossier: Dossier | None) 
             b.unbelegt.append(f"„{wert}“ steht nicht im Lebenslauf/Profil")
     # ... und Fachbegriffe aus der Anzeige, die das Anschreiben nennt, der Lebenslauf aber nicht
     for wort in sorted(_fachbegriffe(job, dossier)):
-        treffer = re.search(rf"(?<![\w-]){re.escape(wort)}(?![\w-])", inhalt, re.IGNORECASE)
+        treffer = re.search(rf"(?<![\w-]){re.escape(wort)}(?![\w-])", aussagen, re.IGNORECASE)
         if treffer and wort not in belege and wort not in _normal(job.arbeitgeber or ""):
             b.unbelegt.append(f"„{treffer.group(0)}“ wird beansprucht, steht aber nicht im Lebenslauf/Profil")
     if dossier:

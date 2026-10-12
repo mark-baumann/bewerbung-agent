@@ -372,3 +372,26 @@ def test_probelauf_der_absendet_wird_nicht_wiederholt(umgebung):
     v = ablauf.vorbereiten(db, profil, "1", mit_llm=False, probelauf=True, link_aufloesen=False,
                            browser_fabrik=lambda p: Browser())
     assert v.status == "abgeschickt" and "Probelauf" in v.hinweis
+
+
+def test_rohbestand_aus_feeds_ist_kein_kandidat(umgebung):
+    profil, db, _ = umgebung
+    db.speichere_jobs([stelle("feed-1", arbeitgeber="Fern GmbH", ort="Hamburg"),
+                       stelle("feed-2", arbeitgeber="Nah GmbH")])
+    roh = db.starte_abruf("arbeitnow", "(Feed)", {})
+    db.merke_abruf_treffer(roh, ["feed-1", "feed-2"])
+    db.beende_abruf(roh, treffer=2)
+    treffer = db.starte_abruf("arbeitnow", "Backend Entwickler", {"lokal": True})
+    db.merke_abruf_treffer(treffer, ["feed-2"])
+    db.beende_abruf(treffer, treffer=1)
+    # Nur der Suchtreffer wird bewertet und vorgeschlagen
+    assert [j.ref for j in db.jobs(nur_ohne_score=True)] == ["feed-2"]
+    for ref in ("feed-1", "feed-2"):
+        db.speichere_score(Score(ref=ref, gesamt=90, passung=90, sentiment=60))
+    assert [j.ref for j, _ in db.kandidaten(min_score=50)] == ["feed-2"]
+    assert [j.ref for j, _ in db.bestenliste(min_score=50)] == ["feed-2"]
+
+
+def test_erkundung_meidet_allgemeine_begriffe():
+    assert ablauf._zu_allgemein("Engineering") and ablauf._zu_allgemein("Senior Manager")
+    assert not ablauf._zu_allgemein("Data Engineer Python") and not ablauf._zu_allgemein("Softwareentwickler")

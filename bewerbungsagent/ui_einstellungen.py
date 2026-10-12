@@ -72,7 +72,7 @@ def _gruppe(gruppe: str, profil: Profil) -> None:
                 st.success("Gespeichert – gilt sofort, auch für Automatik und Versand.")
             else:
                 st.info("Keine Änderungen.")
-    knoepfe = st.columns([1, 1, 3])
+    knoepfe = st.columns([1, 2, 2])
     if gruppe in TEST:
         text, funktion = TEST[gruppe]
         if knoepfe[0].button(text, key=f"zugang_testen_{gruppe}"):

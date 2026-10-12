@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -102,7 +102,7 @@ def suche_ausfuehren(
     (Mindestabstand beachten) und lokal je Suchbegriff/Ort filtern.
     Wunsch-Arbeitgeber: Stellen direkt aus deren Bewerbermanagement.
     """
-    from .sources import QUELLEN, bekannte, label
+    from .sources import QUELLEN, bekannte
 
     s = profil.suche
     begriffe = [b.strip() for b in (begriffe or s.was) if b and b.strip()]
@@ -689,6 +689,21 @@ def sende_freigegebene(
 # Laeufe (Automatik, Vorbereiten, Senden) und Cron-Tick
 # --------------------------------------------------------------------------- #
 
+_ALLGEMEIN = {
+    "engineering", "development", "entwicklung", "management", "consulting", "beratung", "sales", "vertrieb",
+    "marketing", "operations", "product", "platform", "software", "it", "data", "team", "senior", "junior",
+    "lead", "mitarbeiter", "mitarbeiterin", "fachkraft", "assistenz", "praktikum", "werkstudent", "trainee",
+    "manager", "engineer", "entwickler", "developer", "specialist", "spezialist", "sachbearbeitung",
+    "remote", "homeoffice", "hybrid", "vollzeit", "teilzeit", "full-time", "part-time", "m/w/d",
+}
+
+
+def _zu_allgemein(begriff: str) -> bool:
+    """Einzelwoerter wie „Engineering“ oder „Manager“ bringen nur Rauschen."""
+    worte = [w for w in re.findall(r"[\wäöüß+#.-]+", begriff.casefold()) if w]
+    return len(worte) == 1 and worte[0] in _ALLGEMEIN or all(w in _ALLGEMEIN for w in worte)
+
+
 def erkunde_suchbegriffe(
     db: Speicher, profil: Profil, *, mit_llm: bool = True, fehler: list[str] | None = None,
 ) -> dict[str, list[str]]:
@@ -707,12 +722,13 @@ def erkunde_suchbegriffe(
         return ergebnis
     bekannt = {b["begriff"].casefold() for b in db.suchbegriffe()} | {w.casefold() for w in profil.suche.was}
     kandidaten = [v.begriff for v in vorschlaege.aus_treffern(db, profil, limit=10)
-                  if v.begriff.casefold() not in bekannt]
+                  if v.begriff.casefold() not in bekannt and not _zu_allgemein(v.begriff)]
     if len(kandidaten) < a.erkundung_max_begriffe and mit_llm and llm_modul.client_verfuegbar():
         gute = [j.titel for j, _ in db.bestenliste(min_score=profil.bewertung.min_score, limit=20)]
         try:
             kandidaten += [v.begriff for v in vorschlaege.per_llm(profil, gute, limit=6)
-                           if v.begriff.casefold() not in bekannt and v.begriff not in kandidaten]
+                           if v.begriff.casefold() not in bekannt and v.begriff not in kandidaten
+                           and not _zu_allgemein(v.begriff)]
         except Exception as e:
             log.info("KI-Suchvorschläge nicht verfügbar: %s", e)
     quellen = [q for q in profil.suche.quellen if q in QUELLEN and QUELLEN[q].art != "arbeitgeber"]

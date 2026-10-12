@@ -93,13 +93,56 @@ def _wort_passt(wort: str, text: str) -> bool:
     return len(wort) >= 10 and wort[:6] in text
 
 
+# Gleichbedeutende Rollenwoerter (normalisiert): "Python Entwickler" findet auch "Python Developer"
+SYNONYME: list[set[str]] = [
+    {"entwickler", "developer", "engineer", "programmierer", "softwareentwickler", "anwendungsentwickler",
+     "entwicklung", "development", "software engineer"},
+    {"berater", "beraterin", "consultant", "beratung"},
+    {"leiter", "leitung", "lead", "head of", "teamleiter", "teamlead", "manager"},
+    {"sachbearbeiter", "sachbearbeitung", "referent", "specialist", "spezialist"},
+    {"administrator", "admin", "systemadministrator", "sysadmin", "systemintegration"},
+    {"analyst", "analytiker", "analytics"},
+    {"vertrieb", "sales", "verkauf", "account manager"},
+    {"ingenieur", "engineer"},
+    {"architekt", "architect"},
+    {"buchhalter", "buchhaltung", "accountant", "accounting"},
+    {"projektmanager", "projektleiter", "project manager", "projektmanagement"},
+    {"werkstudent", "working student"},
+    {"pflegekraft", "pflegefachkraft", "pfleger", "nurse"},
+    {"designer", "gestalter"},
+    {"tester", "qa", "quality assurance", "testmanager"},
+]
+
+
+def _varianten(wort: str) -> set[str]:
+    varianten = {wort}
+    for gruppe in SYNONYME:
+        if wort in gruppe or any(len(g) >= 6 and g in wort for g in gruppe):
+            varianten |= gruppe
+    return varianten
+
+
 def begriff_passt(job: Job, begriff: str) -> bool:
-    """Alle Woerter des Suchbegriffs muessen in Titel/Beruf vorkommen (Komposita tolerant)."""
+    """Passt die Stelle zum Suchbegriff?
+
+    Jedes Wort muss in Titel, Beruf oder Anzeigentext vorkommen (Synonyme wie
+    Entwickler/Developer/Engineer und Komposita zaehlen), und mindestens ein Wort
+    im Titel bzw. Beruf - ein Einzelwort also immer im Titel. So findet „Python
+    Entwickler“ auch den „Software Engineer (Backend)“ mit Python im Text, aber
+    nicht jede Anzeige, die irgendwo „Python“ erwaehnt.
+    """
     worte = suchworte(begriff)
     if not worte:
         return True
-    text = normalisiert(" ".join(x for x in (job.titel, job.beruf or "") if x))
-    return all(_wort_passt(w, text) for w in worte)
+    titel = normalisiert(" ".join(x for x in (job.titel, job.beruf or "") if x))
+    alles = titel + " " + normalisiert((job.beschreibung or "")[:6000])
+
+    def kommt_vor(wort: str, text: str) -> bool:
+        return any(_wort_passt(v, text) for v in _varianten(wort))
+
+    if not all(kommt_vor(w, alles) for w in worte):
+        return False
+    return any(kommt_vor(w, titel) for w in worte)
 
 
 def ist_remote(job: Job) -> bool:

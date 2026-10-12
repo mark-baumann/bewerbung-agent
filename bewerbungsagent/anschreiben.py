@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Profil
-from .dossier import Dossier
+from .dossier import Dossier, anrede_fuer
 from .models import Job, Score
 from .scoring.llm import chat, client_verfuegbar, lebenslauf_block
 
@@ -54,14 +54,17 @@ Mit freundlichen Grüßen
 
 
 def _vorlage(job: Job, profil: Profil, score: Score | None, dossier: Dossier | None = None) -> str:
-    treffer = (score.treffer if score else []) or profil.bewertung.skills[:5]
+    # Nur echte Skills nennen - Treffer koennen auch Wunschthemen sein, die nichts belegen
+    skills = {k.casefold() for k in profil.bewertung.skills}
+    treffer = [t for t in (score.treffer if score else []) if t.casefold() in skills] or profil.bewertung.skills[:5]
     trefferblock = (
         "Fachlich bringe ich unter anderem mit: " + ", ".join(treffer[:8]) + "."
         if treffer
         else "Meine Unterlagen mit allen Details finden Sie im Anhang."
     )
     return VORLAGE.format(
-        anrede=dossier.anrede if dossier else "Sehr geehrte Damen und Herren,",
+        # Die Vorlage ist deutsch - also auch bei englischen Anzeigen eine deutsche Anrede
+        anrede=anrede_fuer(dossier.ansprechpartner if dossier else None, "de"),
         titel=job.titel,
         arbeitgeber=job.arbeitgeber or "Ihrem Unternehmen",
         profilsatz=profil.kurzprofil.strip() or "Mein Profil entnehmen Sie bitte dem beigefügten Lebenslauf.",

@@ -14,7 +14,7 @@ import os
 from typing import Any
 
 from ..models import Job
-from .basis import QuellenClient, QuelleFehler, iso_datum, ohne_html
+from .basis import QuellenClient, QuelleFehler, begriff_passt, iso_datum, ohne_html
 
 EURES_SUCHE = "https://europa.eu/eures/api/jv-searchengine/public/jv-search/search"
 EURES_WEB = "https://europa.eu/eures/portal/jv-se/jv-details/{id}?lang=de"
@@ -30,16 +30,25 @@ class EuresClient(QuellenClient):
         if not laender:
             return []
         anfrage = {
-            "resultsPerPage": min(50, max(1, int(max_treffer))), "page": 1, "sortSearch": "MOST_RECENT",
+            "resultsPerPage": 50, "page": 1, "sortSearch": "MOST_RECENT",
             "keywords": [{"keyword": was, "specificSearchCode": "EVERYWHERE"}],
             "publicationPeriod": None, "occupationUris": [], "skillUris": [], "requiredExperienceCodes": [],
             "positionScheduleCodes": [], "sectorCodes": [], "educationAndQualificationLevelCodes": [],
             "positionOfferingCodes": [], "locationCodes": laender, "euresFlagCodes": [], "otherBenefitsCodes": [],
             "requiredLanguages": [], "minNumberPost": None, "sessionId": "bewerbungsagent",
         }
-        antwort = self.http.post(EURES_SUCHE, json=anfrage)
-        antwort.raise_for_status()
-        return eures(antwort.json())
+        # Viele Treffer sind Stellen der Arbeitsagentur (werden uebersprungen) - daher blaettern
+        jobs: list[Job] = []
+        for seite in range(1, 4):
+            anfrage["page"] = seite
+            antwort = self.http.post(EURES_SUCHE, json=anfrage)
+            antwort.raise_for_status()
+            daten = antwort.json()
+            # Die EURES-Suche verknuepft Woerter locker - nur wirklich passende behalten
+            jobs += [j for j in eures(daten) if begriff_passt(j, was)]
+            if len(jobs) >= max_treffer or len(daten.get("jvs") or []) < anfrage["resultsPerPage"]:
+                break
+        return jobs[:max_treffer]
 
 
 def _eures_herkunft(kennung: str) -> str:

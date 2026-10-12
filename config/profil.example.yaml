@@ -34,9 +34,18 @@ suche:
   nur_vollzeit: true
   nur_homeoffice: false
   max_pro_query: 40
+  # Jobboersen (Profil -> Jobboersen); adzuna/jooble nur mit kostenlosem Key
   quellen:
     - arbeitsagentur
     - get-in-it
+    - arbeitnow
+    - service-bund
+    - interamt
+    - remote
+    - wunscharbeitgeber
+  remote: true                     # auch Remote-Stellen, die Bewerber aus Deutschland ansprechen
+  ausland: []                      # EURES-Laender, z. B. [at, ch] (Quelle "eures" aktivieren)
+  ausbildung: false                # zusaetzlich Ausbildungsplaetze (Arbeitsagentur)
 
 # Automatischer Ablauf. Cron ruft alle 5 Minuten `bewerbungsagent tick` auf
 # (im Docker-Container eingebaut, lokal: `bewerbungsagent cron`); der Tick
@@ -50,6 +59,17 @@ automatisierung:
   max_pro_tag: 10                # Sicherheitsgrenze fuer Sendungen pro Tag
   probelauf_vorab: true          # Online-Formular vorab testweise ausfuellen
   ziel_pro_woche: 5              # Wochenziel (z. B. aus der Eingliederungsvereinbarung)
+  erkunden: true                 # neue Suchbegriffe selbst ausprobieren und nach Ertrag behalten
+  erkundung_max_begriffe: 2
+  postfach: true                 # Antworten per IMAP erkennen (wenn IMAP eingerichtet ist)
+  nachfassen_tage: 14            # danach Nachfass-Mail als Ja/Nein-Karte (0 = nie)
+  # Autopilot: aus = jede Bewerbung braucht dein Ja (Standard).
+  # mit_frist = sehr gut passende, gepruefte Bewerbungen gehen nach X Stunden raus, wenn du nicht stoppst.
+  # sofort = solche Bewerbungen schickt die KI direkt ab.
+  autopilot: aus
+  autopilot_frist_stunden: 2
+  autopilot_min_passung: 75
+  autopilot_min_qualitaet: 80
 
 # Angaben, die Bewerbungsformulare oft als Pflichtfeld abfragen
 angaben:
@@ -60,6 +80,12 @@ angaben:
   arbeitserlaubnis: deutsche Staatsangehoerigkeit
   fuehrerschein: Klasse B
   sprachen: Deutsch (Muttersprache), Englisch (C1)
+  titel: ""
+  nationalitaet: deutsch
+  abschluss: B.Sc. Informatik
+  berufserfahrung_jahre: "6"
+  umzugsbereitschaft: nein
+  weitere: {}                    # vom Agenten gelernte Formular-Antworten (Frage: Antwort)
 
 bewertung:
   # Pflicht-Skills: bestimmen die fachliche Passung
@@ -85,8 +111,10 @@ bewertung:
     - Ausbildung
     - Provisionsbasis
   min_score: 60
-  modell: claude-opus-5
+  modell: claude-opus-5            # wird beim Anbieter geprueft; fehlt es, nimmt der Agent ein verfuegbares
   effort: medium                   # low | medium | high | xhigh | max
+  max_llm_pro_lauf: 40             # Kostenbremse: KI-Bewertungen je Lauf
+  vorfilter_min: 25                # darunter (Stichwort-Score) keine KI-Bewertung
   # Wird ueber "Nein - Arbeitgeber nie wieder vorschlagen" gefuellt
   ausschluss_arbeitgeber: []
 
@@ -97,3 +125,9 @@ unterlagen:
   anschreiben_stil: >
     sachlich und konkret, ohne Werbefloskeln, maximal 250 Woerter,
     Sie-Anrede, ein Absatz zur Motivation und einer zu den passenden Faehigkeiten
+
+# Wunsch-Arbeitgeber: Karriereseite reicht, das Bewerbermanagement wird erkannt
+# (Greenhouse, Lever, SmartRecruiters, Personio, Recruitee, Ashby)
+zielfirmen: []
+#  - name: Musterfirma
+#    url: https://musterfirma.jobs.personio.de/

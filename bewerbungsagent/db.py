@@ -239,6 +239,17 @@ def _jetzt() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Stellen, die nur als Rohbestand eines Feeds/einer Karriereseite gespeichert sind
+# (Abruf "(Feed)", "(Firma) ..."), aber zu keiner Suche passten, sind keine Kandidaten:
+# Sie koennen an ganz anderen Orten oder in anderen Berufen liegen.
+SUCHTREFFER = (
+    "(NOT EXISTS (SELECT 1 FROM abruf_treffer t JOIN abrufe a ON a.id = t.abruf_id "
+    "WHERE t.ref = j.ref AND a.suchbegriff LIKE '(%') "
+    "OR EXISTS (SELECT 1 FROM abruf_treffer t JOIN abrufe a ON a.id = t.abruf_id "
+    "WHERE t.ref = j.ref AND a.suchbegriff NOT LIKE '(%'))"
+)
+
+
 def dubletten_schluessel(arbeitgeber: str | None, titel: str | None) -> str:
     """Gleiche Stelle aus zwei Quellen erkennen: Arbeitgeber + Titel ohne (m/w/d)."""
 
@@ -341,7 +352,7 @@ class Speicher:
     def jobs(self, nur_ohne_score: bool = False, limit: int | None = None) -> list[Job]:
         sql = "SELECT j.* FROM jobs j"
         if nur_ohne_score:
-            sql += " LEFT JOIN scores s ON s.ref = j.ref WHERE s.ref IS NULL"
+            sql += f" LEFT JOIN scores s ON s.ref = j.ref WHERE s.ref IS NULL AND {SUCHTREFFER}"
         sql += " ORDER BY j.veroeffentlicht DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -446,6 +457,7 @@ class Speicher:
             FROM jobs j JOIN scores s ON s.ref = j.ref
             WHERE s.ausgeschlossen = 0 AND s.gesamt >= ?
         """
+        sql += f" AND {SUCHTREFFER}"
         if offen:
             sql += (
                 " AND j.ref NOT IN (SELECT ref FROM applications "
@@ -623,6 +635,7 @@ class Speicher:
               AND j.ref NOT IN (SELECT ref FROM applications
                                 WHERE status IN ('abgeschickt', 'manuell_beworben', 'uebersprungen'))
         """
+        sql += f" AND {SUCHTREFFER}"
         params: list[Any] = [min_score]
         if refs is not None:
             refs = list(dict.fromkeys(refs))
@@ -659,10 +672,10 @@ class Speicher:
     def heuristisch_bewertet(self, min_gesamt: float = 0.0, limit: int = 20) -> list[str]:
         """Offene Stellen, die bisher nur per Stichworten bewertet wurden (neueste zuerst)."""
         rows = self.con.execute(
-            """
+            f"""
             SELECT s.ref FROM scores s JOIN jobs j ON j.ref = s.ref
             WHERE s.bewerter = 'heuristik' AND s.ausgeschlossen = 0 AND s.gesamt >= ?
-              AND j.ref NOT IN (SELECT ref FROM vorgaenge)
+              AND j.ref NOT IN (SELECT ref FROM vorgaenge) AND {SUCHTREFFER}
             ORDER BY j.geholt_am DESC, s.gesamt DESC LIMIT ?
             """,
             (min_gesamt, limit),

@@ -394,10 +394,43 @@ def cmd_tick(args: argparse.Namespace) -> int:
     with Speicher(args.db) as db:
         ergebnis = ablauf.tick(db, profil)
     # Nur protokollieren, wenn etwas passiert ist (cron.log klein halten)
-    if ergebnis.get("automatik") or any(
-        v for k, v in (ergebnis.get("senden") or {}).items() if k != "abgeschickt" or v
-    ) or ergebnis.get("zeitplan_fehler"):
+    senden = ergebnis.get("senden") or {}
+    if any(ergebnis.get(k) for k in ergebnis if k != "senden") or any(
+        v for k, v in senden.items() if k != "abgeschickt" or v
+    ):
         console.print(ergebnis)
+    return 0
+
+
+def cmd_modelle(args: argparse.Namespace) -> int:
+    """KI-Modelle, die der eingerichtete Zugang wirklich anbietet."""
+    profil = lade_profil(args.profil)
+    anbieter = llm_modul.provider(profil.bewertung.modell)
+    if anbieter is None:
+        console.print("[yellow]Kein KI-Zugang eingerichtet (Profil → Zugänge oder .env).[/]")
+        return 1
+    modelle = llm_modul.verfuegbare_modelle(anbieter, neu_laden=True)
+    if not modelle:
+        console.print(f"[red]{llm_modul.modell_fehler.get(anbieter) or 'Keine Modelle gemeldet.'}[/]")
+        return 1
+    ziel, hinweis = llm_modul.pruefe_modell(anbieter, profil.bewertung.modell)
+    for m in modelle:
+        console.print(("→ " if m == ziel else "  ") + m)
+    console.print(f"\nAnbieter: {anbieter} · Profil-Modell: {profil.bewertung.modell} · genutzt: {ziel}")
+    if hinweis:
+        console.print(f"[yellow]{hinweis}[/]")
+    return 0
+
+
+def cmd_postfach(args: argparse.Namespace) -> int:
+    """Antworten im Postfach jetzt auswerten (IMAP, nur lesend)."""
+    profil = lade_profil(args.profil)
+    with Speicher(args.db) as db:
+        ergebnis = ablauf.postfach_lauf(db, profil, ausloeser="knopf", mindestabstand_min=0)
+    if ergebnis is None:
+        console.print("[yellow]Postfach-Auswertung ist aus oder IMAP nicht eingerichtet.[/]")
+        return 1
+    console.print(ergebnis)
     return 0
 
 
@@ -628,6 +661,12 @@ def build_parser() -> argparse.ArgumentParser:
     vs = sub.add_parser("vorschlaege", help="Weitere Suchbegriffe und Such-Tipps")
     vs.add_argument("--ki", action="store_true", help="Zusaetzlich Vorschlaege vom LLM holen")
     vs.set_defaults(func=cmd_vorschlaege)
+
+    mo = sub.add_parser("modelle", help="Verfuegbare KI-Modelle des eingerichteten Zugangs anzeigen")
+    mo.set_defaults(func=cmd_modelle)
+
+    pf = sub.add_parser("postfach", help="Antworten im Postfach jetzt auswerten (IMAP)")
+    pf.set_defaults(func=cmd_postfach)
 
     nw = sub.add_parser("nachweis", help="Nachweis der Eigenbemuehungen exportieren")
     nw.add_argument("--von", default=None, help="Startdatum JJJJ-MM-TT (Standard: vor 30 Tagen)")
