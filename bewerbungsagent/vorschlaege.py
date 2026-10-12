@@ -20,6 +20,7 @@ from typing import Any
 from .config import Profil
 from .db import Speicher
 from .scoring import llm as llm_modul
+from .sources import QUELLEN
 
 
 @dataclass
@@ -209,7 +210,13 @@ def such_tipps(db: Speicher, profil: Profil) -> list[Tipp]:
                 f"Mindestscore {profil.bewertung.min_score:.0f} ist streng – im Profil auf 50 senken, "
                 "um mehr Stellen zur Auswahl zu haben."
             ))
-    fehlend = [q for q in ("arbeitsagentur", "get-in-it") if q not in s.quellen]
+    fehlend = [
+        name for name, info in QUELLEN.items()
+        if name not in s.quellen and info.verfuegbar()
+        and not (name == "wunscharbeitgeber" and not profil.zielfirmen)
+        and not (name == "eures" and not s.ausland)
+    ]
     if fehlend:
-        tipps.append(Tipp(f"Weitere Jobbörse aktivieren: {', '.join(fehlend)}.", {"quellen": [*s.quellen, *fehlend]}))
+        namen = ", ".join(QUELLEN[q].label for q in fehlend)
+        tipps.append(Tipp(f"Weitere Jobbörsen aktivieren: {namen}.", {"quellen": [*s.quellen, *fehlend]}))
     return tipps

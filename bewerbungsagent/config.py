@@ -42,8 +42,13 @@ class Suche:
     nur_vollzeit: bool = False
     nur_homeoffice: bool = False
     max_pro_query: int = 50
-    # Verfuegbare Quellen: arbeitsagentur, get-in-it.
-    quellen: list[str] = field(default_factory=lambda: ["arbeitsagentur", "get-in-it"])
+    # Namen aus bewerbungsagent.sources.QUELLEN (Standard: alle ohne API-Key)
+    quellen: list[str] = field(default_factory=lambda: [
+        "arbeitsagentur", "get-in-it", "arbeitnow", "service-bund", "interamt", "remote", "wunscharbeitgeber",
+    ])
+    remote: bool = True              # auch Remote-Stellen, die Bewerber aus Deutschland ansprechen
+    ausland: list[str] = field(default_factory=list)  # EURES-Laender, z. B. ["at", "ch"]
+    ausbildung: bool = False         # zusaetzlich Ausbildungsplaetze (Arbeitsagentur)
 
 
 @dataclass
@@ -54,6 +59,8 @@ class Bewertung:
     min_score: float = 60.0
     modell: str = "claude-opus-5"
     effort: str = "medium"
+    max_llm_pro_lauf: int = 40       # Kostenbremse: so viele KI-Bewertungen je Lauf
+    vorfilter_min: float = 25.0      # unter diesem Stichwort-Score keine KI-Bewertung
     # Per "Nein - Arbeitgeber nie wieder vorschlagen" gefuellt
     ausschluss_arbeitgeber: list[str] = field(default_factory=list)
 
@@ -78,9 +85,17 @@ class Angaben:
     arbeitserlaubnis: str = ""       # z. B. "deutsche Staatsangehoerigkeit"
     fuehrerschein: str = ""          # z. B. "Klasse B"
     sprachen: str = ""               # z. B. "Deutsch (Muttersprache), Englisch (C1)"
+    titel: str = ""                  # akademischer Titel, z. B. "Dr."
+    nationalitaet: str = ""
+    abschluss: str = ""              # hoechster Abschluss, z. B. "B.Sc. Informatik"
+    berufserfahrung_jahre: str = ""
+    umzugsbereitschaft: str = ""     # z. B. "nein" / "innerhalb Bayerns"
+    # Weitere Antworten, die der Agent in Formularen gelernt hat (Frage -> Antwort)
+    weitere: dict[str, str] = field(default_factory=dict)
 
 
 MODI = ("automatisch", "nur_suchen", "aus")
+AUTOPILOT = ("aus", "mit_frist", "sofort")
 
 
 @dataclass
@@ -97,6 +112,20 @@ class Automatisierung:
     max_pro_tag: int = 10       # Schutz vor Versehen: hoechstens so viele Sendungen pro Tag
     probelauf_vorab: bool = True  # Online-Formular schon beim Vorbereiten testweise ausfuellen
     ziel_pro_woche: int = 5
+    # Autopilot: Bewerbungen, die alle Pruefungen bestehen, gehen ohne Ja raus
+    # aus | mit_frist (nach `autopilot_frist_stunden`, wenn kein Nein kommt) | sofort
+    autopilot: str = "aus"
+    autopilot_frist_stunden: int = 2
+    autopilot_min_passung: float = 75.0
+    autopilot_min_qualitaet: float = 80.0
+    erkunden: bool = True            # neue Suchbegriffe selbststaendig ausprobieren
+    erkundung_max_begriffe: int = 2  # pro Lauf
+    postfach: bool = True            # Antworten per IMAP erkennen (wenn eingerichtet)
+    nachfassen_tage: int = 14        # danach Nachfass-Mail vorschlagen (0 = aus)
+
+    @property
+    def effektiver_autopilot(self) -> str:
+        return self.autopilot if self.autopilot in AUTOPILOT else "aus"
 
     @property
     def effektiver_modus(self) -> str:
@@ -114,6 +143,8 @@ class Profil:
     automatisierung: Automatisierung = field(default_factory=Automatisierung)
     angaben: Angaben = field(default_factory=Angaben)
     kurzprofil: str = ""
+    # Wunsch-Arbeitgeber: [{name, url, ats, kennung}] - Stellen direkt aus deren Bewerbermanagement
+    zielfirmen: list[dict[str, str]] = field(default_factory=list)
 
     # --- Zugangsdaten kommen ausschliesslich aus der Umgebung, nie aus der YAML ---
     @property
@@ -158,7 +189,11 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
         automatisierung=_fill(Automatisierung, roh.get("automatisierung")),
         angaben=_fill(Angaben, roh.get("angaben")),
         kurzprofil=roh.get("kurzprofil", "") or "",
+        zielfirmen=[dict(z) for z in (roh.get("zielfirmen") or []) if isinstance(z, dict)],
     )
+    if profil.suche.quellen == ["arbeitsagentur", "get-in-it"]:
+        # Unveraenderter alter Standard: neue Jobboersen automatisch mitnehmen
+        profil.suche.quellen = Suche().quellen
     if not profil.suche.was:
         raise ValueError("suche.was ist leer - mindestens ein Suchbegriff noetig.")
     return profil
@@ -195,12 +230,13 @@ def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
         "unterlagen": _to_dict(profil.unterlagen),
         "automatisierung": _to_dict(profil.automatisierung),
         "angaben": _to_dict(profil.angaben),
+        "zielfirmen": profil.zielfirmen,
     }
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(
-        yaml.safe_dump(daten, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
+    # Atomar schreiben: UI, Hintergrund-Worker und Cron lesen parallel
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(yaml.safe_dump(daten, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    os.replace(tmp, p)
     return p
 
 

@@ -41,6 +41,8 @@ def suchparameter(
     nur_vollzeit: bool = False,
     seite: Any = 1,
     size: Any = 50,
+    ohne_zeitarbeit: bool = False,
+    ausbildung: bool = False,
 ) -> dict[str, Any]:
     """Baut Query-Parameter. Die API lehnt Floats (HTTP 400) ab."""
     tage = _api_int(veroeffentlicht_seit_tagen, 30)
@@ -50,8 +52,12 @@ def suchparameter(
         "page": max(1, _api_int(seite, 1)),
         "size": max(1, min(100, _api_int(size, 50))),
         "veroeffentlichtseit": seit,
-        "angebotsart": 1,
+        "angebotsart": 4 if ausbildung else 1,
     }
+    if ohne_zeitarbeit:
+        # Zeitarbeit und private Arbeitsvermittlung serverseitig ausblenden
+        params["zeitarbeit"] = "false"
+        params["pav"] = "false"
     ort = (wo or "").strip()
     if ort:
         params["wo"] = ort
@@ -62,10 +68,12 @@ def suchparameter(
 
 
 class ArbeitsagenturClient:
-    def __init__(self, timeout: float = 30.0, pause: float = 0.3):
+    def __init__(self, timeout: float = 30.0, pause: float = 0.3, transport=None, profil=None, **_ignoriert: Any):
         self.pause = pause
+        self.profil = profil
         self.http = httpx.Client(
             timeout=timeout,
+            transport=transport,
             headers={
                 "X-API-Key": API_KEY,
                 "Accept": "application/json",
@@ -92,6 +100,8 @@ class ArbeitsagenturClient:
         veroeffentlicht_seit_tagen: Any = 30,
         nur_vollzeit: bool = False,
         max_treffer: Any = 50,
+        ohne_zeitarbeit: bool = False,
+        ausbildung: bool = False,
     ) -> Iterator[dict[str, Any]]:
         """Blaettert durch die Trefferliste und liefert rohe Angebots-Dicts."""
         seite, geliefert = 1, 0
@@ -105,6 +115,8 @@ class ArbeitsagenturClient:
                 nur_vollzeit=nur_vollzeit,
                 seite=seite,
                 size=min(100, limit - geliefert),
+                ohne_zeitarbeit=ohne_zeitarbeit,
+                ausbildung=ausbildung,
             )
             r = self.http.get(f"{BASIS}/v6/jobs", params=params)
             if r.status_code == 404:
@@ -149,6 +161,9 @@ class ArbeitsagenturClient:
         nur_vollzeit: bool = False,
         max_treffer: int = 50,
         mit_details: bool = True,
+        ohne_zeitarbeit: bool = False,
+        ausbildung: bool = False,
+        **_ignoriert: Any,
     ) -> list[Job]:
         jobs: list[Job] = []
         for roh in self.suche(
@@ -158,6 +173,8 @@ class ArbeitsagenturClient:
             veroeffentlicht_seit_tagen=veroeffentlicht_seit_tagen,
             nur_vollzeit=nur_vollzeit,
             max_treffer=max_treffer,
+            ohne_zeitarbeit=ohne_zeitarbeit,
+            ausbildung=ausbildung,
         ):
             job = _job_aus_treffer(roh)
             if mit_details:
@@ -193,6 +210,7 @@ def _job_aus_treffer(roh: dict[str, Any]) -> Job:
         beruf=roh.get("hauptberuf") or roh.get("beruf"),
         ort=_saeubern(adresse.get("ort") or ort.get("ort")),
         plz=_saeubern(adresse.get("plz") or ort.get("plz")),
+        strasse=_saeubern(adresse.get("strasse") or ort.get("strasse")),
         region=_saeubern(adresse.get("region") or ort.get("region")),
         entfernung_km=_als_float(entfernung),
         veroeffentlicht=roh.get("datumErsteVeroeffentlichung") or roh.get("aktuelleVeroeffentlichungsdatum"),
@@ -229,6 +247,10 @@ def _detail_anreichern(job: Job, d: dict[str, Any]) -> None:
     if von or bis:
         spanne = " – ".join(f"{_als_float(w):,.0f}".replace(",", ".") for w in (von, bis) if _als_float(w))
         job.verguetung = f"{spanne} EUR" if spanne else job.verguetung
+    partner, partner_url = d.get("allianzpartnerName"), d.get("allianzpartnerUrl")
+    if partner and not job.externe_url:
+        # Stelle eines Kooperationspartners der BA - beworben wird dort, nicht ueber das BA-Konto
+        job.bewerbung_hinweis = f"Stelle über {partner}" + (f" ({partner_url})" if partner_url else "")
     if d.get("istArbeitnehmerUeberlassung"):
         # Strukturiertes Merkmal der Jobboerse - damit greifen Ausschluesse wie
         # "Zeitarbeit" auch, wenn die Anzeige es selbst nicht erwaehnt.

@@ -1,0 +1,121 @@
+{
+ "numberRecords": 3,
+ "jvs": [
+  {
+   "title": "(Senior) Manager | Software-Entwicklung (all genders) (Leiter/in - Softwareentwicklung)",
+   "description": "IT mit Leidenschaft und Leidenschaft für IT <br><br>Du suchst nach einer Möglichkeit, deine Begeisterung für Technologie in einem inspirierenden Umfeld einzubringen? Werde (Senior) Manager (all genders) bei cronos! Bei uns kannst du Verantwortung übernehmen und gemeinsam mit uns wachsen, in einem Umfeld voller Vielfalt, Innovation und Wertschätzung.<br><br>Wer wir sind<br>Gestalte die digitale Zukunft – werde Teil der cronos Gruppe! Die cronos Gruppe ist seit über 30 Jahren ein führender IT-Dienstleister und Berater für digitale Innovationen. Mit unserer Leidenschaft für IT, Expertise in vielfältigen Branchen und einem klaren Fokus auf Qualität unterstützen wir unsere Kund:innen bei der digitalen Transformation. Unsere Unternehmensgruppe umfasst Spezialisten in den Bereichen Digital Consulting, Automatisierung, Customer Experience, IT-Management und innovative Services – und genau hier kommst du ins Spiel!<br><br>Deine Aufgaben<br><br>- Du leitest komplexe SAP-Entwicklungsprojekte – insbesondere im Kontext von SAP S/4HANA, SAP BTP und Cloud-Architekturen<br>- Du verantwortest die technische Beratung und Architekturdesign – du entwickelst nachhaltige, skalierbare Lösungen für unsere Kund:innen<br>- Du übernimmst die Führung und Weiterentwicklung von Entwicklerteams – inklusive Coaching, Code Reviews und technischer Qualitätssicherung<br>- Du bist aktiv im Presales – z. B. durch technische Konzepte, Aufwandsschätzungen und Kundenpräsentationen<br>- Du unterstützt bei der Mitges",
+   "id": "MTAwMDEtMTAwMzgwOTE2Ni1TIDE",
+   "creationDate": 1791321861503,
+   "lastModificationDate": 1791665482326,
+   "numberOfPosts": 1,
+   "locationMap": {
+    "DE": [
+     "DEE02",
+     "DE402",
+     "DE600",
+     "DE126",
+     "DEA23",
+     "DED51",
+     "DEA52",
+     "DEA33"
+    ],
+    "AT": [
+     "AT130"
+    ]
+   },
+   "euresFlag": false,
+   "positionScheduleCodes": [
+    "fulltime"
+   ],
+   "positionOfferingCode": "directhire",
+   "employer": {
+    "name": "cronos Unternehmensberatung GmbH",
+    "legalID": null,
+    "organisationSizeCode": null,
+    "organisationOwnershipTypeCode": null,
+    "website": null,
+    "sectorCodes": [],
+    "description": null
+   },
+   "availableLanguages": [
+    "de"
+   ],
+   "score": null,
+   "translationType": "FIRST_LANGUAGE"
+  },
+  {
+   "title": "Senior Consultant / Developer | Automation - RPA & AI (all genders) (Softwareentwickler/in)",
+   "description": "IT mit Leidenschaft und Leidenschaft für IT <br><br>Du suchst nach einer Möglichkeit, deine Begeisterung für Technologie in einem inspirierenden Umfeld einzubringen? Werde Senior Consultant / Developer (all genders) bei cronos! Bei uns kannst du Verantwortung übernehmen und gemeinsam mit uns wachsen, in einem Umfeld voller Vielfalt, Innovation und Wertschätzung.<br><br>Wer wir sind<br>Gestalte die digitale Zukunft – werde Teil der cronos Gruppe! Die cronos Gruppe ist seit über 30 Jahren ein führender IT-Dienstleister und Berater für digitale Innovationen. Mit unserer Leidenschaft für IT, Expertise in vielfältigen Branchen und einem klaren Fokus auf Qualität unterstützen wir unsere Kund:innen bei der digitalen Transformation. Unsere Unternehmensgruppe umfasst Spezialisten in den Bereichen Automatisierung, Customer Experience, Digital Consulting, IT-Management und innovative Services – und genau hier kommst du ins Spiel!<br><br>Deine Aufgaben<br><br>- Du analysierst und identifizierst das Digitalisierungs- und Automatisierungspotenzial unserer Kund:innen<br>- Du planst und realisierst IT-Projekte und begleitest unsere Kund:innen aus verschiedenen Branchen auf ihrem Weg zur digitalen Transformation<br>- Du entwickelst/implementierst Automatisierungslösungen (Software-Roboter, KI-Lösungen, etc.) mit RPA (Low-Code)<br>- Du konzipierst Business Cases (Hyperautomation, Business Process Management, etc.) und eigene Automation-Produkte<br>- Du stehst dabei im engen Kundenkontakt und t",
+   "id": "MTAwMDEtMTAwMzgwODI1MC1TIDE",
+   "creationDate": 1791321859438,
+   "lastModificationDate": 1791665480180,
+   "numberOfPosts": 1,
+   "locationMap": {
+    "DE": [
+     "DEA52",
+     "DE600",
+     "DE402",
+     "DEE02",
+     "DEA33",
+     "DED51",
+     "DEA23",
+     "DE126"
+    ],
+    "AT": [
+     "AT130"
+    ]
+   },
+   "euresFlag": false,
+   "positionScheduleCodes": [
+    "fulltime"
+   ],
+   "positionOfferingCode": "directhire",
+   "employer": {
+    "name": "cronos Unternehmensberatung GmbH",
+    "legalID": null,
+    "organisationSizeCode": null,
+    "organisationOwnershipTypeCode": null,
+    "website": null,
+    "sectorCodes": [],
+    "description": null
+   },
+   "availableLanguages": [
+    "de"
+   ],
+   "score": null,
+   "translationType": "FIRST_LANGUAGE"
+  },
+  {
+   "title": "Key User / DevOps Engineer (m/w/x) (DevOps Engineer)",
+   "description": "Zur Verstärkung unseres Teams Data Analysis &amp; Modelling suchen wir eine qualifizierte IT-Fachkraft.<br><br>Als IT Key User bist du die zentrale Schnittstelle zwischen Data Analysis and Modelling, Process Technology, Software-Design und IT für den Anlagen im Reinraum. Mit den erforderlichen Schulungen und Berechtigungen ist sichergestellt, dass das Tagesgeschäft eigenständig und ohne laufende Unterstützung abgewickelt werden kann.<br><br>Was dich erwartet:<br><br>- Unterstützung beim Onboarding neuer OT-Geräte, einschließlich Beschaffung, Lizenz- und Accountmanagement, Netzwerkanbindung sowie Umsetzung von IT-Sicherheitsanforderungen<br>- Unterstützung bei Risikobewertungen sowie der Verwaltung von Zugriffsrechten und Remote-Support<br>- Sicherstellung von Backups für Anlagen und Daten<br>- Betreuung des Equipment Managements, einschließlich Netzwerkanbindung, Datenintegration, Standardisierung und Konfigurationsmanagement<br>- Betreuung des Equipment Managements, einschließlich Netzwerkanbindung, Datenintegration, Standardisierung und Konfigurationsmanagement<br>- Betreuung des Hardware- und Software-Lifecycles durch Verwaltung von Firmware- und OS-Versionen sowie Koordination von System-Upgrades<br>- Troubleshooting und Wiederherstellung der Anlagenfunktionalität mittels Images<br>- Koordination des Incident Handlings mit internen und externen Ansprechpartnern<br>- Verwaltung und Pflege des Anlageninventars, der Dokumentation, Wartungsaktivitäten, Lizenzsituation und Lif",
+   "id": "MTkyMDgtMDA2NzQ3MTMyNy1TIDE",
+   "creationDate": 1789592557928,
+   "lastModificationDate": 1791578814489,
+   "numberOfPosts": 1,
+   "locationMap": {
+    "AT": [
+     "AT31"
+    ]
+   },
+   "euresFlag": false,
+   "positionScheduleCodes": [
+    "fulltime"
+   ],
+   "positionOfferingCode": "directhire",
+   "employer": {
+    "name": "EV Group E. Thallner GmbH",
+    "legalID": null,
+    "organisationSizeCode": null,
+    "organisationOwnershipTypeCode": null,
+    "website": "http://www.EVGroup.com",
+    "sectorCodes": [],
+    "description": null
+   },
+   "availableLanguages": [
+    "de"
+   ],
+   "score": null,
+   "translationType": "FIRST_LANGUAGE"
+  }
+ ]
+}

@@ -8,6 +8,13 @@ from bewerbungsagent import ablauf, ui, zeitplan
 from bewerbungsagent.config import ermittle_profil_pfad, speichere_profil
 
 MODI = {"automatisch": "🤖 Automatisch", "nur_suchen": "🔍 Nur suchen", "aus": "⏸️ Aus"}
+AUTOPILOT = {"aus": "✋ Aus", "mit_frist": "⏳ Mit Einspruchsfrist", "sofort": "🚀 Sofort"}
+AUTOPILOT_HILFE = {
+    "aus": "Jede Bewerbung braucht dein Ja.",
+    "mit_frist": "Sehr gut passende, geprüfte Bewerbungen gehen nach {stunden} h automatisch raus, wenn du nicht "
+                 "„Stopp“ oder „Nein“ sagst. Alles andere wartet auf dein Ja.",
+    "sofort": "Sehr gut passende, geprüfte Bewerbungen schickt die KI sofort ab. Alles andere wartet auf dein Ja.",
+}
 MODUS_HILFE = {
     "automatisch": "Sucht nach Zeitplan, bewertet und bereitet die besten Stellen vor. "
                    "Raus geht nur, was du hier mit Ja bestätigst.",
@@ -41,8 +48,21 @@ with ui.oeffne_db() as db:
     offen = len(db.kandidaten(min_score=profil.bewertung.min_score, limit=200,
                               ausschluss_arbeitgeber=profil.bewertung.ausschluss_arbeitgeber))
     letzte_automatik = db.letzte_laeufe("automatik", limit=1)
+    vorschlaege = db.vorschlaege("offen")
 
     ui.zeige_einrichtung(profil)
+
+    # ------------------------------------------------------------------ Einladungen zuerst
+    for v in db.vorgaenge(("abgeschickt", "selbst_beworben")):
+        if v.rueckmeldung in ("einladung", "zusage") and v.rueckmeldung_am and \
+                (jetzt - (zeitplan.als_datetime(v.rueckmeldung_am) or jetzt)).days <= 21:
+            job = db.job(v.ref)
+            if job:
+                nachricht = next((n for n in db.nachrichten(v.ref, limit=5) if n.get("art") == v.rueckmeldung), None)
+                st.success(
+                    f"🎉 **{ui.RUECKMELDUNG_TEXT[v.rueckmeldung]}: {job.titel} – {job.arbeitgeber}**"
+                    + (f"  \n✉️ „{nachricht['betreff']}“ von {nachricht['absender']}" if nachricht else "")
+                )
 
     # ------------------------------------------------------------------ Kennzahlen
     k1, k2, k3, k4 = st.columns(4)
@@ -85,6 +105,19 @@ with ui.oeffne_db() as db:
                 st.rerun()
             st.page_link("seiten/schritt_fuer_schritt.py", label="Lieber selbst suchen & auswählen",
                          icon="🧭")
+        pilot = st.segmented_control(
+            "Autopilot – darf die KI allein bewerben?", list(AUTOPILOT), default=a.effektiver_autopilot,
+            format_func=AUTOPILOT.get, key="cockpit_autopilot",
+            help="Nur Bewerbungen mit hoher Passung, geprüftem KI-Anschreiben ohne unbelegte Aussagen, "
+                 "sicherem Versandweg und erfolgreichem Probelauf. Tageslimit und höchstens eine Bewerbung "
+                 "pro Arbeitgeber in 30 Tagen. Einstellbar unter Profil → Automatik.",
+        )
+        if pilot and pilot != a.effektiver_autopilot:
+            a.autopilot = pilot
+            speichere_profil(profil, ermittle_profil_pfad())
+            st.toast(f"Autopilot: {AUTOPILOT[pilot]}", icon="🤖")
+        hilfe = AUTOPILOT_HILFE[a.effektiver_autopilot].format(stunden=a.autopilot_frist_stunden)
+        (st.caption if a.effektiver_autopilot == "aus" else st.warning)(hilfe)
 
     # ------------------------------------------------------------------ Laufender Stand
     @st.fragment(run_every=5 if ui.laeuft_etwas(db) else None)
@@ -112,6 +145,14 @@ with ui.oeffne_db() as db:
                    "**Nein** blendet die Stelle dauerhaft aus.")
         for v in reversed(wartend):  # aelteste zuerst
             ui.freigabe_karte(db, profil, v, praefix="cockpit")
+
+    # ------------------------------------------------------------------ Vorschlaege des Agenten
+    if vorschlaege:
+        st.subheader(f"💡 Der Agent schlägt vor ({len(vorschlaege)})")
+        st.caption("Nachfass-Mails und Verbesserungen, die der Agent aus deinen Entscheidungen gelernt hat. "
+                   "Nichts davon passiert ohne dein Ja.")
+        for vorschlag in vorschlaege:
+            ui.vorschlag_karte(vorschlag, praefix="cockpit")
 
     # ------------------------------------------------------------------ Hilfe bei Fehlschlaegen
     if fehlgeschlagen:

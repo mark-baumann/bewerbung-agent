@@ -6,10 +6,13 @@ from pathlib import Path
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
+from bewerbungsagent import zugangsdaten  # noqa: E402
 from bewerbungsagent.config import lade_env  # noqa: E402
 
-# Lokal liegen API- und SMTP-Zugangsdaten in einer .env (Docker setzt sie direkt)
+# Lokal liegen API- und SMTP-Zugangsdaten in einer .env (Docker setzt sie direkt);
+# in der UI gespeicherte Zugaenge (Profil -> Zugaenge) haben Vorrang.
 lade_env()
+zugangsdaten.anwenden()
 
 st.set_page_config(page_title="Bewerbungsagent", page_icon="📬", layout="wide")
 

@@ -7,15 +7,21 @@
 [![Tests](https://img.shields.io/badge/Tests-Pytest-green?logo=pytest)](https://pytest.org)
 
 **Vom Suchen bis zum Absenden – du sagst nur noch Ja oder Nein.** Der Agent sucht
-Stellen bei der Bundesagentur für Arbeit und GET IN IT, bewertet sie gegen dein
-Profil und deinen Lebenslauf, schreibt Anschreiben, testet Online-Formulare im
-Probelauf und schickt Bewerbungen nach deinem **Ja** per E-Mail oder Formular ab.
+Stellen bei über zehn Jobbörsen und direkt bei deinen Wunsch-Arbeitgebern, bewertet
+sie gegen Profil und Lebenslauf, schreibt Anschreiben, prüft sie selbst auf
+unbelegte Aussagen, testet Online-Formulare im Probelauf und schickt Bewerbungen
+nach deinem **Ja** per E-Mail oder Formular ab. Er lernt aus deinen Entscheidungen,
+erkennt Antworten im Postfach und schlägt Nachfass-Mails vor. Wer will, schaltet
+den **Autopilot** ein – dann bewirbt sich die KI bei sehr gut passenden Stellen allein.
 
 ```
 Zeitplan (Cron) oder Knopf
-  └─ suchen ─► bewerten ─► beste Stellen vorbereiten (Anschreiben, PDF, Versandweg, Probelauf)
-        └─ Startseite: ✅ Ja / ❌ Nein ─► Versand per E-Mail oder Online-Formular
-              └─ Tracker: Rückmeldungen, Nachfassen, Nachweis der Eigenbemühungen
+  └─ suchen (10+ Jobbörsen, Wunsch-Arbeitgeber, neue Suchbegriffe selbst testen)
+       └─ bewerten (KI + Stichworte, gelernte Vorlieben) ─► Stellen-Dossier
+            └─ Anschreiben schreiben ─► selbst prüfen & überarbeiten ─► Probelauf
+                 └─ Startseite: ✅ Ja / ❌ Nein   (oder Autopilot mit Schutzgrenzen)
+                      └─ Versand per E-Mail/Formular ─► Postfach: Eingang, Einladung, Absage
+                           └─ Nachfassen nach 14 Tagen (Ja/Nein) · Nachweis fürs Amt
 ```
 
 ---
@@ -28,8 +34,25 @@ Zeitplan (Cron) oder Knopf
   (z. B. täglich 6:00); Modus *Automatisch*, *Nur suchen* oder *Aus*
 - **🧭 Schritt für Schritt:** Geführter manueller Prozess Suchen → Auswählen →
   Prüfen & freigeben → Status
-- **💡 Suchvorschläge:** Ähnliche Jobtitel aus gut passenden Treffern, KI-Ideen
-  (Synonyme, Nachbarrollen, englische Titel) und Tipps, welche Suchbegriffe nichts bringen
+- **🌐 Viele Jobbörsen:** Bundesagentur für Arbeit, GET IN IT, Arbeitnow, service.bund.de,
+  Interamt, EURES (EU-Ausland), Remote-Börsen (Himalayas, Remotive, Remote OK, Jobicy,
+  We Work Remotely), Adzuna und Jooble (mit kostenlosem Key) – Dubletten werden zusammengeführt
+- **🏢 Wunsch-Arbeitgeber:** Karriereseite einfügen – der Agent erkennt Greenhouse, Lever,
+  SmartRecruiters, Personio, Recruitee oder Ashby und holt neue Stellen direkt von dort
+- **💡 Suchvorschläge & Erkundung:** Ähnliche Jobtitel, KI-Ideen und Tipps; die Automatik
+  probiert selbst neue Suchbegriffe aus und behält nur, was passende Stellen bringt
+- **✍️ Geprüfte Anschreiben:** Stellen-Dossier (Muss-Anforderungen, Ansprechpartner mit
+  persönlicher Anrede, Kennziffer, Frist); jede Aussage wird gegen den Lebenslauf geprüft,
+  bei Mängeln einmal überarbeitet – mit Qualitätswert auf der Karte
+- **🧠 Lernt aus Ja/Nein:** Vorlieben beeinflussen die Reihenfolge; Profiländerungen
+  (z. B. „Zeitarbeit ausschließen?“) kommen als Ja/Nein-Vorschläge
+- **📥 Postfach & Nachfassen:** Antworten werden per IMAP (nur lesend) erkannt und
+  zugeordnet; nach 14 Tagen ohne Antwort liegt eine Nachfass-Mail zur Freigabe bereit
+- **🚀 Autopilot (optional, Standard aus):** Die KI bewirbt sich allein – nur bei hoher
+  Passung, geprüftem Anschreiben, sicherem Versandweg, mit Tageslimit, höchstens einmal je
+  Arbeitgeber in 30 Tagen, wahlweise mit Einspruchsfrist und Stopp-Knopf
+- **🔑 Zugänge in der UI:** SMTP, IMAP, KI-Schlüssel und Jobbörsen-Keys direkt im Profil
+  eintragen und testen – ohne `.env` und ohne Neustart
 - **📧 Versand per E-Mail:** Aus deinem Postfach (SMTP) mit Anschreiben-PDF, Lebenslauf
   und Zeugnissen, Kopie per Bcc an dich
 - **🌐 Online-Formulare:** browser-use füllt Bewerbungsformulare aus – inklusive
@@ -38,8 +61,10 @@ Zeitplan (Cron) oder Knopf
   ChatGPT oder Ollama) mit deinem Lebenslauf als Kontext
 - **📬 Tracker & Nachweis:** Rückmeldungen eintragen, fällige Nachfragen, Export der
   Eigenbemühungen als PDF/CSV für Agentur für Arbeit oder Jobcenter
-- **🛡️ Sicherheitsnetze:** Nichts geht ohne dein Ja raus, Tageslimit, kein automatisches
-  Wiederholen fehlgeschlagener Sendungen, keine erfundenen Angaben
+- **🛡️ Sicherheitsnetze:** Ohne Autopilot geht nichts ohne dein Ja raus, Tageslimit, kein
+  automatisches Wiederholen fehlgeschlagener Sendungen, keine erfundenen Angaben,
+  keine Jobbörsen, deren Bedingungen automatische Abfragen verbieten (StepStone, Indeed,
+  LinkedIn, XING)
 
 ---
 
@@ -55,15 +80,20 @@ playwright install chromium
 
 ## ⚙️ Einrichten
 
+Am einfachsten über die Web-UI: **Profil & Einstellungen** – dort Daten, Lebenslauf und
+unter **🔑 Zugänge** SMTP, IMAP und KI-Schlüssel eintragen und mit einem Klick testen.
+Die Zugänge liegen in `daten/zugangsdaten.json` (nur für dich lesbar, nie im Git) und
+haben Vorrang vor der `.env`. Alternativ per Datei:
+
 ```bash
 cp config/profil.example.yaml config/profil.yaml
-cp .env.example .env                 # LLM-Key eintragen (Anthropic ODER Ollama)
+cp .env.example .env                 # optional: Zugänge statt über die UI
 $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüsse
 ```
 
 ### 🤖 LLM-Konfiguration
 
-Entweder OpenAI/ChatGPT, Anthropic oder ein lokaler/Ollama-Server:
+Entweder OpenAI/ChatGPT, Anthropic oder ein lokaler/Ollama-Server (UI: Profil → 🔑 Zugänge):
 
 ```bash
 # Anthropic
@@ -76,17 +106,22 @@ OPENAI_MODEL=gpt-4o-mini
 # ODER Ollama (lokal oder zentral)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_API_KEY=                      # nur falls der Server einen Key verlangt
-OLLAMA_MODEL=glm-5.3-flash           # z.B. glm-5.3-flash, deepseek-v4.1-flash, kimi-k3, gpt-oss:120b
+OLLAMA_MODEL=                        # optional; sonst Auswahl in der UI
 ```
 
 Claude-Modelle (`claude-*`) laufen über Anthropic, GPT-/o-Modelle über die
-OpenAI-API und die übrigen Modelle über Ollama. Ohne Key fällt die Bewertung
-auf die Heuristik und das Anschreiben auf die Vorlage zurück.
+OpenAI-API und die übrigen Modelle über Ollama. Der Agent fragt beim Anbieter ab,
+welche Modelle es wirklich gibt (`bewerbungsagent modelle`): Fehlt das gewählte
+Modell (*model not found*), weicht er auf ein verfügbares aus und sagt es dir im
+Cockpit. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
+die Vorlage zurück.
 
 ### 📧 Bewerbungen per E-Mail
 
-Für den E-Mail-Versand trägst du die Zugangsdaten deines Postfachs in die `.env`
-ein (bzw. in die Umgebung des Containers):
+Für den E-Mail-Versand trägst du die Zugangsdaten deines Postfachs unter
+**Profil → 🔑 Zugänge** ein (oder in die `.env` bzw. die Umgebung des Containers).
+Mit IMAP-Zugang erkennt der Agent außerdem Antworten (Eingangsbestätigung,
+Einladung, Absage) selbst:
 
 ```bash
 SMTP_HOST=smtp.example.de
@@ -94,6 +129,7 @@ SMTP_PORT=465                 # 465 = SSL, 587 = STARTTLS
 SMTP_BENUTZER=ich@example.de
 SMTP_PASSWORT=...
 SMTP_ABSENDER=ich@example.de  # optional
+IMAP_HOST=imap.example.de     # optional: Antworten erkennen (Login wie SMTP)
 ```
 
 Unter **Profil → Automatik & Versand** kannst du eine Testmail an dich selbst
@@ -115,7 +151,23 @@ automatisierung:
   max_pro_tag: 10       # Sicherheitsgrenze für Sendungen pro Tag
   probelauf_vorab: true # Online-Formular vorab testweise ausfüllen
   ziel_pro_woche: 5
+  autopilot: aus        # aus | mit_frist | sofort  – die KI bewirbt sich allein
+  autopilot_frist_stunden: 2
+  erkunden: true        # neue Suchbegriffe selbst ausprobieren
+  postfach: true        # Antworten per IMAP erkennen
+  nachfassen_tage: 14
 ```
+
+### 🚀 Autopilot
+
+Standard ist **aus**. Eingeschaltet (Cockpit oder Profil → Automatik) verschickt die
+KI eine vorbereitete Bewerbung nur, wenn alles stimmt: Passung ≥ 75, KI-Anschreiben
+mit Qualität ≥ 80 und ohne unbelegte Aussagen, eindeutige Bewerbungsadresse bzw.
+erfolgreicher Formular-Probelauf, Versandweg eingerichtet, Frist nicht abgelaufen,
+Tageslimit frei und höchstens eine Bewerbung je Arbeitgeber in 30 Tagen. Im Modus
+*mit Einspruchsfrist* steht die Karte erst X Stunden mit **✋ Stopp**-Knopf im
+Cockpit. Alles, was eine Grenze verfehlt, bleibt eine normale Ja/Nein-Karte – mit
+der Begründung.
 
 Lokal gibt `bewerbungsagent cron` die passende Crontab-Zeile aus (sie wird nicht
 selbst installiert). Jeder Abruf und jeder Lauf wird in der SQLite-Datenbank
@@ -157,8 +209,11 @@ bewerbungsagent top --limit 15 --offen
 bewerbungsagent vorbereiten <ref> [<ref> ...]
 bewerbungsagent senden
 
-# Suche verbessern und Nachweis
+# Suche verbessern, KI-Modelle, Postfach und Nachweis
 bewerbungsagent vorschlaege --ki
+bewerbungsagent modelle                  # welche KI-Modelle bietet mein Zugang?
+bewerbungsagent postfach                 # Antworten jetzt auswerten
+bewerbungsagent suchen --quelle arbeitnow --quelle interamt
 bewerbungsagent nachweis --von 2026-10-01 --bis 2026-10-31 --format pdf
 
 # Browser-Agent direkt (Standard: Probelauf, mit --absenden echt)
@@ -192,12 +247,12 @@ Der Gesamtscore ist `Passung × 0,7 + Ton × 0,3`.
 |---|---|
 | **UI** | Streamlit |
 | **CLI** | Python argparse + Rich |
-| **API** | Bundesagentur für Arbeit Jobsuche-API |
+| **Jobbörsen** | BA-Jobsuche, GET IN IT, Arbeitnow, service.bund.de, Interamt, EURES, Remote-Börsen, Adzuna, Jooble, ATS-APIs |
 | **LLM** | Anthropic Claude, OpenAI oder Ollama |
 | **Browser** | browser-use + Playwright |
 | **Storage** | SQLite |
 | **Dokumente** | fpdf2 (PDF), pypdf (Lebenslauf) |
-| **Versand** | SMTP, browser-use |
+| **Versand** | SMTP, browser-use; IMAP (nur lesend) für Antworten |
 | **Konfiguration** | YAML-Profil |
 | **Sprache** | Python 3.11+ |
 
@@ -220,10 +275,18 @@ bewerbung-agent/
 │   ├── config.py                 # Profil-YAML
 │   ├── models.py                 # Job, Score, Application, Vorgang
 │   ├── db.py                     # SQLite-Speicher
-│   ├── sources/                  # Bundesagentur für Arbeit, GET IN IT
-│   ├── scoring/                  # Sentiment, Heuristik, LLM
-│   ├── anschreiben.py            # Anschreiben-Generator
-│   └── bewerben/                 # browser.py (Formulare), mail.py (SMTP), kanal.py
+│   ├── sources/                  # Jobbörsen-Registry, BA, GET IN IT, Arbeitnow, öffentl. Dienst,
+│   │                             # EURES/Adzuna/Jooble, Remote-Börsen, ATS der Wunsch-Arbeitgeber
+│   ├── jobsuche.py               # protokollierte Abrufe, Feeds, lokale Filterung
+│   ├── scoring/                  # Sentiment, Heuristik, LLM (inkl. Modellprüfung)
+│   ├── dossier.py                # Stellen-Dossier: Anforderungen, Anrede, Kennziffer, Frist
+│   ├── anschreiben.py            # Anschreiben-Generator (mit Selbstprüfung)
+│   ├── pruefung.py               # Belegprüfung & KI-Gutachten der Anschreiben
+│   ├── lernen.py                 # Vorlieben aus Ja/Nein, Vorschläge
+│   ├── autopilot.py              # optionaler Autopilot mit Schutzgrenzen
+│   ├── nachfassen.py             # Nachfass-Mails als Ja/Nein-Karte
+│   ├── zugangsdaten.py           # Zugänge aus der UI (daten/zugangsdaten.json)
+│   └── bewerben/                 # browser.py (Formulare), mail.py (SMTP), postfach.py (IMAP), kanal.py
 ├── config/profil.example.yaml
 ├── tests/
 └── pyproject.toml

@@ -67,16 +67,22 @@ def smtp_eingerichtet() -> bool:
     return bool(os.environ.get("SMTP_HOST", "").strip())
 
 
-def begleittext(job: Job, profil: Profil, anhaenge: list[str] | None = None) -> str:
+def begleittext(
+    job: Job, profil: Profil, anhaenge: list[str] | None = None, *,
+    anrede: str | None = None, referenz: str | None = None,
+) -> str:
     """Kurzer Mailtext; das eigentliche Anschreiben haengt als PDF an."""
     p = profil.person
-    ref = f" (Referenznummer {job.ref})" if job.quelle == "arbeitsagentur" and job.ref else ""
+    if referenz:
+        ref = f" (Kennziffer {referenz})"
+    else:
+        ref = f" (Referenznummer {job.ref})" if job.quelle == "arbeitsagentur" and job.ref else ""
     unterlagen = "mein Anschreiben, meinen Lebenslauf und weitere Unterlagen"
     if anhaenge is not None and len(anhaenge) <= 1:
         unterlagen = "mein Anschreiben"
     kontakt = "\n".join(x for x in (p.telefon, p.email) if x)
     return (
-        "Sehr geehrte Damen und Herren,\n\n"
+        f"{anrede or 'Sehr geehrte Damen und Herren,'}\n\n"
         f"anbei sende ich Ihnen meine Bewerbung als {job.titel}{ref}. "
         f"Im Anhang finden Sie {unterlagen}.\n\n"
         "Über eine Einladung zu einem persönlichen Gespräch freue ich mich.\n\n"
@@ -94,6 +100,7 @@ def baue_nachricht(
     text: str,
     anhaenge: list[str | Path],
     bcc_selbst: bool = True,
+    antwort_auf: str | None = None,
 ) -> EmailMessage:
     gesamt = sum(Path(a).stat().st_size for a in anhaenge) / 1024 / 1024
     if gesamt > MAX_ANHANG_MB:
@@ -108,6 +115,10 @@ def baue_nachricht(
         msg["Bcc"] = absender
     msg["Subject"] = betreff
     msg["Message-ID"] = make_msgid(domain=absender.split("@")[-1] if "@" in absender else None)
+    if antwort_auf:
+        # Nachfassen im selben Thread wie die Bewerbung
+        msg["In-Reply-To"] = antwort_auf
+        msg["References"] = antwort_auf
     msg.set_content(text)
     for anhang in anhaenge:
         pfad = Path(anhang)

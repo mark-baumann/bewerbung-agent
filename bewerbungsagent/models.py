@@ -19,7 +19,8 @@ class Job:
     ref: str
     titel: str
     arbeitgeber: str
-    quelle: str = "arbeitsagentur"
+    # Jede Quelle setzt ihren Namen selbst (kein stiller Arbeitsagentur-Standard)
+    quelle: str = ""
     beruf: str | None = None
     ort: str | None = None
     plz: str | None = None
@@ -36,6 +37,12 @@ class Job:
     befristung: str | None = None
     verguetung: str | None = None
     geholt_am: str = field(default_factory=_now)
+    strasse: str | None = None            # Anschrift des Arbeitgebers (Adressfeld im Anschreiben)
+    bewerbungsfrist: str | None = None    # JJJJ-MM-TT oder Text ("baldmoeglichst")
+    kontakt_email: str | None = None      # strukturiert von der Quelle geliefert
+    ansprechpartner: str | None = None    # "Frau Dr. Erika Muster"
+    bewerbung_hinweis: str | None = None  # z. B. "Online ueber interamt.de (Konto noetig)"
+    dossier: str | None = None            # JSON aus bewerbungsagent.dossier (Anforderungen, Anrede ...)
     
     # --- Neue strukturierte Details (extrahiert vom LLM) ---
     anforderungen: str | None = None  # Skills, Erfahrung (JSON-String oder Text)
@@ -151,6 +158,22 @@ class Vorgang:
     rueckmeldung: str = ""
     rueckmeldung_am: str | None = None
     notiz: str | None = None
+    # --- Qualitaet & Lernen ---
+    anschreiben_original: str | None = None  # wie vom Agenten erzeugt (Aenderungen = Lernsignal)
+    anschreiben_quelle: str | None = None    # llm | vorlage
+    qualitaet: float | None = None           # 0-100 aus der Selbstpruefung
+    pruefung: str | None = None              # JSON-Pruefbericht
+    message_id: str | None = None            # SMTP-Message-ID (Antworten zuordnen)
+    rueckmeldung_quelle: str | None = None   # manuell | postfach
+    auto_senden_ab: str | None = None        # Autopilot: geht ab diesem Zeitpunkt ohne Ja raus
+
+    @property
+    def pruefung_daten(self) -> dict[str, Any]:
+        try:
+            daten = json.loads(self.pruefung or "{}")
+        except json.JSONDecodeError:
+            return {}
+        return daten if isinstance(daten, dict) else {}
 
     @property
     def probelauf_daten(self) -> dict[str, Any]:

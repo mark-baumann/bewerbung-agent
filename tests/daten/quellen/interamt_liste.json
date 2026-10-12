@@ -1,0 +1,169 @@
+{
+ "Anzahltreffer": 4,
+ "Trefferproseite": 4,
+ "Seite": 1,
+ "Merkmal": -1,
+ "Sortierung": 0,
+ "Stellenangebote": [
+  {
+   "Id": 350218,
+   "Kennung": "350218",
+   "Status": "Öffentlich ausschreiben",
+   "Behoerde": "Landesamt für Digitalisierung, Breitband und Vermessung (LDBV)",
+   "StellenBezeichnung": "Initiativbewerbung",
+   "Dienstverhaeltnisse": [
+    "Arbeitnehmer"
+   ],
+   "BeschaeftigungDauer": "unbefristet",
+   "Teilzeit": "beides möglich",
+   "Bezahlung": {
+    "Besoldung": "",
+    "Entgelt": "TV-L E 9b - TV-L E 11"
+   },
+   "StellenangebotOrt": [
+    {
+     "Strasse": "St.-Martin-Straße",
+     "Hausnummer": "47",
+     "Zusatz": "",
+     "PLZ": "81541",
+     "Ort": "München",
+     "Breite": 48.10923,
+     "Laenge": 11.58856
+    }
+   ],
+   "Daten": {
+    "Eingestellt": "24.02.2023",
+    "Bewerbungsfrist": "baldmöglichst"
+   }
+  },
+  {
+   "Id": 847627,
+   "Kennung": "847627",
+   "Status": "Öffentlich ausschreiben",
+   "Behoerde": "Landesamt für Digitalisierung, Breitband und Vermessung (LDBV)",
+   "StellenBezeichnung": "Duales Studium Verwaltungsinformatik zum Beamten (w/m/d)",
+   "Dienstverhaeltnisse": [
+    "Ausbildung/Praktikum/Duales Studium"
+   ],
+   "BeschaeftigungDauer": "unbefristet",
+   "Teilzeit": "Vollzeit",
+   "Bezahlung": {
+    "Besoldung": "",
+    "Entgelt": ""
+   },
+   "StellenangebotOrt": [
+    {
+     "Strasse": "Heinrich-Rockstroh-Straße",
+     "Hausnummer": "10",
+     "Zusatz": "",
+     "PLZ": "95615",
+     "Ort": "Marktredwitz",
+     "Breite": 50.02198,
+     "Laenge": 12.10881
+    },
+    {
+     "Strasse": "Konrad-Adenauer-Platz",
+     "Hausnummer": "1",
+     "Zusatz": "",
+     "PLZ": "95028",
+     "Ort": "Hof",
+     "Breite": 50.31895,
+     "Laenge": 11.91663
+    },
+    {
+     "Strasse": "Keßlerstraße",
+     "Hausnummer": "1",
+     "Zusatz": "",
+     "PLZ": "90489",
+     "Ort": "Nürnberg",
+     "Breite": 49.45357,
+     "Laenge": 11.09498
+    },
+    {
+     "Strasse": "St.-Martin-Straße",
+     "Hausnummer": "47",
+     "Zusatz": "",
+     "PLZ": "81541",
+     "Ort": "München",
+     "Breite": 48.10923,
+     "Laenge": 11.58856
+    },
+    {
+     "Strasse": "Peutingerstraße",
+     "Hausnummer": "11",
+     "Zusatz": "",
+     "PLZ": "86152",
+     "Ort": "Augsburg",
+     "Breite": 48.36955,
+     "Laenge": 10.90452
+    }
+   ],
+   "Daten": {
+    "Eingestellt": "29.08.2022",
+    "Bewerbungsfrist": "26.03.2027"
+   }
+  },
+  {
+   "Id": 495276,
+   "Kennung": "DUA",
+   "Status": "Öffentlich ausschreiben",
+   "Behoerde": "DVZ Datenverarbeitungszentrum Mecklenburg-Vorpommern GmbH",
+   "StellenBezeichnung": "Duales Studium: Wirtschaftsinformatik",
+   "Dienstverhaeltnisse": [
+    "Ausbildung/Praktikum/Duales Studium"
+   ],
+   "BeschaeftigungDauer": "befristet",
+   "Teilzeit": "Vollzeit",
+   "Bezahlung": {
+    "Besoldung": "",
+    "Entgelt": ""
+   },
+   "StellenangebotOrt": [
+    {
+     "Strasse": "Lübecker Straße",
+     "Hausnummer": "283",
+     "Zusatz": "",
+     "PLZ": "19059",
+     "Ort": "Schwerin",
+     "Breite": 53.64911,
+     "Laenge": 11.36527
+    }
+   ],
+   "Daten": {
+    "Eingestellt": "23.10.2025",
+    "Bewerbungsfrist": "baldmöglichst"
+   }
+  },
+  {
+   "Id": 495277,
+   "Kennung": "DUA",
+   "Status": "Öffentlich ausschreiben",
+   "Behoerde": "DVZ Datenverarbeitungszentrum Mecklenburg-Vorpommern GmbH",
+   "StellenBezeichnung": "Duales Studium: Informatik",
+   "Dienstverhaeltnisse": [
+    "Ausbildung/Praktikum/Duales Studium"
+   ],
+   "BeschaeftigungDauer": "befristet",
+   "Teilzeit": "Vollzeit",
+   "Bezahlung": {
+    "Besoldung": "",
+    "Entgelt": ""
+   },
+   "StellenangebotOrt": [
+    {
+     "Strasse": "Lübecker Straße",
+     "Hausnummer": "283",
+     "Zusatz": "",
+     "PLZ": "19059",
+     "Ort": "Schwerin",
+     "Breite": 53.64911,
+     "Laenge": 11.36527
+    }
+   ],
+   "Daten": {
+    "Eingestellt": "21.02.2025",
+    "Bewerbungsfrist": "baldmöglichst"
+   }
+  }
+ ]
+}

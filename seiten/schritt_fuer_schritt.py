@@ -46,7 +46,7 @@ if "sfs_begriffe" not in s:
     s["sfs_tage"] = min(TAGE, key=lambda t: abs(t - tage))
     s["sfs_max"] = int(min(300, max(5, lp.get("max_treffer", p.max_pro_query))))
     s["sfs_vollzeit"] = bool(lp.get("nur_vollzeit", p.nur_vollzeit))
-    s["sfs_quellen"] = list(lp.get("quellen") or p.quellen)
+    s["sfs_quellen"] = ui.quellen_auswahl(lp.get("quellen") or p.quellen)
 s.setdefault("sfs_min", int(profil.bewertung.min_score))
 
 
@@ -169,8 +169,7 @@ if schritt == 1:
         c3.select_slider("Veröffentlicht in den letzten …", TAGE, key="sfs_tage", format_func=lambda t: f"{t} Tagen")
         c4.number_input("Max. Treffer je Begriff und Jobbörse", 5, 300, step=5, key="sfs_max")
         c5, c6 = st.columns(2)
-        c5.multiselect("Jobbörsen", ["arbeitsagentur", "get-in-it"], key="sfs_quellen",
-                       format_func=lambda q: ui.QUELLE_TEXT.get(q, q))
+        c5.multiselect("Jobbörsen", ui.quellen_optionen(), key="sfs_quellen", format_func=ui.quellen_label)
         c6.checkbox("Nur Vollzeit", key="sfs_vollzeit")
         st.checkbox("Diese Einstellungen auch für die Automatik übernehmen", key="sfs_profil_merken",
                     help="Speichert Suchbegriffe, Ort und Filter im Profil.")

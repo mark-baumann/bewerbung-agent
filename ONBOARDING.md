@@ -26,7 +26,7 @@ suchen → bewerten → top → anschreiben → bewerben
 | Komponente | Anforderung |
 |---|---|
 | Python | 3.11+ |
-| LLM | Anthropic API-Key (`ANTHROPIC_API_KEY`) **oder** Ollama (`OLLAMA_BASE_URL`/`OLLAMA_MODEL`) |
+| LLM | Anthropic, OpenAI **oder** Ollama – Zugang in der UI (Profil → 🔑 Zugänge) oder per `.env` |
 | Browser | Chromium (via Playwright, nur für `bewerben`) |
 | Optional | BA-Login (`BA_BENUTZER` / `BA_PASSWORT`) für „Online bewerben" |
 
@@ -46,15 +46,16 @@ Konfiguration:
 
 ```bash
 cp config/profil.example.yaml config/profil.yaml
-cp .env.example .env                 # ANTHROPIC_API_KEY oder OLLAMA_* eintragen
+cp .env.example .env                 # optional – Zugänge gehen auch in der UI
 $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüsse
 ```
 
 **LLM-Anbieter:** Claude-Modelle (`claude-*`) laufen über `ANTHROPIC_API_KEY`,
-alle anderen Modelle (z.B. `glm-5.3-flash`, `deepseek-v4.1-flash`, `qwen3`)
-über einen OpenAI-kompatiblen Ollama-Server (`OLLAMA_BASE_URL`, Standard
-`http://localhost:11434`, plus optional `OLLAMA_API_KEY`/`OLLAMA_MODEL`).
-Ohne Key fällt die Bewertung auf die Heuristik zurück.
+GPT-Modelle über `OPENAI_API_KEY`, alle anderen über einen OpenAI-kompatiblen
+Ollama-Server (`OLLAMA_BASE_URL`, Standard `http://localhost:11434`, plus optional
+`OLLAMA_API_KEY`). Welche Modelle es gibt, fragt der Agent beim Server ab
+(`bewerbungsagent modelle`); ein nicht vorhandenes Modell wird automatisch durch
+ein verfügbares ersetzt. Ohne Key fällt die Bewertung auf die Heuristik zurück.
 
 ---
 
@@ -84,8 +85,11 @@ Ablauf mit Freigabe `automatik`, `warteschlange`, `vorbereiten <ref>`,
 
 Ohne Argumente startet der Container die Web-UI und einen Cron, der alle 5
 Minuten `bewerbungsagent tick` aufruft (Zeitplan aus dem Profil, Versand
-freigegebener Bewerbungen). Für den E-Mail-Versand `SMTP_HOST`, `SMTP_PORT`,
-`SMTP_BENUTZER`, `SMTP_PASSWORT` als Umgebungsvariablen mitgeben.
+freigegebener Bewerbungen, Postfach, Nachfassen, Autopilot-Fristen). Zugänge für
+E-Mail-Versand (SMTP), Postfach (IMAP) und KI am einfachsten in der UI unter
+Profil → 🔑 Zugänge eintragen (landen in `daten/zugangsdaten.json` im Volume) – oder
+als Umgebungsvariablen (`SMTP_HOST`, `SMTP_PORT`, `SMTP_BENUTZER`, `SMTP_PASSWORT`,
+`IMAP_HOST` …) mitgeben.
 
 > **Hinweis:** `bewerben` startet Chromium. Im Container läuft es als root,
 > daher deaktiviert der Code die Chromium-Sandbox automatisch

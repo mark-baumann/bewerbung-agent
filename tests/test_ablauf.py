@@ -260,14 +260,21 @@ def test_fehlgeschlagener_versand_wird_nicht_wiederholt(umgebung):
     assert db.vorgang("1").status == "fehlgeschlagen"
 
 
-def test_ohne_smtp_schlaegt_email_versand_klar_fehl(umgebung):
+def test_ohne_smtp_wartet_email_auf_einrichtung(umgebung, monkeypatch):
     profil, db, _ = umgebung
     db.speichere_jobs([job("1", beschreibung="Bewerbung an jobs@firma.de")])
     ablauf.vorbereiten(db, profil, "1", mit_llm=False, link_aufloesen=False)
-    ablauf.freigeben(db, profil, "1")
-    ablauf.sende_freigegebene(db, profil)
+    v = ablauf.freigeben(db, profil, "1")
+    # Das Ja gilt, der Hinweis sagt, was noch fehlt
+    assert v.status == "freigegeben" and "SMTP" in v.hinweis
+    assert ablauf.sende_freigegebene(db, profil)["zurueckgestellt"] == 1
     v = db.vorgang("1")
-    assert v.status == "fehlgeschlagen" and "SMTP" in v.hinweis
+    assert v.status == "freigegeben" and "SMTP" in v.hinweis
+    # Sobald SMTP eingerichtet ist, geht sie raus
+    smtp_env(monkeypatch)
+    assert ablauf.sende_freigegebene(db, profil, mail_sender=FakeSmtp())["abgeschickt"] == 1
+    assert db.vorgang("1").message_id == "<id@test>"
+    assert [e["art"] for e in db.entscheidungen()] == ["ja"]
 
 
 def test_tageslimit_stellt_zurueck(umgebung, monkeypatch):
@@ -338,7 +345,7 @@ def test_automatiklauf_sucht_bewertet_und_bereitet_vor(umgebung, monkeypatch):
     profil.automatisierung.max_pro_lauf = 2
     profil.bewertung.min_score = 30
     stellen = [job(str(i)) for i in range(4)] + [job("zeit", beschreibung="Zeitarbeit für Python-Entwickler")]
-    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle: FakeQuelle(stellen))
+    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle, profil=None: FakeQuelle(stellen))
     monkeypatch.setattr("bewerbungsagent.bewerben.kanal.loese_bewerbungslink", lambda j, client=None: j.bewerbungs_url)
 
     ergebnis = ablauf.automatik_lauf(db, profil, mit_llm=False)
@@ -361,7 +368,7 @@ def test_automatik_stapelt_nicht_endlos(umgebung, monkeypatch):
     profil.automatisierung.max_pro_lauf = 1
     profil.bewertung.min_score = 30
     stellen = [job(str(i)) for i in range(6)]
-    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle: FakeQuelle(stellen))
+    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle, profil=None: FakeQuelle(stellen))
     monkeypatch.setattr("bewerbungsagent.bewerben.kanal.loese_bewerbungslink", lambda j, client=None: j.bewerbungs_url)
     for _ in range(5):
         ablauf.automatik_lauf(db, profil, mit_llm=False)
@@ -374,7 +381,7 @@ def test_tick_startet_nur_wenn_faellig_und_sendet_freigaben(umgebung, monkeypatc
     profil.suche.was = ["Python"]
     profil.suche.quellen = ["arbeitsagentur"]
     profil.automatisierung.cron = "0 6 * * *"
-    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle: FakeQuelle([]))
+    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle, profil=None: FakeQuelle([]))
 
     nicht_faellig = datetime(2026, 10, 11, 9, 0, tzinfo=timezone.utc)
     assert "automatik" not in ablauf.tick(db, profil, jetzt=nicht_faellig, mit_llm=False)
@@ -394,7 +401,7 @@ def test_tick_startet_nur_wenn_faellig_und_sendet_freigaben(umgebung, monkeypatc
 def test_tick_im_modus_aus_sucht_nicht(umgebung, monkeypatch):
     profil, db, _ = umgebung
     profil.automatisierung.modus = "aus"
-    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle: pytest.fail("darf nicht suchen"))
+    monkeypatch.setattr("bewerbungsagent.jobsuche.client_fuer", lambda quelle, profil=None: pytest.fail("darf nicht suchen"))
     ergebnis = ablauf.tick(db, profil, jetzt=datetime(2026, 10, 11, 4, 0, tzinfo=timezone.utc))
     assert "automatik" not in ergebnis
 

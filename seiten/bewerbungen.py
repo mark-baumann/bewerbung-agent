@@ -16,7 +16,7 @@ if profil is None:
     st.page_link("seiten/profil.py", label="Profil einrichten", icon="👤")
     st.stop()
 
-NACHFASSEN_TAGE = 14
+NACHFASSEN_TAGE = profil.automatisierung.nachfassen_tage or 14
 LABEL_ZU_RUECKMELDUNG = {ui.RUECKMELDUNG_TEXT[r]: r for r in RUECKMELDUNGEN}
 
 
@@ -129,6 +129,14 @@ with ui.oeffne_db() as db:
                     if v.anschreiben:
                         with st.expander("Anschreiben"):
                             st.code(v.anschreiben, language=None, wrap_lines=True)
+                    mails = [n for n in db.nachrichten(v.ref, limit=10) if n.get("betreff")]
+                    if mails:
+                        with st.expander(f"✉️ Antworten im Postfach ({len(mails)})", expanded=True):
+                            for n in mails:
+                                st.markdown(f"- {ui.zeit(n['datum'])} · **{ui.RUECKMELDUNG_TEXT.get(n['art'] or '', n['art'] or '')}**"
+                                            f" · „{n['betreff']}“ von {n['absender']}")
+                                if n.get("auszug"):
+                                    st.caption(n["auszug"][:300])
                     versuche = db.bewerbungen(v.ref)
                     if versuche:
                         with st.expander(f"Protokoll ({len(versuche)} Einträge)"):
@@ -147,8 +155,13 @@ with ui.oeffne_db() as db:
                    "zeigt Interesse und bringt oft Bewegung in den Prozess.")
         if not faellig:
             st.success("Gerade ist kein Nachfassen fällig.")
+        offene_nachfragen = {x["ref"]: x for x in db.vorschlaege("offen") if x["art"] == "nachfassen"}
         for v in faellig:
             job = jobs[v.ref]
+            if v.ref in offene_nachfragen:
+                st.markdown(f"**{job.titel}** – {job.arbeitgeber}")
+                ui.vorschlag_karte(offene_nachfragen[v.ref], praefix="bw")
+                continue
             gesendet = zeitplan.als_datetime(v.gesendet_am)
             tage = (datetime.now(timezone.utc) - gesendet).days if gesendet else NACHFASSEN_TAGE
             with st.container(border=True):

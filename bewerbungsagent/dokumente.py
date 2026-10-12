@@ -60,9 +60,11 @@ KANAL_TEXT = {"email": "E-Mail", "formular": "Online-Formular", "manuell": "selb
 # Anschreiben
 # --------------------------------------------------------------------------- #
 
-def betreff(job: Job) -> str:
+def betreff(job: Job, referenz: str | None = None) -> str:
     teile = f"Bewerbung als {job.titel}".strip()
-    if job.quelle == "arbeitsagentur" and job.ref:
+    if referenz:
+        teile += f" – Kennziffer {referenz}"
+    elif job.quelle == "arbeitsagentur" and job.ref:
         teile += f" (Referenznummer {job.ref})"
     return teile
 
@@ -106,7 +108,9 @@ def anschreiben_pdf(job: Job, profil: Profil, text: str, ziel: str | Path | None
     # Empfaenger
     pdf.ln(12)
     pdf.set_font(schrift, "", 11)
-    for zeile in (job.arbeitgeber or "", " ".join(x for x in (job.plz or "", job.ort or "") if x)):
+    kontakt = f"z. Hd. {job.ansprechpartner}" if job.ansprechpartner else ""
+    for zeile in (job.arbeitgeber or "", kontakt, job.strasse or "",
+                  " ".join(x for x in (job.plz or "", job.ort or "") if x)):
         if zeile.strip():
             pdf.cell(0, 5.5, t(zeile), new_x="LMARGIN", new_y="NEXT")
 

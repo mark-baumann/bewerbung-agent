@@ -145,6 +145,66 @@ CREATE TABLE IF NOT EXISTS laeufe (
     fehler TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_laeufe_art ON laeufe(art, id DESC);
+
+-- Dauerhaftes Protokoll jeder Entscheidung des Nutzers (Lernen aus Ja/Nein)
+CREATE TABLE IF NOT EXISTS entscheidungen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zeitpunkt TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    art TEXT NOT NULL,          -- ja | nein | nicht_interessant | selbst | bearbeitet | autopilot
+    gruende TEXT,               -- JSON-Liste
+    titel TEXT,
+    arbeitgeber TEXT,
+    ort TEXT,
+    quelle TEXT,
+    score REAL,
+    details TEXT                -- JSON
+);
+CREATE INDEX IF NOT EXISTS idx_entscheidungen_art ON entscheidungen(art);
+
+-- Weitere Ja/Nein-Fragen des Agenten (Nachfassen, Profil-/Suchvorschlaege ...)
+CREATE TABLE IF NOT EXISTS vorschlaege (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    art TEXT NOT NULL,          -- nachfassen | ausschluss | suchbegriff | umkreis | stil | ...
+    ref TEXT,
+    schluessel TEXT NOT NULL,   -- verhindert doppelte Vorschlaege
+    titel TEXT NOT NULL,
+    text TEXT,
+    daten TEXT,                 -- JSON
+    status TEXT NOT NULL,       -- offen | angenommen | abgelehnt | erledigt | fehler
+    erstellt_am TEXT NOT NULL,
+    entschieden_am TEXT,
+    hinweis TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vorschlaege_schluessel ON vorschlaege(schluessel);
+
+-- Suchbegriffe mit Ertrag (selbststaendige Erkundung)
+CREATE TABLE IF NOT EXISTS suchbegriffe (
+    begriff TEXT PRIMARY KEY,
+    herkunft TEXT NOT NULL,     -- profil | erkundung | nutzer
+    status TEXT NOT NULL,       -- aktiv | test | verworfen
+    versuche INTEGER NOT NULL DEFAULT 0,
+    treffer INTEGER NOT NULL DEFAULT 0,
+    passend INTEGER NOT NULL DEFAULT 0,
+    grund TEXT,
+    erstellt_am TEXT NOT NULL,
+    zuletzt TEXT
+);
+
+-- Ausgewertete E-Mails aus dem Postfach (idempotent ueber uid_key)
+CREATE TABLE IF NOT EXISTS nachrichten (
+    uid_key TEXT PRIMARY KEY,
+    message_id TEXT,
+    datum TEXT,
+    absender TEXT,
+    betreff TEXT,
+    ref TEXT,
+    art TEXT,                   -- eingangsbestaetigung | einladung | absage | zusage | rueckfrage | sonstiges
+    konfidenz REAL,
+    auszug TEXT,
+    verarbeitet_am TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nachrichten_ref ON nachrichten(ref);
 """
 
 # Spalten, die nach dem urspruenglichen Schema per ALTER TABLE ergaenzt wurden.
@@ -158,7 +218,17 @@ JOBS_MIGRATIONS: dict[str, str] = {
     "benefits": "ALTER TABLE jobs ADD COLUMN benefits TEXT",
     "details_quelle": "ALTER TABLE jobs ADD COLUMN details_quelle TEXT",
     "details_generiert_am": "ALTER TABLE jobs ADD COLUMN details_generiert_am TEXT",
+    "dubletten_schluessel": "ALTER TABLE jobs ADD COLUMN dubletten_schluessel TEXT",
 }
+
+
+def _spaltentyp(typ: Any) -> str:
+    text = str(typ)
+    if "float" in text:
+        return "REAL"
+    if "bool" in text or text.startswith("int"):
+        return "INTEGER"
+    return "TEXT"
 
 
 # Vorgaenge in diesen Status gelten als "erledigt beworben" (Wochenziel, Nachweis).
@@ -167,6 +237,17 @@ BEWORBEN_STATUS = ("abgeschickt", "selbst_beworben")
 
 def _jetzt() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# Stellen, die nur als Rohbestand eines Feeds/einer Karriereseite gespeichert sind
+# (Abruf "(Feed)", "(Firma) ..."), aber zu keiner Suche passten, sind keine Kandidaten:
+# Sie koennen an ganz anderen Orten oder in anderen Berufen liegen.
+SUCHTREFFER = (
+    "(NOT EXISTS (SELECT 1 FROM abruf_treffer t JOIN abrufe a ON a.id = t.abruf_id "
+    "WHERE t.ref = j.ref AND a.suchbegriff LIKE '(%') "
+    "OR EXISTS (SELECT 1 FROM abruf_treffer t JOIN abrufe a ON a.id = t.abruf_id "
+    "WHERE t.ref = j.ref AND a.suchbegriff NOT LIKE '(%'))"
+)
 
 
 def dubletten_schluessel(arbeitgeber: str | None, titel: str | None) -> str:
@@ -195,6 +276,9 @@ class Speicher:
             self.con.execute("PRAGMA journal_mode = WAL")
         self.con.executescript(SCHEMA)
         self._migriere_jobs_spalten()
+        self._migriere_dataclass("jobs", Job)
+        self._migriere_dataclass("vorgaenge", Vorgang)
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dubletten ON jobs(dubletten_schluessel)")
         self.con.commit()
 
     def _migriere_jobs_spalten(self) -> None:
@@ -202,6 +286,13 @@ class Speicher:
         for spalte, ddl in JOBS_MIGRATIONS.items():
             if spalte not in vorhanden:
                 self.con.execute(ddl)
+
+    def _migriere_dataclass(self, tabelle: str, klasse: Any) -> None:
+        """Neue Dataclass-Felder als Spalten ergaenzen (bestehende Datenbanken bleiben nutzbar)."""
+        vorhanden = {row["name"] for row in self.con.execute(f"PRAGMA table_info({tabelle})")}
+        for name, feld in klasse.__dataclass_fields__.items():
+            if name not in vorhanden:
+                self.con.execute(f"ALTER TABLE {tabelle} ADD COLUMN {name} {_spaltentyp(feld.type)}")
 
     def close(self) -> None:
         self.con.close()
@@ -215,16 +306,33 @@ class Speicher:
     # ---------------- Jobs ----------------
 
     def speichere_jobs(self, jobs: Iterable[Job]) -> tuple[int, int]:
-        """Fuegt Jobs ein bzw. aktualisiert sie. Gibt (neu, aktualisiert) zurueck."""
+        """Fuegt Jobs ein bzw. aktualisiert sie. Gibt (neu, aktualisiert) zurueck.
+
+        Leere Werte eines erneuten Abrufs (z. B. ohne Detailseite) ueberschreiben
+        vorhandene Beschreibung/Anreicherung nicht; die erste Quelle bleibt erhalten.
+        """
         neu = aktualisiert = 0
         for job in jobs:
             vorhanden = self.con.execute(
                 "SELECT 1 FROM jobs WHERE ref = ?", (job.ref,)
             ).fetchone()
             d = job.as_dict()
+            for k, v in d.items():
+                if v == "" and k not in ("ref", "titel", "arbeitgeber"):
+                    d[k] = None
+            d["details_quelle"] = d.get("details_quelle") or None
+            d["dubletten_schluessel"] = dubletten_schluessel(job.arbeitgeber, job.titel)
             spalten = ", ".join(d)
             platzhalter = ", ".join(f":{k}" for k in d)
-            updates = ", ".join(f"{k}=excluded.{k}" for k in d if k != "ref")
+
+            def neuer_wert(k: str) -> str:
+                if k == "geholt_am":
+                    return f"{k}=excluded.{k}"
+                if k == "quelle":
+                    return f"{k}=COALESCE(jobs.{k}, excluded.{k})"
+                return f"{k}=COALESCE(excluded.{k}, jobs.{k})"
+
+            updates = ", ".join(neuer_wert(k) for k in d if k != "ref")
             self.con.execute(
                 f"INSERT INTO jobs ({spalten}) VALUES ({platzhalter}) "
                 f"ON CONFLICT(ref) DO UPDATE SET {updates}",
@@ -244,7 +352,7 @@ class Speicher:
     def jobs(self, nur_ohne_score: bool = False, limit: int | None = None) -> list[Job]:
         sql = "SELECT j.* FROM jobs j"
         if nur_ohne_score:
-            sql += " LEFT JOIN scores s ON s.ref = j.ref WHERE s.ref IS NULL"
+            sql += f" LEFT JOIN scores s ON s.ref = j.ref WHERE s.ref IS NULL AND {SUCHTREFFER}"
         sql += " ORDER BY j.veroeffentlicht DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -349,6 +457,7 @@ class Speicher:
             FROM jobs j JOIN scores s ON s.ref = j.ref
             WHERE s.ausgeschlossen = 0 AND s.gesamt >= ?
         """
+        sql += f" AND {SUCHTREFFER}"
         if offen:
             sql += (
                 " AND j.ref NOT IN (SELECT ref FROM applications "
@@ -422,7 +531,7 @@ class Speicher:
             LEFT JOIN abruf_treffer t ON t.abruf_id = a.id
             LEFT JOIN scores s ON s.ref = t.ref
             LEFT JOIN vorgaenge v ON v.ref = t.ref
-            WHERE a.status = 'erfolgreich'
+            WHERE a.status = 'erfolgreich' AND a.suchbegriff NOT LIKE '(%'
             GROUP BY a.suchbegriff
             ORDER BY passend DESC, treffer DESC
             """,
@@ -526,6 +635,7 @@ class Speicher:
               AND j.ref NOT IN (SELECT ref FROM applications
                                 WHERE status IN ('abgeschickt', 'manuell_beworben', 'uebersprungen'))
         """
+        sql += f" AND {SUCHTREFFER}"
         params: list[Any] = [min_score]
         if refs is not None:
             refs = list(dict.fromkeys(refs))
@@ -542,10 +652,14 @@ class Speicher:
             )
         }
         ergebnis: list[tuple[Job, Score]] = []
+        heute = datetime.now(timezone.utc).date().isoformat()
         for row in self.con.execute(sql, params):
             job = _zu_job(row)
             if gesperrt and (job.arbeitgeber or "").strip().casefold() in gesperrt:
                 continue
+            frist = (job.bewerbungsfrist or "")[:10]
+            if len(frist) == 10 and frist[4] == "-" and frist < heute:
+                continue  # Bewerbungsfrist abgelaufen
             schluessel = dubletten_schluessel(job.arbeitgeber, job.titel)
             if schluessel in bekannt:
                 continue
@@ -554,6 +668,19 @@ class Speicher:
             if len(ergebnis) >= limit:
                 break
         return ergebnis
+
+    def heuristisch_bewertet(self, min_gesamt: float = 0.0, limit: int = 20) -> list[str]:
+        """Offene Stellen, die bisher nur per Stichworten bewertet wurden (neueste zuerst)."""
+        rows = self.con.execute(
+            f"""
+            SELECT s.ref FROM scores s JOIN jobs j ON j.ref = s.ref
+            WHERE s.bewerter = 'heuristik' AND s.ausgeschlossen = 0 AND s.gesamt >= ?
+              AND j.ref NOT IN (SELECT ref FROM vorgaenge) AND {SUCHTREFFER}
+            ORDER BY j.geholt_am DESC, s.gesamt DESC LIMIT ?
+            """,
+            (min_gesamt, limit),
+        )
+        return [r["ref"] for r in rows]
 
     # ---------------- Laeufe ----------------
 
@@ -604,10 +731,197 @@ class Speicher:
             if l["status"] == "laeuft" and l["gestartet_am"] >= grenze
         ]
 
+    # ---------------- Quellen-Hilfen ----------------
+
+    def letzter_abruf(self, quelle: str, suchbegriff: str | None = None) -> dict[str, Any] | None:
+        sql = "SELECT * FROM abrufe WHERE quelle = ? AND status = 'erfolgreich'"
+        params: list[Any] = [quelle]
+        if suchbegriff is not None:
+            sql += " AND suchbegriff = ?"
+            params.append(suchbegriff)
+        row = self.con.execute(sql + " ORDER BY id DESC LIMIT 1", params).fetchone()
+        return dict(row) if row else None
+
+    def letzter_abruf_stand(self, quelle: str) -> dict[str, Any] | None:
+        """Letzter Abruf einer Quelle, egal ob erfolgreich (fuer die Quellenuebersicht)."""
+        row = self.con.execute(
+            "SELECT * FROM abrufe WHERE quelle = ? AND status != 'laeuft' ORDER BY id DESC LIMIT 1", (quelle,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def jobs_der_quelle(self, quelle: str, seit: str | None = None, praefix: str | None = None) -> list[Job]:
+        """Gespeicherte Stellen einer Quelle (optional nur ab Veroeffentlichungsdatum JJJJ-MM-TT)."""
+        sql = "SELECT * FROM jobs WHERE quelle = ?"
+        params: list[Any] = [quelle]
+        if praefix:
+            sql += " AND ref LIKE ?"
+            params.append(praefix + "%")
+        if seit:
+            sql += " AND COALESCE(substr(veroeffentlicht, 1, 10), substr(geholt_am, 1, 10)) >= ?"
+            params.append(seit)
+        return [_zu_job(r) for r in self.con.execute(sql + " ORDER BY veroeffentlicht DESC", params)]
+
+    def orte_im_umkreis(self, umkreis_km: float) -> set[str]:
+        """Orte, die die Arbeitsagentur fuer die Suche als im Umkreis liegend gemeldet hat."""
+        rows = self.con.execute(
+            "SELECT DISTINCT ort FROM jobs WHERE quelle = 'arbeitsagentur' AND ort IS NOT NULL "
+            "AND entfernung_km IS NOT NULL AND entfernung_km <= ?",
+            (umkreis_km,),
+        )
+        return {r["ort"] for r in rows}
+
+    def score_einer_dublette(self, job: Job) -> Score | None:
+        """Vorhandene Bewertung derselben Stelle aus einer anderen Quelle (spart LLM-Aufrufe)."""
+        row = self.con.execute(
+            "SELECT s.* FROM scores s JOIN jobs j ON j.ref = s.ref "
+            "WHERE j.dubletten_schluessel = ? AND j.ref != ? ORDER BY s.bewertet_am DESC LIMIT 1",
+            (dubletten_schluessel(job.arbeitgeber, job.titel), job.ref),
+        ).fetchone()
+        return _zu_score(row) if row else None
+
+    # ---------------- Entscheidungen (Lernen) ----------------
+
+    def protokolliere_entscheidung(
+        self, ref: str, art: str, gruende: Iterable[str] = (), details: dict[str, Any] | None = None,
+    ) -> None:
+        job = self.job(ref)
+        score = self.score(ref)
+        self.con.execute(
+            "INSERT INTO entscheidungen (zeitpunkt, ref, art, gruende, titel, arbeitgeber, ort, quelle, score, details) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                _jetzt(), ref, art, json.dumps(list(gruende), ensure_ascii=False),
+                job.titel if job else None, job.arbeitgeber if job else None, job.ort if job else None,
+                job.quelle if job else None, score.gesamt if score else None,
+                json.dumps(details or {}, ensure_ascii=False),
+            ),
+        )
+        self.con.commit()
+
+    def entscheidungen(self, art: str | Iterable[str] | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM entscheidungen"
+        params: list[Any] = []
+        if art:
+            arten = [art] if isinstance(art, str) else list(art)
+            sql += f" WHERE art IN ({', '.join('?' for _ in arten)})"
+            params = arten
+        rows = self.con.execute(sql + " ORDER BY id DESC LIMIT ?", (*params, limit))
+        ergebnis = []
+        for r in rows:
+            d = dict(r)
+            d["gruende"] = json.loads(d["gruende"] or "[]")
+            d["details"] = json.loads(d["details"] or "{}")
+            ergebnis.append(d)
+        return ergebnis
+
+    # ---------------- Vorschlaege (weitere Ja/Nein-Fragen) ----------------
+
+    def lege_vorschlag_an(
+        self, art: str, schluessel: str, titel: str, text: str = "",
+        daten: dict[str, Any] | None = None, ref: str | None = None,
+    ) -> bool:
+        """Legt einen Vorschlag an; liefert False, wenn es ihn (auch erledigt) schon gab."""
+        cur = self.con.execute(
+            "INSERT OR IGNORE INTO vorschlaege (art, ref, schluessel, titel, text, daten, status, erstellt_am) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'offen', ?)",
+            (art, ref, schluessel, titel, text, json.dumps(daten or {}, ensure_ascii=False), _jetzt()),
+        )
+        self.con.commit()
+        return cur.rowcount == 1
+
+    def vorschlag_existiert(self, schluessel: str) -> bool:
+        return self.con.execute("SELECT 1 FROM vorschlaege WHERE schluessel = ?", (schluessel,)).fetchone() is not None
+
+    def vorschlaege(self, status: str | Iterable[str] | None = "offen") -> list[dict[str, Any]]:
+        sql = "SELECT * FROM vorschlaege"
+        params: list[Any] = []
+        if status:
+            liste = [status] if isinstance(status, str) else list(status)
+            sql += f" WHERE status IN ({', '.join('?' for _ in liste)})"
+            params = liste
+        ergebnis = []
+        for r in self.con.execute(sql + " ORDER BY id", params):
+            d = dict(r)
+            d["daten"] = json.loads(d["daten"] or "{}")
+            ergebnis.append(d)
+        return ergebnis
+
+    def vorschlag(self, vorschlag_id: int) -> dict[str, Any] | None:
+        row = self.con.execute("SELECT * FROM vorschlaege WHERE id = ?", (vorschlag_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["daten"] = json.loads(d["daten"] or "{}")
+        return d
+
+    def setze_vorschlag(self, vorschlag_id: int, status: str, hinweis: str | None = None,
+                        daten: dict[str, Any] | None = None) -> None:
+        felder = "status = ?, entschieden_am = ?, hinweis = ?"
+        params: list[Any] = [status, _jetzt(), hinweis]
+        if daten is not None:
+            felder += ", daten = ?"
+            params.append(json.dumps(daten, ensure_ascii=False))
+        self.con.execute(f"UPDATE vorschlaege SET {felder} WHERE id = ?", (*params, vorschlag_id))
+        self.con.commit()
+
+    # ---------------- Suchbegriffe (Erkundung) ----------------
+
+    def suchbegriff(self, begriff: str) -> dict[str, Any] | None:
+        row = self.con.execute("SELECT * FROM suchbegriffe WHERE begriff = ?", (begriff,)).fetchone()
+        return dict(row) if row else None
+
+    def merke_suchbegriff(self, begriff: str, herkunft: str, status: str, grund: str | None = None) -> None:
+        self.con.execute(
+            "INSERT INTO suchbegriffe (begriff, herkunft, status, grund, erstellt_am) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(begriff) DO UPDATE SET status = excluded.status, grund = COALESCE(excluded.grund, suchbegriffe.grund)",
+            (begriff, herkunft, status, grund, _jetzt()),
+        )
+        self.con.commit()
+
+    def suchbegriff_ertrag(self, begriff: str, treffer: int, passend: int) -> None:
+        self.con.execute(
+            "UPDATE suchbegriffe SET versuche = versuche + 1, treffer = treffer + ?, passend = passend + ?, "
+            "zuletzt = ? WHERE begriff = ?",
+            (treffer, passend, _jetzt(), begriff),
+        )
+        self.con.commit()
+
+    def suchbegriffe(self, status: str | Iterable[str] | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM suchbegriffe"
+        params: list[Any] = []
+        if status:
+            liste = [status] if isinstance(status, str) else list(status)
+            sql += f" WHERE status IN ({', '.join('?' for _ in liste)})"
+            params = liste
+        return [dict(r) for r in self.con.execute(sql + " ORDER BY passend DESC, begriff", params)]
+
+    # ---------------- Postfach ----------------
+
+    def nachricht_bekannt(self, uid_key: str) -> bool:
+        return self.con.execute("SELECT 1 FROM nachrichten WHERE uid_key = ?", (uid_key,)).fetchone() is not None
+
+    def speichere_nachricht(self, **felder: Any) -> None:
+        felder.setdefault("verarbeitet_am", _jetzt())
+        spalten = ", ".join(felder)
+        platzhalter = ", ".join(f":{k}" for k in felder)
+        self.con.execute(f"INSERT OR IGNORE INTO nachrichten ({spalten}) VALUES ({platzhalter})", felder)
+        self.con.commit()
+
+    def nachrichten(self, ref: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        if ref:
+            rows = self.con.execute(
+                "SELECT * FROM nachrichten WHERE ref = ? ORDER BY datum DESC LIMIT ?", (ref, limit))
+        else:
+            rows = self.con.execute("SELECT * FROM nachrichten ORDER BY datum DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
 
 def _zu_job(row: sqlite3.Row) -> Job:
     felder = set(Job.__dataclass_fields__)
     daten = {k: row[k] for k in row.keys() if k in felder}
+    daten["details_quelle"] = daten.get("details_quelle") or "keine"
+    daten["details_generiert_am"] = daten.get("details_generiert_am") or ""
+    daten["quelle"] = daten.get("quelle") or ""
     for flag in ("homeoffice", "vollzeit", "teilzeit"):
         if daten.get(flag) is not None:
             daten[flag] = bool(daten[flag])

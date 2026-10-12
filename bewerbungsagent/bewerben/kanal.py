@@ -2,8 +2,12 @@
 
 Rangfolge:
 1. Die Anzeige nennt ausdruecklich eine Bewerbungs-E-Mail -> E-Mail (am zuverlaessigsten).
-2. Es gibt eine Bewerbungs-URL -> Online-Formular per Browser-Agent.
-3. Irgendeine E-Mail-Adresse in der Anzeige -> E-Mail.
+2. Es gibt eine Bewerbungs-URL -> Online-Formular per Browser-Agent. Ausnahmen
+   (-> selbst bewerben): Links auf Jobboersen, deren Bedingungen automatisierte
+   Bewerbungen verbieten (StepStone, Indeed, LinkedIn ...), Stellen, die nur
+   ueber ein Konto bei der Arbeitsagentur oder Interamt gehen, ohne hinterlegten
+   Login, und Stellen von BA-Kooperationspartnern.
+3. Irgendeine E-Mail-Adresse in der Anzeige (oder der Kontakt der Quelle) -> E-Mail.
 4. Sonst bleibt nur die Bewerbung durch den Nutzer selbst.
 """
 
@@ -32,6 +36,12 @@ _KEINE_BEWERBUNG = re.compile(
     re.IGNORECASE,
 )
 _UMKREIS = 160  # Zeichen um die Adresse, in denen ein Bewerbungs-Stichwort stehen muss
+# Jobboersen, deren Bedingungen automatisierte Bewerbungen verbieten
+_FREMDBOERSEN = re.compile(
+    r"(^|\.)(stepstone|indeed|linkedin|xing|monster|kimeta|jobware|glassdoor|stellenanzeigen|meinestadt)\.",
+    re.IGNORECASE,
+)
+_BA_DETAIL = re.compile(r"arbeitsagentur\.de/jobsuche/jobdetail/", re.IGNORECASE)
 
 
 @dataclass
@@ -69,7 +79,7 @@ def finde_bewerbungs_email(text: str | None) -> tuple[str | None, bool]:
     return None, False
 
 
-def bestimme_kanal(job: Job, gefundene_email: str | None = None) -> KanalWahl:
+def bestimme_kanal(job: Job, gefundene_email: str | None = None, *, ba_login: bool = False) -> KanalWahl:
     """Waehlt den Bewerbungsweg. `gefundene_email` kommt z. B. aus dem Probelauf."""
     if gefundene_email:
         return KanalWahl("email", empfaenger=gefundene_email.lower(),
@@ -77,10 +87,31 @@ def bestimme_kanal(job: Job, gefundene_email: str | None = None) -> KanalWahl:
     adresse, sicher = finde_bewerbungs_email(job.beschreibung)
     if adresse and sicher:
         return KanalWahl("email", empfaenger=adresse, grund="Anzeige nennt eine Bewerbungs-E-Mail")
-    if job.bewerbungs_url:
-        return KanalWahl("formular", url=job.bewerbungs_url, grund="Bewerbung über die Bewerbungsseite")
-    if adresse:
-        return KanalWahl("email", empfaenger=adresse, grund="einzige E-Mail-Adresse in der Anzeige")
+    url = job.bewerbungs_url
+    ersatz = adresse or (job.kontakt_email.lower() if job.kontakt_email and "@" in job.kontakt_email else None)
+    hinweis = (job.bewerbung_hinweis or "").lower()
+    if url:
+        host = urlparse(url).hostname or ""
+        if _FREMDBOERSEN.search(host):
+            return KanalWahl("manuell", url=url, grund=(
+                f"Die Bewerbung läuft über {host} – dort sind automatische Bewerbungen nicht erlaubt. "
+                "Bitte über den Link selbst bewerben."))
+        if job.quelle in ("interamt", "service-bund") and "konto bei interamt" in hinweis:
+            return KanalWahl("manuell", url=url, grund=(
+                "Bewerbung nur über ein Konto bei interamt.de – bitte dort selbst bewerben."))
+        if _BA_DETAIL.search(url):
+            if hinweis.startswith("stelle über"):
+                return KanalWahl("manuell", url=url, grund=(
+                    f"{job.bewerbung_hinweis} – beworben wird beim Kooperationspartner, bitte selbst bewerben."))
+            if not ba_login:
+                if ersatz:
+                    return KanalWahl("email", empfaenger=ersatz, grund="einzige E-Mail-Adresse in der Anzeige")
+                return KanalWahl("manuell", url=url, grund=(
+                    "Bewerbung nur über das Konto bei der Arbeitsagentur – Login unter Profil → 🔑 Zugänge "
+                    "eintragen oder selbst bewerben."))
+        return KanalWahl("formular", url=url, grund="Bewerbung über die Bewerbungsseite")
+    if ersatz:
+        return KanalWahl("email", empfaenger=ersatz, grund="einzige E-Mail-Adresse in der Anzeige")
     return KanalWahl("manuell", grund="kein Bewerbungsweg in der Anzeige gefunden")
 
 

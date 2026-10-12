@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,9 @@ ATS_DOMAINS = [
     "prescreen.io", "concludis.de", "umantis.com", "b-ite.com", "b-ite.de", "workable.com",
     "teamtailor.com", "bewerbermanagement.net", "jobbase.io", "taleo.net", "oraclecloud.com",
     "icims.com", "jobvite.com", "ashbyhq.com", "kenjo.io", "factorial.de",
+    "csod.com", "avature.net", "phenompeople.com", "eightfold.ai", "hibob.com", "zohorecruit.eu",
+    "zohorecruit.com", "breezy.hr", "pinpointhq.com", "jobs.ashbyhq.com", "jobylon.com", "haufe-umantis.com",
+    "refline.ch", "milchundzucker.de", "talention.de", "coveto.de", "perbit.com", "interamt.de",
 ]
 
 
@@ -55,38 +59,37 @@ def _pruefe_browser_use() -> None:
         ) from e
 
 
-def _browser_llm(modell: str):
-    """LangChain-LLM fuer browser-use: Anthropic oder OpenAI-kompatibles Ollama."""
+def _browser_llm(modell: str, ausser: tuple[str, ...] = ()):
+    """LLM fuer browser-use (Anthropic, OpenAI oder OpenAI-kompatibles Ollama).
+
+    Das Modell wird vorher beim Anbieter geprueft: gibt es das gewuenschte
+    nicht, nimmt der Agent ein verfuegbares, statt mit "model not found" zu
+    scheitern.
+    """
     from ..scoring import llm as llm_modul
 
     anbieter = llm_modul.provider(modell)
+    if anbieter is None:
+        raise llm_modul.LLMNichtVerfuegbar(
+            "Kein KI-Zugang eingerichtet – der Browser-Agent braucht ein Modell (Profil → Zugänge)."
+        )
+    ziel, _ = llm_modul.pruefe_modell(anbieter, modell, ausser=ausser)
     if anbieter == "ollama":
         from browser_use import ChatOpenAI
 
         base = (llm_modul._env("OLLAMA_BASE_URL") or llm_modul.OLLAMA_DEFAULT_BASE_URL).rstrip("/")
         key = llm_modul._env("OLLAMA_API_KEY") or "ollama"
-        effektives_modell = modell
-        if llm_modul.ist_claude_modell(modell) or not modell:
-            effektives_modell = (
-                llm_modul._env("OLLAMA_MODEL") or llm_modul._env("LLM_MODEL") or llm_modul.OLLAMA_DEFAULT_MODEL
-            )
-        return ChatOpenAI(
-            model=effektives_modell,
-            base_url=f"{base}/v1",
-            api_key=key,
-            temperature=0.2,
-        )
+        return ChatOpenAI(model=ziel, base_url=f"{base}/v1", api_key=key, temperature=0.2)
     if anbieter == "openai":
         from browser_use import ChatOpenAI
 
-        return ChatOpenAI(
-            model=llm_modul.effektives_modell("openai", modell),
-            api_key=llm_modul._env("OPENAI_API_KEY"),
-            temperature=0.2,
-        )
+        return ChatOpenAI(model=ziel, api_key=llm_modul._env("OPENAI_API_KEY"), temperature=0.2)
     from browser_use import ChatAnthropic
 
-    return ChatAnthropic(model=llm_modul.effektives_modell("anthropic", modell))
+    return ChatAnthropic(model=ziel)
+
+
+_MODELL_FEHLT = re.compile(r"model_not_found|model .{0,80}(does not exist|not found)", re.I)
 
 
 def _ergebnis_modell():
@@ -104,7 +107,10 @@ def _ergebnis_modell():
         )
         fehlende_angaben: list[str] = Field(
             default_factory=list,
-            description="Pflichtfelder, die nicht aus dem Profil befuellt werden konnten",
+            description=(
+                "Pflichtfelder, die nicht aus dem Profil befuellt werden konnten, je Eintrag "
+                "'Feldname: Frage wie im Formular' (z. B. 'Gehalt: Wie hoch ist Ihre Gehaltsvorstellung?')"
+            ),
         )
         hindernis: str = Field(
             default="",
@@ -163,16 +169,40 @@ def _profilblock(profil: Profil) -> str:
     a = profil.angaben
     for label, wert in (
         ("Anrede", a.anrede),
+        ("Akademischer Titel", a.titel),
         ("Verfuegbar ab / fruehester Eintrittstermin", a.verfuegbar_ab),
         ("Kuendigungsfrist", a.kuendigungsfrist),
         ("Gehaltsvorstellung", a.gehaltsvorstellung),
-        ("Arbeitserlaubnis / Staatsangehoerigkeit", a.arbeitserlaubnis),
+        ("Arbeitserlaubnis", a.arbeitserlaubnis),
+        ("Staatsangehoerigkeit", a.nationalitaet),
+        ("Hoechster Abschluss", a.abschluss),
+        ("Berufserfahrung (Jahre)", a.berufserfahrung_jahre),
+        ("Umzugsbereitschaft", a.umzugsbereitschaft),
         ("Fuehrerschein", a.fuehrerschein),
         ("Sprachkenntnisse", a.sprachen),
     ):
         if wert:
             zeilen.append(f"{label}: {wert}")
+    for frage, antwort in (a.weitere or {}).items():
+        if frage and antwort:
+            zeilen.append(f"{frage}: {antwort}")
     return "\n".join(zeilen)
+
+
+def _anhang_zeilen(anschreiben_pdf: str | None, profil: Profil) -> tuple[list[str], str]:
+    """(Pfade fuer browser-use, beschriftete Liste fuer die Aufgabe)."""
+    pfade: list[str] = []
+    zeilen: list[str] = []
+    if anschreiben_pdf and Path(anschreiben_pdf).exists():
+        pfad = str(Path(anschreiben_pdf).resolve())
+        pfade.append(pfad)
+        zeilen.append(f"- Anschreiben: {pfad}")
+    lebenslauf = profil.unterlagen.lebenslauf
+    for pfad in profil.anhaenge():
+        pfade.append(pfad)
+        art = "Lebenslauf" if lebenslauf and Path(pfad) == Path(lebenslauf).expanduser().resolve() else "Zeugnis/Anlage"
+        zeilen.append(f"- {art}: {pfad}")
+    return pfade, "\n".join(zeilen) or "- (keine Dateien hinterlegt)"
 
 
 AUFGABE = """Du bewirbst dich im Auftrag von {name} auf eine konkrete Stelle.
@@ -197,6 +227,7 @@ Diese Dateien stehen zum Hochladen bereit (Pfade exakt so verwenden):
 {anhaenge}
 Gibt es ein eigenes Upload-Feld fuer das Anschreiben, lade dort die
 Anschreiben-PDF hoch; Lebenslauf und Zeugnisse in die passenden Felder.
+Gibt es nur EIN Upload-Feld, lade den Lebenslauf hoch.
 
 ABLAUF
 1. Oeffne die Bewerbungsseite.
@@ -205,14 +236,26 @@ ABLAUF
    Weiterleitungen auf das Bewerbermanagementsystem des Arbeitgebers.
 3. Cookie-Banner: klicke "Nur notwendige" / "Ablehnen", falls vorhanden,
    sonst akzeptiere, damit die Seite nutzbar wird.
-4. Fuelle alle Pflichtfelder ausschliesslich aus den Bewerberdaten. Feldnamen
-   variieren (Vorname/First name, PLZ/Zip). Bei Auswahlfeldern waehle die
-   Option, die den Bewerberdaten am naechsten kommt.
-5. Lade den Lebenslauf hoch, wenn ein Datei-Upload existiert.
-6. Erfinde niemals Angaben. Wenn ein Pflichtfeld nicht aus den Bewerberdaten
+4. Bietet die Seite "Als Gast bewerben", "Ohne Konto bewerben" oder "Schnell-
+   bewerbung" an, nimm diesen Weg statt einer Registrierung. Eine Bewerbung
+   per LinkedIn/XING/Indeed-Login nutzt du NICHT.
+5. Fuelle alle Pflichtfelder ausschliesslich aus den Bewerberdaten. Feldnamen
+   variieren (Vorname/First name, PLZ/Zip, Anrede/Salutation). Bei Auswahl-
+   feldern waehle die Option, die den Bewerberdaten am naechsten kommt.
+   Formate: Datum als TT.MM.JJJJ (bzw. wie das Feld es vorgibt), Gehalt als
+   Zahl in EUR brutto pro Jahr ohne Tausenderpunkte, wenn das Feld nur Zahlen
+   annimmt. Englische Formulare fuellst du sinngemaess auf Englisch aus.
+6. "Wie sind Sie auf uns aufmerksam geworden?": waehle {quelle}, sonst
+   "Jobboerse"/"Internet"/"Sonstiges". "Haben Sie sich schon einmal bei uns
+   beworben?": nein. Datenschutzerklaerung/Einwilligung zur Verarbeitung der
+   Bewerbungsdaten: zustimmen (Pflicht fuer die Bewerbung). Newsletter,
+   Talentpool-Werbung und Marketing-Einwilligungen: NICHT ankreuzen.
+7. Lade die Unterlagen hoch, wenn ein Datei-Upload existiert.
+8. Erfinde niemals Angaben. Wenn ein Pflichtfeld nicht aus den Bewerberdaten
    befuellbar ist (Gehaltsvorstellung, Verfuegbarkeit, Sicherheitsfragen),
-   fuelle es NICHT, sondern vermerke es in "fehlende_angaben".
-7. {absende_regel}
+   fuelle es NICHT, sondern vermerke es in "fehlende_angaben" mit dem
+   Feldnamen und der Frage, wie sie im Formular steht.
+9. {absende_regel}
 
 ABBRUCHREGELN - brich ab und berichte in "hindernis":
 - Login oder Registrierung noetig und keine Zugangsdaten vorhanden.
@@ -284,6 +327,8 @@ class BewerbungsBrowser:
         self.extra_domains = extra_domains or []
         self.domains_offen = domains_offen
         self.aufzeichnung = aufzeichnung
+        # Modelle, die der Anbieter in diesem Lauf als unbekannt gemeldet hat
+        self._modell_ausser: tuple[str, ...] = ()
 
     def baue_agent(
         self,
@@ -305,11 +350,9 @@ class BewerbungsBrowser:
         if not url:
             raise ValueError(f"{job.ref}: keine Bewerbungs-URL")
 
-        anhaenge = self.profil.anhaenge()
-        if anschreiben_pdf and Path(anschreiben_pdf).exists():
-            anhaenge = [str(Path(anschreiben_pdf).resolve()), *anhaenge]
+        anhaenge, anhang_text = _anhang_zeilen(anschreiben_pdf, self.profil)
         ergebnis_modell = _ergebnis_modell()
-        llm = _browser_llm(self.modell)
+        llm = _browser_llm(self.modell, self._modell_ausser)
         # Die meisten Ollama-Cloud-Modelle sind reine Textmodelle und antworten
         # auf Screenshots mit HTTP 500. Vision dort nur per BROWSER_VISION=1.
         from ..scoring import llm as llm_modul
@@ -328,7 +371,8 @@ class BewerbungsBrowser:
             url=url,
             profilblock=_profilblock(self.profil),
             anschreiben=anschreiben.strip(),
-            anhaenge="\n".join(f"- {p}" for p in anhaenge) or "- (keine Dateien hinterlegt)",
+            anhaenge=anhang_text,
+            quelle=_quelle_text(job),
             absende_regel=REGEL_PROBELAUF if dry_run else REGEL_ABSENDEN,
             max_schritte=self.max_schritte,
         )
@@ -365,10 +409,34 @@ class BewerbungsBrowser:
             available_file_paths=anhaenge or None,
             sensitive_data=sensitive or None,
             output_model_schema=ergebnis_modell,
-            directly_open_url=url,
+            # Start-URL fest vorgeben: automatisch aus dem Aufgabentext geraten
+            # wuerde sonst evtl. ein LinkedIn-/GitHub-Link aus dem Profil.
+            directly_open_url=False,
+            initial_actions=[{"navigate": {"url": url, "new_tab": False}}],
             save_conversation_path=self.aufzeichnung,
             use_vision=vision,
         )
+
+    def _modell_fehlte(self, history: Any, agent: Any) -> bool:
+        """True, wenn der Lauf am unbekannten Modell scheiterte und ein Ersatz bereitsteht."""
+        from ..scoring import llm as llm_modul
+
+        if self._modell_ausser or not history.has_errors():
+            return False
+        fehler = [f for f in history.errors() if f]
+        if not fehler or not _MODELL_FEHLT.search(fehler[-1]):
+            return False
+        genutzt = getattr(getattr(agent, "llm", None), "model", None)
+        anbieter = llm_modul.provider(self.modell)
+        if not genutzt or anbieter is None:
+            return False
+        llm_modul.vergiss_modelle()
+        ersatz, _ = llm_modul.pruefe_modell(anbieter, self.modell, ausser=(genutzt,))
+        if ersatz == genutzt:
+            return False
+        log.warning("Browser-Agent: Modell %s nicht verfuegbar - neuer Versuch mit %s.", genutzt, ersatz)
+        self._modell_ausser = (genutzt,)
+        return True
 
     async def bewerbe(
         self,
@@ -393,6 +461,12 @@ class BewerbungsBrowser:
             job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
         )
         history = await agent.run(max_steps=self.max_schritte)
+        if self._modell_fehlte(history, agent):
+            # Das Modell gibt es beim Anbieter nicht: einmal mit einem verfuegbaren neu starten
+            agent = self.baue_agent(
+                job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
+            )
+            history = await agent.run(max_steps=self.max_schritte)
 
         strukturiert = None
         try:
@@ -408,6 +482,11 @@ class BewerbungsBrowser:
             zusammenfassung = _zusammenfassen(strukturiert, dry_run)
             rohdaten = strukturiert.model_dump()
             letzte_url = strukturiert.letzte_url or letzte_url
+            if dry_run and (strukturiert.abgeschickt or strukturiert.bestaetigung):
+                # Der Probelauf hat trotz Verbot abgeschickt: nicht noch einmal senden
+                rohdaten["versehentlich_abgeschickt"] = True
+                zusammenfassung = ("ACHTUNG: Der Probelauf hat die Bewerbung offenbar abgeschickt. "
+                                   + zusammenfassung)
         else:
             abgeschickt = False
             zusammenfassung = (history.final_result() or "Kein Ergebnis vom Agenten.")[:2000]
@@ -416,6 +495,14 @@ class BewerbungsBrowser:
         if history.has_errors():
             fehler = [f for f in history.errors() if f]
             if fehler:
+                if _MODELL_FEHLT.search(fehler[-1]):
+                    from ..scoring import llm as llm_modul
+
+                    llm_modul.vergiss_modelle()
+                    zusammenfassung += (
+                        "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Profil → Zugänge "
+                        "ein verfügbares Modell wählen und erneut versuchen."
+                    )
                 zusammenfassung += f"\nFehler: {fehler[-1]}"
 
         return BewerbungsLauf(
@@ -427,6 +514,17 @@ class BewerbungsBrowser:
             url=letzte_url,
             rohdaten=rohdaten,
         )
+
+
+def _quelle_text(job: Job) -> str:
+    from ..sources import QUELLEN
+
+    if job.quelle == "arbeitsagentur":
+        return '"Bundesagentur fuer Arbeit" bzw. "Jobboerse"'
+    if job.quelle == "wunscharbeitgeber":
+        return '"Karriereseite/Unternehmenswebsite"'
+    info = QUELLEN.get(job.quelle or "")
+    return f'"{info.label}" bzw. "Jobboerse/Internet"' if info else '"Jobboerse/Internet"'
 
 
 def _zusammenfassen(e: Any, dry_run: bool) -> str:

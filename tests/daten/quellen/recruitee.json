@@ -1,0 +1,425 @@
+{
+ "offers": [
+  {
+   "options_photo": "off",
+   "options_cover_letter": "optional",
+   "experience_code": "mid_level",
+   "position": 619,
+   "close_at": null,
+   "requirements": "<p><strong><span style=\"color:#000000\">About you&nbsp;</span></strong></p><p><span style=\"color:#000000\">You take pride in the quality of your work and care deeply about the candidate experience. You are structured enough to follow the process but also know when to be flexible. Speed matters to you but not at the expense of quality.&nbsp;</span></p><p><span style=\"color:#000000\">You work well in a team, and bring energy and enthusiasm to your work. You share what you learn, ask for feedback and show curiosity about the industry and how tools and AI can raise the bar.&nbsp;</span></p><p><span style=\"color:#000000\">You know that hiring is not just about matching a CV, but also about having a strong understanding of the business, team dynamics and finding the best fit.&nbsp;</span></p><p style=\"min-height: 1.7em;\"></p><p><strong><span style=\"color:#000000\">What You’ll Bring&nbsp;</span></strong></p><ul><li><p><span style=\"color:#000000\">3-5 years recruiting experience (preferably in-house), ideally in a fast-moving, dynamic environment.&nbsp;</span></p></li><li><p><span style=\"color:#000000\">Proven track record in hiring across commercial and operations functions.&nbsp;</span></p></li><li><p><span style=\"color:#000000\">Experience in hiring across multiple countries or markets.&nbsp;</span></p></li><li><p><span style=\"color:#000000\">Strong stakeholder advisory skills; you can challenge hiring managers while keeping a good relationship.&nbsp;</span></p></li><li><p><span style=\"col",
+   "company_name": "Channable",
+   "salary": {
+    "max": "5000",
+    "min": "4250",
+    "period": "month",
+    "currency": "EUR"
+   },
+   "country": "Netherlands",
+   "city": "Utrecht",
+   "mailbox_email": "job.73yvw@channable.recruitee.com",
+   "options_salutation": "off",
+   "guid": "73yvw",
+   "location_question_visible": false,
+   "published_at": "2026-10-08 08:03:01 UTC",
+   "education_code": "bachelor_degree",
+   "min_hours_per_week": "32",
+   "title": "Talent Acquisition Partner",
+   "dynamic_fields": [],
+   "sharing_image": null,
+   "sharing_title": "Talent Acquisition Partner",
+   "min_hours": 32,
+   "careers_url": "https://jobs.channable.com/o/talent-acquisition-partner",
+   "hybrid": true,
+   "state_code": "UT",
+   "department": "Operations",
+   "careers_apply_url": "https://jobs.channable.com/o/talent-acquisition-partner/c/new",
+   "tags": [],
+   "translations": {},
+   "max_hours": 40,
+   "postal_code": "3512 HL",
+   "options_cv": "required",
+   "slug": "talent-acquisition-partner",
+   "category_code": "recruitment_hr",
+   "employment_type_code": "fulltime_permanent",
+   "created_at": "2026-10-06 13:46:11 UTC",
+   "description": "<p><strong><span style=\"color:#000000\">About the role&nbsp;</span></strong></p><p><span style=\"color:#000000\">We are looking for a true hiring partner for our operations and commercial teams. Culture is critical for our success and you will help shape it. Do you enjoy building strong partnerships by advising and guiding hiring managers and candidates across multiple markets? If so, this is a role for you!&nbsp;</span></p><p style=\"min-height: 1.7em;\"></p><p><span style=\"color:#000000\">In this role, you’ll manage the full hiring cycle for your own designated departments, where you have a lot of ownership to evolve their hiring engine. You will hire across our main office in Utrecht as well as our offices in the US, Denmark &amp; Berlin. That means you will navigate between different business needs, hiring cultures and candidate expectations, while providing a great experience for everyone involved.&nbsp;</span></p><p style=\"min-height: 1.7em;\"></p><p><span style=\"color:#000000\">Our People Team consists of 3 sub-departments; Talent Acquisition, Employee Experience and HR. Over the years we built a strong foundation, so you will not start from scratch. This role is for someone who can easily step into existing processes but also proactively challenges what can be improved.&nbsp;</span></p><p style=\"min-height: 1.7em;\"></p><p><span style=\"color:#000000\">If you love hiring and want to grow in a team where your voice matters, we’d love to hear from you.</span></p><p style=\"min-heig",
+   "cover_image": null,
+   "remote": false,
+   "country_code": "NL",
+   "updated_at": "2026-10-09 08:34:35 UTC",
+   "locations_question": "What is your preferred work location?",
+   "options_title": "off",
+   "location": "Utrecht, Utrecht, Netherlands",
+   "open_questions": [
+    {
+     "id": 4425941,
+     "position": 1,
+     "options": {},
+     "required": true,
+     "body": "How did you find out about Channable?",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "How did you find out about Channable?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4425942,
+     "position": 2,
+     "options": {},
+     "required": true,
+     "body": "Do you have EU citizenship or a valid work permit for the Netherlands? Or do you need sponsorship from us?",
+     "kind": "single_choice",
+     "translations": {
+      "en": {
+       "body": "Do you have EU citizenship or a valid work permit for the Netherlands? Or do you need sponsorship from us?"
+      }
+     },
+     "open_question_options": [
+      {
+       "id": 6816758,
+       "position": 0,
+       "body": "EU citizenship ",
+       "translations": {
+        "en": {
+         "body": "EU citizenship "
+        }
+       }
+      },
+      {
+       "id": 6816759,
+       "position": 1,
+       "body": "Valid work permit",
+       "translations": {
+        "en": {
+         "body": "Valid work permit"
+        }
+       }
+      },
+      {
+       "id": 6816760,
+       "position": 2,
+       "body": "I need sponsorship",
+       "translations": {
+        "en": {
+         "body": "I need sponsorship"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": 4425943,
+     "position": 3,
+     "options": {},
+     "required": true,
+     "body": "Where do you live? (City)",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "Where do you live? (City)"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4425944,
+     "position": 4,
+     "options": {
+      "length": 120
+     },
+     "required": true,
+     "body": "Are you willing and able to work from our Utrecht office at least 2 days per week?",
+     "kind": "boolean",
+     "translations": {
+      "en": {
+       "body": "Are you willing and able to work from our Utrecht office at least 2 days per week?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4425945,
+     "position": 5,
+     "options": {},
+     "required": true,
+     "body": "How many hours per week are you available to work?",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "How many hours per week are you available to work?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4426021,
+     "position": 6,
+     "options": {},
+     "required": true,
+     "body": "Are you comfortable with the salary range for this role?",
+     "kind": "boolean",
+     "translations": {
+      "en": {
+       "body": "Are you comfortable with the salary range for this role?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4425946,
+     "position": 7,
+     "options": {},
+     "required": true,
+     "body": "Which one of our company values resonates the most with you and why?",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "Which one of our company values resonates the most with you and why?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4425947,
+     "position": 8,
+     "options": {
+      "length": 120
+     },
+     "required": true,
+     "body": "Can you please attach your motivational letter?",
+     "kind": "file",
+     "translations": {
+      "en": {
+       "body": "Can you please attach your motivational letter?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4425948,
+     "position": 9,
+     "options": {
+      "length": 120
+     },
+     "required": true,
+     "body": "A motivation letter is not required; instead, take this chance to introduce yourself! Please record a short video (max. 3 minutes) telling us about yourself and what motivates you to join both Channable and the People team within this role. It's your opportunity to leave a lasting impression! \n",
+     "kind": "video",
+     "translations": {
+      "en": {
+       "body": "A motivation letter is not required; instead, take this chance to introduce yourself! Please record a short video (max. 3 minutes) telling us about yourself and what motivates you to join both Channable and the People team within this role. It's your opportunity to leave a lasting impression! \n"
+      }
+     },
+     "open_question_options": []
+    }
+   ],
+   "id": 2773400,
+   "locations_question_type": "multiple_choice",
+   "state_name": "Utrecht",
+   "locations_question_required": true,
+   "highlight": null,
+   "sharing_description": "About the role We are looking for a true hiring partner for our operations and commercial teams. Culture is critical for our success and you will help shape it. Do you enjoy building strong partnershi",
+   "locations": [
+    {
+     "id": 64463,
+     "name": "Utrecht",
+     "state": "Utrecht",
+     "country": "Netherlands",
+     "city": "Utrecht",
+     "translations": {
+      "en": {
+       "name": "Utrecht",
+       "city": "Utrecht",
+       "postal_code": "3512 HL",
+       "street": "Kromme Nieuwegracht 66",
+       "note": null
+      }
+     },
+     "country_code": "NL",
+     "state_code": "UT",
+     "postal_code": "3512 HL",
+     "street": "Kromme Nieuwegracht 66",
+     "note": null
+    }
+   ],
+   "status": "published",
+   "options_phone": "required",
+   "on_site": false,
+   "max_hours_per_week": "40"
+  },
+  {
+   "options_photo": "off",
+   "options_cover_letter": "optional",
+   "experience_code": "entry_level",
+   "position": 618,
+   "close_at": null,
+   "requirements": "<h4 style=\"text-align:start;\"><strong><span style=\"color:#000000\">Your challenges</span></strong></h4><p><span style=\"color:#000000\">Channable is a powerful, flexible tool with a wide range of features. Mastering the tool and understanding how our customers use it is key to delivering high-quality support.</span></p><p style=\"min-height: 1.7em;\"></p><p><span style=\"color:#000000\">You’ll be communicating with both technical and non-technical users, so your ability to adapt your communication style is essential. You'll also need to balance speed, clarity, and customer satisfaction while maintaining ownership from start to finish.</span></p><p style=\"min-height: 1.7em;\"></p><p><span style=\"color:#000000\">This role offers room to grow. You can take on additional responsibilities, like onboarding new team members, becoming a product area specialist, or supporting global support initiatives beyond the Southern European &amp; International market.</span></p><p style=\"text-align:start;min-height: 1.7em;\"></p><h4 style=\"text-align:start;\"><strong><span style=\"color:#000000\">What success looks like</span></strong></h4><ul><li><p><span style=\"color:#000000\">You respond quickly, clearly, and empathetically, consistently meeting KPIs focused on quality, efficiency, and team goals.</span></p></li><li><p><span style=\"color:#000000\">You confidently handle incoming issues and escalate only when necessary.</span></p></li><li><p><span style=\"color:#000000\">You develop a deep understanding of bo",
+   "company_name": "Channable",
+   "salary": {
+    "max": "2950",
+    "min": "2850",
+    "period": "month",
+    "currency": "EUR"
+   },
+   "country": "Netherlands",
+   "city": "Utrecht",
+   "mailbox_email": "job.1hppw@channable.recruitee.com",
+   "options_salutation": "off",
+   "guid": "1hppw",
+   "location_question_visible": false,
+   "published_at": "2026-10-05 13:40:02 UTC",
+   "education_code": "bachelor_degree",
+   "min_hours_per_week": "32",
+   "title": "Technical Customer Support - French Speaking",
+   "dynamic_fields": [],
+   "sharing_image": null,
+   "sharing_title": "Technical Customer Support - French Speaking",
+   "min_hours": 32,
+   "careers_url": "https://jobs.channable.com/o/technical-customer-support-french-speaking-1",
+   "hybrid": true,
+   "state_code": "UT",
+   "department": "Support",
+   "careers_apply_url": "https://jobs.channable.com/o/technical-customer-support-french-speaking-1/c/new",
+   "tags": [],
+   "translations": {},
+   "max_hours": 40,
+   "postal_code": "3512 HL",
+   "options_cv": "required",
+   "slug": "technical-customer-support-french-speaking-1",
+   "category_code": "customer_service",
+   "employment_type_code": "fulltime_permanent",
+   "created_at": "2026-10-05 07:28:09 UTC",
+   "description": "<p><span style=\"color:#000000\">Do you speak French fluently and are you passionate about solving complex problems for a diverse range of customers? Do you want to help ecommerce businesses grow by delivering high-quality technical support? Then this role might be for you!<br><br>You’ll be joining our international Support department, which consists of 5 teams supporting 9+ markets worldwide. Within this global setup, you’ll work in our Southern Europe &amp; International inbox, supporting customers across multiple markets including France, Iberia, Italy, the UK, and beyond. Your French language skills are essential to ensure strong support coverage for our French-speaking customers, while your role will extend across the broader international scope.</span></p><p><span style=\"color:#000000\"><br>We’re an open-minded and collaborative team of Support professionals. We believe Support isn’t just about fixing problems, it’s about setting our customers up for success, and we do this together. We learn from each other, keep things honest and direct, and enjoy the occasional fun moment along the way. Expect flat hierarchies, room for your ideas, and a team that’s got your back!</span></p><p style=\"min-height: 1.7em;\"></p><h4 style=\"text-align:start;\"><strong><span style=\"color:#000000\">Your job</span></strong></h4><p><span style=\"color:#000000\">Channable helps online retailers and agencies automate and optimise their product listings across channels like Amazon, Google, Meta, Cdiscou",
+   "cover_image": null,
+   "remote": false,
+   "country_code": "NL",
+   "updated_at": "2026-10-05 13:40:02 UTC",
+   "locations_question": "What is your preferred work location?",
+   "options_title": "off",
+   "location": "Utrecht, Utrecht, Netherlands",
+   "open_questions": [
+    {
+     "id": 4414848,
+     "position": 1,
+     "options": {},
+     "required": true,
+     "body": "Do you speak the French language on a C2 (Native Proficiency)level?",
+     "kind": "boolean",
+     "translations": {
+      "en": {
+       "body": "Do you speak the French language on a C2 (Native Proficiency)level?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4414849,
+     "position": 2,
+     "options": {},
+     "required": true,
+     "body": "How did you find out about Channable?",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "How did you find out about Channable?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4414850,
+     "position": 3,
+     "options": {},
+     "required": true,
+     "body": "Where do you live (City &amp; Country)?",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "Where do you live (City &amp; Country)?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4414851,
+     "position": 4,
+     "options": {},
+     "required": true,
+     "body": "Are you willing and able to work from out Utrecht office at least 2 days per week?",
+     "kind": "boolean",
+     "translations": {
+      "en": {
+       "body": "Are you willing and able to work from out Utrecht office at least 2 days per week?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4414852,
+     "position": 5,
+     "options": {},
+     "required": true,
+     "body": "How many hours a week are you available to work?",
+     "kind": "string",
+     "translations": {
+      "en": {
+       "body": "How many hours a week are you available to work?"
+      }
+     },
+     "open_question_options": []
+    },
+    {
+     "id": 4414854,
+     "position": 6,
+     "options": {
+      "length": 120
+     },
+     "required": true,
+     "body": "No motivation letter is required; instead, please take your chance to introduce yourself to us (max. 3 mins). We require this as past of the application. ",
+     "kind": "video",
+     "translations": {
+      "en": {
+       "body": "No motivation letter is required; instead, please take your chance to introduce yourself to us (max. 3 mins). We require this as past of the application. "
+      }
+     },
+     "open_question_options": []
+    }
+   ],
+   "id": 2770498,
+   "locations_question_type": "multiple_choice",
+   "state_name": "Utrecht",
+   "locations_question_required": true,
+   "highlight": null,
+   "sharing_description": "Do you speak French fluently and are you passionate about solving complex problems for a diverse range of customers? Do you want to help ecommerce businesses grow by delivering high-quality technical ",
+   "locations": [
+    {
+     "id": 64463,
+     "name": "Utrecht",
+     "state": "Utrecht",
+     "country": "Netherlands",
+     "city": "Utrecht",
+     "translations": {
+      "en": {
+       "name": "Utrecht",
+       "city": "Utrecht",
+       "postal_code": "3512 HL",
+       "street": "Kromme Nieuwegracht 66",
+       "note": null
+      }
+     },
+     "country_code": "NL",
+     "state_code": "UT",
+     "postal_code": "3512 HL",
+     "street": "Kromme Nieuwegracht 66",
+     "note": null
+    }
+   ],
+   "status": "published",
+   "options_phone": "required",
+   "on_site": false,
+   "max_hours_per_week": "40"
+  }
+ ]
+}

@@ -13,20 +13,21 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from . import dokumente, zeitplan
-from .anschreiben import erzeuge as erzeuge_anschreiben
+from . import dokumente, dossier as dossier_modul, zeitplan
+from .anschreiben import erzeuge_geprueft
 from .bewerben import kanal as kanal_modul
 from .bewerben import mail
 from .config import Profil, ermittle_profil_pfad, speichere_profil
 from .db import Speicher
 from .hintergrund import sperre
-from .jobsuche import hole_jobs
+from .jobsuche import WUNSCH_BEGRIFF, aktualisiere_feed, hole_jobs, hole_wunscharbeitgeber, lokale_treffer, orte_fuer
 from .models import Application, Job, Score, Vorgang
+from .scoring import heuristik
 from .scoring import llm as llm_modul
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,12 @@ _HINDERNIS_SELBST = re.compile(
 
 def _jetzt() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def beworben_heute(db: Speicher) -> int:
+    """Heute verschickte plus bereits freigegebene Bewerbungen (fuer Tageslimits)."""
+    return db.beworben_seit(tagesbeginn_utc(), status=("abgeschickt",)) + len(
+        db.vorgaenge(("freigegeben", "wird_gesendet")))
 
 
 def tagesbeginn_utc(jetzt: datetime | None = None) -> str:
@@ -66,7 +73,12 @@ class SuchErgebnis:
     neu: int = 0
     aktualisiert: int = 0
     je_begriff: dict[str, int] = field(default_factory=dict)
+    je_quelle: dict[str, int] = field(default_factory=dict)
     fehler: list[str] = field(default_factory=list)
+    hinweise: list[str] = field(default_factory=list)
+
+
+_ZEITARBEIT = re.compile(r"zeitarbeit|arbeitnehmer.?ueberlassung|arbeitnehmerüberlassung|personaldienstleist", re.I)
 
 
 def suche_ausfuehren(
@@ -84,45 +96,111 @@ def suche_ausfuehren(
     merken: bool = True,
     fortschritt: Fortschritt | None = None,
 ) -> SuchErgebnis:
-    """Fragt alle Quellen x Suchbegriffe ab; ein Fehler bricht nur die eine Abfrage ab."""
+    """Fragt alle Quellen ab; ein Fehler bricht nur die eine Abfrage ab.
+
+    Such-Quellen: eine Abfrage je Suchbegriff. Feed-Quellen: Bestand auffrischen
+    (Mindestabstand beachten) und lokal je Suchbegriff/Ort filtern.
+    Wunsch-Arbeitgeber: Stellen direkt aus deren Bewerbermanagement.
+    """
+    from .sources import QUELLEN, bekannte
+
     s = profil.suche
     begriffe = [b.strip() for b in (begriffe or s.was) if b and b.strip()]
-    ort = (s.wo if wo is None else wo) or ""
+    ort = ((s.wo if wo is None else wo) or "").strip()
     umkreis = int(s.umkreis if umkreis is None else umkreis)
     tage = int(s.veroeffentlicht_seit_tagen if tage is None else tage)
     max_treffer = int(s.max_pro_query if max_treffer is None else max_treffer)
     nur_vollzeit = s.nur_vollzeit if nur_vollzeit is None else nur_vollzeit
-    quellen = list(quellen or s.quellen or ["arbeitsagentur"])
+    quellen = bekannte(list(quellen or s.quellen or ["arbeitsagentur"])) or ["arbeitsagentur"]
+    # Suchende Quellen zuerst - aus den Treffern der Arbeitsagentur lernen wir die Orte im Umkreis
+    quellen.sort(key=lambda q: 0 if QUELLEN[q].art == "suche" else 1)
+    extra = {
+        "remote_ok": s.remote,
+        "ohne_zeitarbeit": any(_ZEITARBEIT.search(a) for a in profil.bewertung.ausschluss),
+        "ausbildung": s.ausbildung,
+    }
 
     ergebnis = SuchErgebnis()
     gesehen: dict[str, None] = {}
     schritte = max(1, len(quellen) * len(begriffe))
     nummer = 0
+
+    def uebernehmen(quelle: str, begriff: str, jobs: list[Job], neu: int = 0, aktualisiert: int = 0) -> None:
+        ergebnis.neu += neu
+        ergebnis.aktualisiert += aktualisiert
+        ergebnis.je_begriff[begriff] = ergebnis.je_begriff.get(begriff, 0) + len(jobs)
+        ergebnis.je_quelle[quelle] = ergebnis.je_quelle.get(quelle, 0) + len(jobs)
+        for job in jobs:
+            gesehen.setdefault(job.ref, None)
+
     for quelle in quellen:
-        for begriff in begriffe:
+        info = QUELLEN[quelle]
+        if not info.verfuegbar():
+            ergebnis.hinweise.append(f"{info.label}: API-Schlüssel fehlt (Profil → Zugänge)")
+            nummer += len(begriffe)
+            continue
+
+        if info.art == "suche":
+            for begriff in begriffe:
+                if fortschritt:
+                    fortschritt(f"{info.label}: „{begriff}“ in {ort or 'ganz Deutschland'} …", nummer / schritte)
+                try:
+                    jobs, neu, aktualisiert = hole_jobs(
+                        db, quelle=quelle, suchbegriff=begriff, wo=ort, umkreis=umkreis,
+                        tage=tage, nur_vollzeit=nur_vollzeit, max_treffer=max_treffer,
+                        mit_details=mit_details, profil=profil,
+                        orte=orte_fuer(db, ort, umkreis), **extra,
+                    )
+                except Exception as e:
+                    ergebnis.fehler.append(f"{info.label} / {begriff}: {e}")
+                    log.warning("Suche %s/%s fehlgeschlagen: %s", quelle, begriff, e)
+                else:
+                    uebernehmen(quelle, begriff, jobs, neu, aktualisiert)
+                nummer += 1
+            continue
+
+        orte = orte_fuer(db, ort, umkreis)
+        if info.art == "feed":
             if fortschritt:
-                fortschritt(f"Suche bei {quelle}: „{begriff}“ in {ort or 'ganz Deutschland'} …", nummer / schritte)
+                fortschritt(f"{info.label}: Bestand abrufen …", nummer / schritte)
             try:
-                jobs, neu, aktualisiert = hole_jobs(
-                    db, quelle=quelle, suchbegriff=begriff, wo=ort.strip(), umkreis=umkreis,
-                    tage=tage, nur_vollzeit=nur_vollzeit, max_treffer=max_treffer,
-                    mit_details=mit_details,
-                )
-            except Exception as e:
-                ergebnis.fehler.append(f"{quelle} / {begriff}: {e}")
-                log.warning("Suche %s/%s fehlgeschlagen: %s", quelle, begriff, e)
-            else:
+                neu, aktualisiert, _ = aktualisiere_feed(db, quelle, profil)
                 ergebnis.neu += neu
                 ergebnis.aktualisiert += aktualisiert
-                ergebnis.je_begriff[begriff] = ergebnis.je_begriff.get(begriff, 0) + len(jobs)
-                for job in jobs:
-                    gesehen.setdefault(job.ref, None)
-            nummer += 1
+            except Exception as e:  # mit dem bisherigen Bestand weiterarbeiten
+                ergebnis.fehler.append(f"{info.label}: {e}")
+                log.warning("Feed %s fehlgeschlagen: %s", quelle, e)
+            for begriff in begriffe:
+                try:
+                    jobs = lokale_treffer(
+                        db, quelle, suchbegriff=begriff, orte=orte, remote_ok=s.remote, tage=tage,
+                        nur_vollzeit=nur_vollzeit, max_treffer=max_treffer, mit_details=mit_details, profil=profil,
+                    )
+                except Exception as e:
+                    ergebnis.fehler.append(f"{info.label} / {begriff}: {e}")
+                else:
+                    uebernehmen(quelle, begriff, jobs)
+                nummer += 1
+        elif info.art == "arbeitgeber":
+            nummer += len(begriffe)
+            if not profil.zielfirmen:
+                continue
+            if fortschritt:
+                fortschritt(f"{info.label}: Karriereseiten abrufen …", nummer / schritte)
+            try:
+                jobs, fehler = hole_wunscharbeitgeber(
+                    db, profil, orte=orte, remote_ok=s.remote, begriffe=begriffe, max_treffer=max_treffer * 2,
+                )
+                ergebnis.fehler += [f"{info.label} / {f}" for f in fehler]
+                uebernehmen(quelle, WUNSCH_BEGRIFF, jobs)
+            except Exception as e:
+                ergebnis.fehler.append(f"{info.label}: {e}")
+
     ergebnis.refs = list(gesehen)
     if merken:
         db.speichere_suche(
             {
-                "begriffe": begriffe, "wo": ort.strip(), "umkreis": umkreis, "tage": tage,
+                "begriffe": begriffe, "wo": ort, "umkreis": umkreis, "tage": tage,
                 "max_treffer": max_treffer, "nur_vollzeit": bool(nur_vollzeit),
                 "mit_details": bool(mit_details), "quellen": quellen,
             },
@@ -142,8 +220,17 @@ def bewerte_neue(
     mit_llm: bool = True,
     limit: int | None = None,
     fortschritt: Fortschritt | None = None,
+    fehler: list[str] | None = None,
+    llm_budget: int | None = None,
 ) -> list[Score]:
-    """Bewertet unbewertete Stellen (oder mit `alle=True` auch bewertete neu)."""
+    """Bewertet unbewertete Stellen (oder mit `alle=True` auch bewertete neu).
+
+    Spart KI-Aufrufe: dieselbe Stelle aus einer anderen Quelle uebernimmt deren
+    Bewertung, Stellen, die schon nach Stichworten klar nicht passen, werden nicht
+    per KI bewertet, und je Lauf gibt es hoechstens `max_llm_pro_lauf` KI-Bewertungen
+    (der Rest wird spaeter nachbewertet).
+    """
+    fehler = fehler if fehler is not None else []
     if refs is not None:
         jobs = db.jobs_nach_refs(refs)
         if not alle:
@@ -156,17 +243,58 @@ def bewerte_neue(
         return []
 
     scores: list[Score] = []
+    rest: list[Job] = []
+    for job in jobs:
+        dublette = None if alle else db.score_einer_dublette(job)
+        if dublette is not None:
+            uebernommen = replace(dublette, ref=job.ref)
+            db.speichere_score(uebernommen)
+            scores.append(uebernommen)
+        else:
+            rest.append(job)
+
+    mit_ki: set[str] = set()
+    if mit_llm and llm_modul.client_verfuegbar() and rest:
+        b = profil.bewertung
+        vorab = [(heuristik.bewerte(j, profil), j) for j in rest]
+        lohnend = sorted(
+            ((h, j) for h, j in vorab if not h.ausgeschlossen and h.gesamt >= b.vorfilter_min),
+            key=lambda paar: -paar[0].gesamt,
+        )
+        budget = max(0, int(b.max_llm_pro_lauf if llm_budget is None else llm_budget))
+        mit_ki = {j.ref for _, j in lohnend[:budget]}
+        if len(lohnend) > budget:
+            fehler.append(
+                f"Kostenbremse: {len(lohnend) - budget} Stelle(n) vorerst nur per Stichworten bewertet "
+                f"(höchstens {budget} KI-Bewertungen je Lauf) – sie werden in späteren Läufen nachbewertet."
+            )
+
     # In kleinen Paketen bewerten und sofort speichern: bricht die Seite oder
     # der Prozess ab, bleibt der bisherige Fortschritt erhalten.
     paket = 5
-    for start in range(0, len(jobs), paket):
-        teil = llm_modul.bewerte_jobs(jobs[start:start + paket], profil, mit_llm=mit_llm)
+    gesamt = len(jobs)
+    for start in range(0, len(rest), paket):
+        teil_jobs = rest[start:start + paket]
+        ki = [j for j in teil_jobs if j.ref in mit_ki]
+        ohne = [j for j in teil_jobs if j.ref not in mit_ki]
+        teil = llm_modul.bewerte_jobs(ki, profil, mit_llm=True, fehler=fehler) if ki else []
+        teil += llm_modul.bewerte_jobs(ohne, profil, mit_llm=False) if ohne else []
         for score in teil:
             db.speichere_score(score)
         scores += teil
         if fortschritt:
-            fortschritt(f"Bewerte Stellen … {len(scores)}/{len(jobs)}", len(scores) / len(jobs))
+            fortschritt(f"Bewerte Stellen … {len(scores)}/{gesamt}", len(scores) / gesamt)
     return scores
+
+
+def nachbewerten(db: Speicher, profil: Profil, *, budget: int, fehler: list[str] | None = None) -> list[Score]:
+    """Stellen, die bisher nur per Stichworten bewertet wurden, mit KI neu bewerten."""
+    if budget <= 0 or not llm_modul.client_verfuegbar():
+        return []
+    refs = db.heuristisch_bewertet(min_gesamt=profil.bewertung.vorfilter_min, limit=budget)
+    if not refs:
+        return []
+    return bewerte_neue(db, profil, refs=refs, alle=True, mit_llm=True, fehler=fehler, llm_budget=budget)
 
 
 # --------------------------------------------------------------------------- #
@@ -216,6 +344,13 @@ def _probelauf(
 
     email = (roh.get("bewerbungs_email") or "").strip()
     hindernis = (roh.get("hindernis") or "").strip()
+    if roh.get("versehentlich_abgeschickt"):
+        # Nie ein zweites Mal senden - als abgeschickt fuehren und pruefen lassen
+        v.status = "abgeschickt"
+        v.gesendet_am = _jetzt()
+        v.hinweis = ("Der Probelauf hat die Bewerbung offenbar schon abgeschickt – bitte im Postfach prüfen, "
+                     "ob eine Bestätigung kam.")
+        return
     if email and "@" in email:
         v.kanal, v.empfaenger = "email", email.lower()
         v.hinweis = "Die Bewerbungsseite nennt eine E-Mail-Adresse – Versand per E-Mail."
@@ -253,17 +388,26 @@ def vorbereiten(
 
     try:
         score = db.score(ref)
-        wahl = kanal_modul.bestimme_kanal(job)
+        wahl = kanal_modul.bestimme_kanal(job, ba_login=bool(profil.ba_benutzer and profil.ba_passwort))
         v.kanal, v.empfaenger = wahl.kanal, wahl.empfaenger
         v.bewerbungs_url = job.bewerbungs_url
         if wahl.kanal == "formular" and link_aufloesen:
             v.bewerbungs_url = kanal_modul.loese_bewerbungslink(job) or job.bewerbungs_url
-        v.anschreiben = erzeuge_anschreiben(job, profil, score, mit_llm=mit_llm)
+        d = dossier_modul.fuer_job(db, job, profil, mit_llm=mit_llm)
+        ergebnis = erzeuge_geprueft(job, profil, score, mit_llm=mit_llm, dossier=d)
+        v.anschreiben = v.anschreiben_original = ergebnis.text
+        v.anschreiben_quelle, v.qualitaet = ergebnis.quelle, ergebnis.qualitaet
+        bericht = dict(ergebnis.bericht)
+        bericht["empfaenger_sicher"] = wahl.kanal == "email" and "einzige" not in wahl.grund
+        v.pruefung = json.dumps(bericht, ensure_ascii=False)
         v.anschreiben_pdf = str(dokumente.anschreiben_pdf(job, profil, v.anschreiben))
-        v.betreff = dokumente.betreff(job)
-        v.email_text = mail.begleittext(job, profil, [v.anschreiben_pdf, *profil.anhaenge()])
+        v.betreff = dokumente.betreff(job, referenz=d.referenz)
+        v.email_text = mail.begleittext(job, profil, [v.anschreiben_pdf, *profil.anhaenge()],
+                                        anrede=d.anrede if d.sprache == "de" else None, referenz=d.referenz)
         # Der Versandweg steht schon auf der Karte; Hinweise nur fuer Auffaelliges
         v.hinweis = wahl.grund if wahl.kanal == "manuell" or (wahl.kanal == "email" and "einzige" in wahl.grund) else None
+        if job.bewerbung_hinweis and wahl.kanal != "manuell" and "Unterlagen" in job.bewerbung_hinweis:
+            v.hinweis = " · ".join(x for x in (v.hinweis, job.bewerbung_hinweis) if x)
 
         if probelauf is None:
             probelauf = profil.automatisierung.probelauf_vorab
@@ -272,14 +416,35 @@ def vorbereiten(
     except Exception as e:
         log.exception("Vorbereitung von %s fehlgeschlagen", ref)
         v.hinweis = f"Vorbereitung unvollständig: {str(e)[:300]}"
-    v.status = "wartet"
+    if v.status == "vorbereitung":
+        v.status = "wartet"
     db.setze_vorgang(v)
+    if herkunft == "automatik" and v.status == "wartet":
+        from . import autopilot
+
+        try:
+            autopilot.nach_vorbereitung(db, profil, v)
+        except Exception:
+            log.exception("Autopilot-Prüfung für %s fehlgeschlagen", ref)
+        v = db.vorgang(ref) or v
     return v
 
 
 # --------------------------------------------------------------------------- #
 # Entscheidungen des Nutzers
 # --------------------------------------------------------------------------- #
+
+def versandweg_fehlt(kanal: str, profil: Profil | None = None, *, browser_fabrik: Any = None) -> str | None:
+    """Warum der gewaehlte Weg gerade nicht nutzbar ist (None = alles bereit)."""
+    if kanal == "email" and mail.smtp_konfig(profil) is None:
+        return "Der E-Mail-Versand ist noch nicht eingerichtet (Profil → 🔑 Zugänge → SMTP)."
+    if kanal == "formular" and browser_fabrik is None:
+        if not browser_verfuegbar():
+            return "Der Browser-Agent (browser-use) ist nicht installiert."
+        if not llm_modul.client_verfuegbar():
+            return "Der Browser-Agent braucht einen KI-Zugang (Profil → 🔑 Zugänge)."
+    return None
+
 
 def freigeben(
     db: Speicher,
@@ -290,8 +455,12 @@ def freigeben(
     kanal: str | None = None,
     empfaenger: str | None = None,
     email_text: str | None = None,
+    durch: str = "nutzer",
 ) -> Vorgang:
-    """Ja: die Bewerbung darf raus. Prueft, ob der gewaehlte Weg vollstaendig ist."""
+    """Ja: die Bewerbung darf raus. Prueft, ob der gewaehlte Weg vollstaendig ist.
+
+    `durch="autopilot"`, wenn der (vom Nutzer eingeschaltete) Autopilot freigibt.
+    """
     v = db.vorgang(ref)
     job = db.job(ref)
     if v is None or job is None:
@@ -320,9 +489,18 @@ def freigeben(
 
     v.status = "freigegeben"
     v.freigegeben_am = _jetzt()
-    v.hinweis = None
+    fehlt = versandweg_fehlt(v.kanal, profil)
+    v.hinweis = f"Geht raus, sobald das erledigt ist: {fehlt}" if fehlt else None
+    v.auto_senden_ab = None
     db.setze_vorgang(v)
+    db.protokolliere_entscheidung(ref, "autopilot" if durch == "autopilot" else "ja",
+                                  details={"kanal": v.kanal, "bearbeitet": _wurde_bearbeitet(v),
+                                           "qualitaet": v.qualitaet})
     return v
+
+
+def _wurde_bearbeitet(v: Vorgang) -> bool:
+    return bool(v.anschreiben_original) and (v.anschreiben or "").strip() != v.anschreiben_original.strip()
 
 
 def ablehnen(
@@ -340,7 +518,11 @@ def ablehnen(
         raise ValueError("Diese Bewerbung ist bereits unterwegs bzw. abgeschickt.")
     v.status = "abgelehnt"
     v.notiz = grund or v.notiz
+    v.auto_senden_ab = None
     db.setze_vorgang(v)
+    gruende = [g.strip() for g in re.split(r"[;,]\s*", grund or "") if g.strip()]
+    db.protokolliere_entscheidung(ref, "nein", gruende=gruende,
+                                  details={"arbeitgeber_gesperrt": arbeitgeber_sperren})
     job = db.job(ref)
     if arbeitgeber_sperren and job and job.arbeitgeber:
         liste = profil.bewertung.ausschluss_arbeitgeber
@@ -356,7 +538,9 @@ def selbst_beworben(db: Speicher, ref: str, notiz: str | None = None) -> Vorgang
     v.status = "selbst_beworben"
     v.gesendet_am = _jetzt()
     v.notiz = notiz or v.notiz
+    v.auto_senden_ab = None
     db.setze_vorgang(v)
+    db.protokolliere_entscheidung(ref, "selbst")
     job = db.job(ref)
     db.speichere_bewerbung(Application(
         ref=ref, status="manuell_beworben", url=job.bewerbungs_url if job else None,
@@ -406,7 +590,7 @@ def aufraeumen(db: Speicher) -> int:
 def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender: Callable | None) -> tuple[bool, str]:
     konfig = mail.smtp_konfig(profil)
     if konfig is None:
-        return False, "E-Mail-Versand ist nicht eingerichtet (SMTP_HOST etc. in der .env fehlen)."
+        return False, "E-Mail-Versand ist nicht eingerichtet (Profil → 🔑 Zugänge → SMTP)."
     anhaenge = [p for p in [v.anschreiben_pdf, *profil.anhaenge()] if p and Path(p).exists()]
     nachricht = mail.baue_nachricht(
         absender=konfig.absender, absender_name=profil.person.name,
@@ -414,7 +598,8 @@ def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender
         text=v.email_text or mail.begleittext(job, profil, anhaenge), anhaenge=anhaenge,
     )
     message_id = (mail_sender or mail.sende)(nachricht, konfig)
-    return True, f"E-Mail an {v.empfaenger} gesendet (Message-ID {message_id})."
+    db.aktualisiere_vorgang(v.ref, message_id=message_id or nachricht["Message-ID"])
+    return True, f"E-Mail an {v.empfaenger} gesendet."
 
 
 def _sende_formular(
@@ -459,6 +644,11 @@ def sende_freigegebene(
                 )
             zaehler["zurueckgestellt"] += len(offen)
             break
+        fehlt = versandweg_fehlt(v.kanal, profil, browser_fabrik=browser_fabrik)
+        if fehlt:
+            db.aktualisiere_vorgang(v.ref, hinweis=f"Geht raus, sobald das erledigt ist: {fehlt}")
+            zaehler["zurueckgestellt"] += 1
+            continue
         if not db.beanspruche_zum_senden(v.ref):
             continue
         v = db.vorgang(v.ref) or v  # frischer Stand nach dem Beanspruchen
@@ -486,6 +676,10 @@ def sende_freigegebene(
             db.aktualisiere_vorgang(v.ref, status="abgeschickt", gesendet_am=_jetzt(), hinweis=text[:1000])
             zaehler["abgeschickt"] += 1
         else:
+            if v.kanal == "formular":
+                # Der Agent kann abgeschickt haben, ohne die Bestaetigung zu sehen
+                text = ("Nicht sicher abgeschickt – bitte prüfen, ob eine Bestätigung kam, bevor du erneut "
+                        "sendest. " + text)
             db.aktualisiere_vorgang(v.ref, status="fehlgeschlagen", hinweis=text[:1000])
             zaehler["fehlgeschlagen"] += 1
     return zaehler
@@ -494,6 +688,70 @@ def sende_freigegebene(
 # --------------------------------------------------------------------------- #
 # Laeufe (Automatik, Vorbereiten, Senden) und Cron-Tick
 # --------------------------------------------------------------------------- #
+
+_ALLGEMEIN = {
+    "engineering", "development", "entwicklung", "management", "consulting", "beratung", "sales", "vertrieb",
+    "marketing", "operations", "product", "platform", "software", "it", "data", "team", "senior", "junior",
+    "lead", "mitarbeiter", "mitarbeiterin", "fachkraft", "assistenz", "praktikum", "werkstudent", "trainee",
+    "manager", "engineer", "entwickler", "developer", "specialist", "spezialist", "sachbearbeitung",
+    "remote", "homeoffice", "hybrid", "vollzeit", "teilzeit", "full-time", "part-time", "m/w/d",
+}
+
+
+def _zu_allgemein(begriff: str) -> bool:
+    """Einzelwoerter wie „Engineering“ oder „Manager“ bringen nur Rauschen."""
+    worte = [w for w in re.findall(r"[\wäöüß+#.-]+", begriff.casefold()) if w]
+    return len(worte) == 1 and worte[0] in _ALLGEMEIN or all(w in _ALLGEMEIN for w in worte)
+
+
+def erkunde_suchbegriffe(
+    db: Speicher, profil: Profil, *, mit_llm: bool = True, fehler: list[str] | None = None,
+) -> dict[str, list[str]]:
+    """Probiert selbststaendig neue Suchbegriffe aus und behaelt nur, was passende Stellen bringt.
+
+    Kandidaten kommen aus den Titeln gut passender Stellen, bei Bedarf von der KI.
+    Bewaehrte Begriffe nutzt die Automatik weiter und schlaegt sie zur Uebernahme
+    ins Profil vor; tote Begriffe werden verworfen.
+    """
+    from . import lernen, vorschlaege
+    from .sources import QUELLEN
+
+    a = profil.automatisierung
+    ergebnis: dict[str, list[str]] = {"aktiv": [], "verworfen": []}
+    if not a.erkunden or a.erkundung_max_begriffe <= 0:
+        return ergebnis
+    bekannt = {b["begriff"].casefold() for b in db.suchbegriffe()} | {w.casefold() for w in profil.suche.was}
+    kandidaten = [v.begriff for v in vorschlaege.aus_treffern(db, profil, limit=10)
+                  if v.begriff.casefold() not in bekannt and not _zu_allgemein(v.begriff)]
+    if len(kandidaten) < a.erkundung_max_begriffe and mit_llm and llm_modul.client_verfuegbar():
+        gute = [j.titel for j, _ in db.bestenliste(min_score=profil.bewertung.min_score, limit=20)]
+        try:
+            kandidaten += [v.begriff for v in vorschlaege.per_llm(profil, gute, limit=6)
+                           if v.begriff.casefold() not in bekannt and v.begriff not in kandidaten
+                           and not _zu_allgemein(v.begriff)]
+        except Exception as e:
+            log.info("KI-Suchvorschläge nicht verfügbar: %s", e)
+    quellen = [q for q in profil.suche.quellen if q in QUELLEN and QUELLEN[q].art != "arbeitgeber"]
+    for begriff in kandidaten[: a.erkundung_max_begriffe]:
+        db.merke_suchbegriff(begriff, "erkundung", "test")
+        such = suche_ausfuehren(db, profil, begriffe=[begriff], quellen=quellen,
+                                max_treffer=min(20, profil.suche.max_pro_query), merken=False)
+        bewerte_neue(db, profil, refs=such.refs, mit_llm=mit_llm, fehler=fehler, llm_budget=10)
+        passend = 0
+        for ref in such.refs:
+            sc = db.score(ref)
+            if sc and not sc.ausgeschlossen and sc.gesamt >= profil.bewertung.min_score:
+                passend += 1
+        db.suchbegriff_ertrag(begriff, len(such.refs), passend)
+        if passend:
+            db.merke_suchbegriff(begriff, "erkundung", "aktiv", f"{passend} passende Stelle(n)")
+            lernen.schlage_suchbegriff_vor(db, begriff, passend)
+            ergebnis["aktiv"].append(begriff)
+        else:
+            db.merke_suchbegriff(begriff, "erkundung", "verworfen", "keine passenden Stellen")
+            ergebnis["verworfen"].append(begriff)
+    return ergebnis
+
 
 def automatik_lauf(
     db: Speicher,
@@ -504,16 +762,35 @@ def automatik_lauf(
     mit_llm: bool = True,
     browser_fabrik: Callable[[Profil], Any] | None = None,
 ) -> dict[str, Any]:
-    """Suchen, bewerten und die besten offenen Stellen fuer das Ja/Nein vorbereiten."""
+    """Suchen, bewerten, dazulernen und die besten offenen Stellen fuer das Ja/Nein vorbereiten."""
+    from . import lernen
+
     lauf_id = db.starte_lauf("automatik", ausloeser)
     zusammenfassung: dict[str, Any] = {"nur_suchen": nur_suchen}
+    ki_hinweise: list[str] = []
     try:
-        suche = suche_ausfuehren(db, profil, merken=False)
-        zusammenfassung.update(gefunden=len(suche.refs), neu=suche.neu, suchfehler=suche.fehler)
-        scores = bewerte_neue(db, profil, mit_llm=mit_llm)
+        erkundet = [b["begriff"] for b in db.suchbegriffe("aktiv")
+                    if b["herkunft"] == "erkundung" and b["begriff"] not in profil.suche.was]
+        suche = suche_ausfuehren(db, profil, begriffe=[*profil.suche.was, *erkundet], merken=False)
+        zusammenfassung.update(gefunden=len(suche.refs), neu=suche.neu, suchfehler=suche.fehler,
+                               je_quelle=suche.je_quelle, hinweise=suche.hinweise)
+        scores = bewerte_neue(db, profil, mit_llm=mit_llm, fehler=ki_hinweise)
+        if mit_llm:
+            genutzt = sum(1 for sc in scores if sc.bewerter.startswith("llm"))
+            nachbewertet = nachbewerten(db, profil, budget=profil.bewertung.max_llm_pro_lauf - genutzt,
+                                        fehler=ki_hinweise)
+            if nachbewertet:
+                zusammenfassung["nachbewertet"] = len(nachbewertet)
+        try:
+            erkundung = erkunde_suchbegriffe(db, profil, mit_llm=mit_llm, fehler=ki_hinweise)
+            if any(erkundung.values()):
+                zusammenfassung["erkundung"] = erkundung
+        except Exception as e:
+            log.exception("Erkundung fehlgeschlagen")
+            ki_hinweise.append(f"Erkundung neuer Suchbegriffe fehlgeschlagen: {e}")
         schwelle = profil.bewertung.min_score
         zusammenfassung["bewertet"] = len(scores)
-        zusammenfassung["passend"] = sum(1 for s in scores if not s.ausgeschlossen and s.gesamt >= schwelle)
+        zusammenfassung["passend"] = sum(1 for sc in scores if not sc.ausgeschlossen and sc.gesamt >= schwelle)
 
         vorbereitet: list[str] = []
         if not nur_suchen:
@@ -525,10 +802,13 @@ def automatik_lauf(
                     f"{wartend} Bewerbungen warten noch auf dein Ja/Nein – keine neuen vorbereitet."
                 )
             kandidaten = db.kandidaten(
-                min_score=schwelle, limit=platz,
+                min_score=schwelle, limit=platz * 3,
                 ausschluss_arbeitgeber=profil.bewertung.ausschluss_arbeitgeber,
             ) if platz else []
-            for job, _score in kandidaten:
+            # Gelernte Vorlieben beeinflussen die Reihenfolge (nicht die Schwelle)
+            vorlieben = lernen.vorlieben(db)
+            kandidaten.sort(key=lambda paar: -(paar[1].gesamt + vorlieben.anpassung(paar[0])))
+            for job, _score in kandidaten[:platz]:
                 try:
                     vorbereiten(db, profil, job.ref, herkunft="automatik", mit_llm=mit_llm,
                                 browser_fabrik=browser_fabrik)
@@ -537,11 +817,50 @@ def automatik_lauf(
                     log.exception("Vorbereitung %s fehlgeschlagen", job.ref)
                     zusammenfassung.setdefault("fehler", []).append(f"{job.ref}: {e}")
         zusammenfassung["vorbereitet"] = len(vorbereitet)
+        autopilot_status = [db.vorgang(r) for r in vorbereitet]
+        sofort = sum(1 for v in autopilot_status if v and v.status == "freigegeben")
+        mit_frist = sum(1 for v in autopilot_status if v and v.status == "wartet" and v.auto_senden_ab)
+        if sofort or mit_frist:
+            zusammenfassung["autopilot"] = {"freigegeben": sofort, "mit_frist": mit_frist}
+        try:
+            neue_vorschlaege = lernen.leite_vorschlaege_ab(db, profil, mit_llm=mit_llm)
+            if neue_vorschlaege:
+                zusammenfassung["vorschlaege"] = neue_vorschlaege
+        except Exception as e:
+            log.exception("Vorschläge ableiten fehlgeschlagen")
+            ki_hinweise.append(f"Lernen aus Entscheidungen fehlgeschlagen: {e}")
+        if ki_hinweise:
+            zusammenfassung["ki_hinweise"] = ki_hinweise
     except Exception as e:
         db.beende_lauf(lauf_id, zusammenfassung, fehler=str(e)[:1000])
         raise
-    db.beende_lauf(lauf_id, zusammenfassung)
+    fehler = None
+    if suche.fehler and not suche.refs:
+        fehler = "Alle Abfragen sind fehlgeschlagen: " + "; ".join(suche.fehler[:3])
+    db.beende_lauf(lauf_id, zusammenfassung, fehler=fehler)
     return zusammenfassung
+
+
+def postfach_lauf(db: Speicher, profil: Profil, *, ausloeser: str = "zeitplan",
+                  mindestabstand_min: int = 30, verbindung: Any = None) -> dict[str, Any] | None:
+    """Antworten im Postfach auswerten (hoechstens alle 30 Minuten)."""
+    from .bewerben import postfach
+
+    if not profil.automatisierung.postfach or (verbindung is None and postfach.imap_konfig() is None):
+        return None
+    letzte = db.letzte_laeufe("postfach", limit=1)
+    if letzte and mindestabstand_min > 0:
+        zeit = zeitplan.als_datetime(letzte[0]["gestartet_am"])
+        if zeit and datetime.now(timezone.utc) - zeit < timedelta(minutes=mindestabstand_min):
+            return None
+    lauf_id = db.starte_lauf("postfach", ausloeser)
+    try:
+        ergebnis = postfach.pruefe_postfach(db, verbindung=verbindung)
+    except Exception as e:
+        db.beende_lauf(lauf_id, {}, fehler=str(e)[:500])
+        raise
+    db.beende_lauf(lauf_id, ergebnis)
+    return ergebnis
 
 
 def vorbereiten_lauf(
@@ -607,7 +926,15 @@ def tick(
     mit_llm: bool = True,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Cron-Einstieg (alle paar Minuten): faelligen Automatiklauf starten, Freigaben senden."""
+    """Cron-Einstieg (alle paar Minuten).
+
+    Startet den faelligen Automatiklauf, gibt Autopilot-Bewerbungen nach Ablauf
+    der Einspruchsfrist frei, verschickt Freigaben, wertet das Postfach aus und
+    schlaegt Nachfass-Mails vor. Ein Fehler in einem Schritt haelt die anderen
+    nicht auf.
+    """
+    from . import autopilot, nachfassen
+
     ergebnis: dict[str, Any] = {}
     modus = profil.automatisierung.effektiver_modus
     if modus != "aus":
@@ -619,11 +946,40 @@ def tick(
         if faellig:
             with sperre("automatik") as frei:
                 if frei:
-                    ergebnis["automatik"] = automatik_lauf(
-                        db, profil, ausloeser="zeitplan", nur_suchen=modus == "nur_suchen",
-                        mit_llm=mit_llm, browser_fabrik=kwargs.get("browser_fabrik"),
-                    )
+                    try:
+                        ergebnis["automatik"] = automatik_lauf(
+                            db, profil, ausloeser="zeitplan", nur_suchen=modus == "nur_suchen",
+                            mit_llm=mit_llm, browser_fabrik=kwargs.get("browser_fabrik"),
+                        )
+                    except Exception as e:
+                        log.exception("Automatiklauf fehlgeschlagen")
+                        ergebnis["automatik_fehler"] = str(e)[:500]
                 else:
                     ergebnis["automatik"] = "läuft bereits"
-    ergebnis["senden"] = senden_lauf(db, profil, ausloeser="zeitplan", **kwargs)
+    try:
+        freigegeben = autopilot.faellige_freigeben(db, profil, jetzt=jetzt)
+        if freigegeben:
+            ergebnis["autopilot"] = freigegeben
+    except Exception as e:
+        log.exception("Autopilot fehlgeschlagen")
+        ergebnis["autopilot_fehler"] = str(e)[:500]
+    try:
+        ergebnis["senden"] = senden_lauf(db, profil, ausloeser="zeitplan", **kwargs)
+    except Exception as e:
+        log.exception("Versand fehlgeschlagen")
+        ergebnis["senden_fehler"] = str(e)[:500]
+    try:
+        post = postfach_lauf(db, profil)
+        if post:
+            ergebnis["postfach"] = post
+    except Exception as e:
+        log.warning("Postfach nicht auswertbar: %s", e)
+        ergebnis["postfach_fehler"] = str(e)[:500]
+    try:
+        neu = nachfassen.pruefe(db, profil, mit_llm=mit_llm)
+        if neu:
+            ergebnis["nachfassen"] = neu
+    except Exception as e:
+        log.exception("Nachfassen fehlgeschlagen")
+        ergebnis["nachfassen_fehler"] = str(e)[:500]
     return ergebnis
