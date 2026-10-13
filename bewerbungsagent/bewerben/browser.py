@@ -10,6 +10,7 @@ browser-use ist ein optionales Extra:  pip install -e ".[browser]"
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -137,6 +138,44 @@ def _host_domains(url: str) -> list[str]:
     teile = host.split(".")
     basis = ".".join(teile[-2:]) if len(teile) >= 2 else host
     return [host, basis, f"*.{basis}"]
+
+
+# Watchdog-Timeout von browser-use/bubus, typisch bei langsamem Browser-Start
+# (erster Download, träge Netzwerkverbindung, viele parallel laufende Agenten).
+_BROWSER_START_TIMEOUT_RE = re.compile(r"BrowserStartEvent|timed out", re.IGNORECASE)
+
+BROWSER_START_RETRIES = 2          # zusaetzlich zum ersten Versuch
+BROWSER_START_BACKOFF_S = 10.0     # Wartezeit zwischen den Versuchen
+
+
+def _lebenslauf_vorhanden(profil: Profil) -> bool:
+    pfad = profil.unterlagen.lebenslauf
+    return bool(pfad) and Path(pfad).expanduser().exists()
+
+
+async def _run_mit_retry(run_factory):
+    """Fuehrt `run_factory` aus, bei transientem Browser-Start-Timeout erneut.
+
+    Ein Timeout des `BrowserStartEvent`-Watchdogs bedeutet nur, dass Chromium
+    nicht innerhalb der Standard-30s hochkam. Das ist transient, deshalb wird
+    mit kurzem Backoff erneut versucht. `run_factory` ist async, baut pro
+    Versuch einen neuen Agenten und liefert das history-Objekt.
+    """
+    letzter_fehler: BaseException | None = None
+    for versuch in range(1 + BROWSER_START_RETRIES):
+        try:
+            return await run_factory()
+        except Exception as e:
+            letzter_fehler = e
+            if not _BROWSER_START_TIMEOUT_RE.search(str(e)):
+                raise
+            log.warning(
+                "Browser-Start-Timeout (Versuch %d/%d): %s",
+                versuch + 1, 1 + BROWSER_START_RETRIES, e,
+            )
+            await asyncio.sleep(BROWSER_START_BACKOFF_S)
+    assert letzter_fehler is not None
+    raise letzter_fehler
 
 
 def _erlaubte_domains(url: str, extra: list[str] | None = None) -> list[str]:
@@ -457,16 +496,36 @@ class BewerbungsBrowser:
                 url=None,
             )
 
-        agent = self.baue_agent(
-            job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
-        )
-        history = await agent.run(max_steps=self.max_schritte)
-        if self._modell_fehlte(history, agent):
-            # Das Modell gibt es beim Anbieter nicht: einmal mit einem verfuegbaren neu starten
+        # Vorab-Pruefung: Ohne Lebenslauf kann ein Online-Formular kaum
+        # vollstaendig abgeschickt werden. Frueh abbrechen statt 40
+        # Browser-Schritte lang zu scheitern.
+        if not dry_run and not _lebenslauf_vorhanden(self.profil):
+            return BewerbungsLauf(
+                ref=job.ref,
+                dry_run=dry_run,
+                abgeschickt=False,
+                zusammenfassung=(
+                    "Kein Lebenslauf hinterlegt - bitte im Profil hochladen "
+                    "(unterlagen.lebenslauf). Bewerbung nicht gestartet."
+                ),
+                schritte=0,
+                url=url,
+            )
+
+        async def _starte_einmal():
             agent = self.baue_agent(
                 job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
             )
             history = await agent.run(max_steps=self.max_schritte)
+            if self._modell_fehlte(history, agent):
+                # Das Modell gibt es beim Anbieter nicht: einmal mit einem verfuegbaren neu starten
+                agent = self.baue_agent(
+                    job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
+                )
+                history = await agent.run(max_steps=self.max_schritte)
+            return history
+
+        history = await _run_mit_retry(_starte_einmal)
 
         strukturiert = None
         try:
