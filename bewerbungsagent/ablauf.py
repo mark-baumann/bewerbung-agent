@@ -689,19 +689,10 @@ def sende_freigegebene(
 # Laeufe (Automatik, Vorbereiten, Senden) und Cron-Tick
 # --------------------------------------------------------------------------- #
 
-_ALLGEMEIN = {
-    "engineering", "development", "entwicklung", "management", "consulting", "beratung", "sales", "vertrieb",
-    "marketing", "operations", "product", "platform", "software", "it", "data", "team", "senior", "junior",
-    "lead", "mitarbeiter", "mitarbeiterin", "fachkraft", "assistenz", "praktikum", "werkstudent", "trainee",
-    "manager", "engineer", "entwickler", "developer", "specialist", "spezialist", "sachbearbeitung",
-    "remote", "homeoffice", "hybrid", "vollzeit", "teilzeit", "full-time", "part-time", "m/w/d",
-}
-
-
 def _zu_allgemein(begriff: str) -> bool:
-    """Einzelwoerter wie „Engineering“ oder „Manager“ bringen nur Rauschen."""
-    worte = [w for w in re.findall(r"[\wäöüß+#.-]+", begriff.casefold()) if w]
-    return len(worte) == 1 and worte[0] in _ALLGEMEIN or all(w in _ALLGEMEIN for w in worte)
+    from .vorschlaege import zu_allgemein
+
+    return zu_allgemein(begriff)
 
 
 def erkunde_suchbegriffe(

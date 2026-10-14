@@ -33,7 +33,6 @@ def _remote_job(ref: str, titel: str, firma: str, region: str, beschreibung: Any
         titel=(titel or "").strip(),
         arbeitgeber=(firma or "").strip() or plattform,
         quelle="remote",
-        beruf=plattform,
         ort=f"Remote ({region})" if region else "Remote",
         veroeffentlicht=iso_datum(datum),
         externe_url=url,

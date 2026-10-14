@@ -53,6 +53,26 @@ def titel_kern(titel: str) -> str:
     return " ".join(worte[:4])
 
 
+_ALLGEMEIN = {
+    # Namen von Jobboersen/Plattformen sind keine Berufe
+    "himalayas", "remotive", "remoteok", "remote ok", "jobicy", "we work remotely", "weworkremotely",
+    "arbeitnow", "interamt", "eures", "adzuna", "jooble", "stepstone", "indeed", "linkedin", "xing",
+    "engineering", "development", "entwicklung", "management", "consulting", "beratung", "sales", "vertrieb",
+    "marketing", "operations", "product", "platform", "software", "it", "data", "team", "senior", "junior",
+    "lead", "mitarbeiter", "mitarbeiterin", "fachkraft", "assistenz", "praktikum", "werkstudent", "trainee",
+    "manager", "engineer", "entwickler", "developer", "specialist", "spezialist", "sachbearbeitung",
+    "remote", "homeoffice", "hybrid", "vollzeit", "teilzeit", "full-time", "part-time", "m/w/d",
+}
+
+
+def zu_allgemein(begriff: str) -> bool:
+    """Einzelwoerter wie „Engineering“ oder „Manager“ bringen nur Rauschen."""
+    worte = [w for w in re.findall(r"[\wäöüß+#.-]+", begriff.casefold()) if w]
+    if not worte or begriff.strip().casefold() in _ALLGEMEIN:
+        return True
+    return all(w in _ALLGEMEIN for w in worte)
+
+
 def _schon_gesucht(begriff: str, vorhandene: list[str]) -> bool:
     b = begriff.casefold()
     return any(b in v.casefold() or v.casefold() in b for v in vorhandene if v.strip())
@@ -90,6 +110,8 @@ def aus_treffern(db: Speicher, profil: Profil, limit: int = 8) -> list[Vorschlag
     ergebnis: list[Vorschlag] = []
     for schluessel, _ in gewicht.most_common():
         begriff = anzeige[schluessel]
+        if zu_allgemein(begriff):
+            continue
         if _schon_gesucht(begriff, profil.suche.was) or _schon_gesucht(
             begriff, [v.begriff for v in ergebnis]
         ):

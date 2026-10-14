@@ -395,3 +395,11 @@ def test_rohbestand_aus_feeds_ist_kein_kandidat(umgebung):
 def test_erkundung_meidet_allgemeine_begriffe():
     assert ablauf._zu_allgemein("Engineering") and ablauf._zu_allgemein("Senior Manager")
     assert not ablauf._zu_allgemein("Data Engineer Python") and not ablauf._zu_allgemein("Softwareentwickler")
+
+
+def test_unsinnige_suchbegriff_vorschlaege_werden_verworfen(umgebung):
+    profil, db, _ = umgebung
+    for begriff in ("Jobicy", "Engineering", "Fullstack-Entwickler"):
+        lernen.schlage_suchbegriff_vor(db, begriff, 3)
+    assert lernen.verwerfe_unsinnige_vorschlaege(db) == 2
+    assert [v["daten"]["suchbegriff_hinzu"] for v in db.vorschlaege()] == ["Fullstack-Entwickler"]
