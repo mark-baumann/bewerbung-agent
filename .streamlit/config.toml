@@ -1,0 +1,17 @@
+# Ruhiges, freundliches Erscheinungsbild statt Streamlit-Standard (rot).
+[client]
+toolbarMode = "minimal"          # kein „Deploy“-Knopf, nur das Menü
+showSidebarNavigation = false    # Navigation liegt als Leiste oben (app.py)
+
+[theme]
+base = "light"
+primaryColor = "#0F766E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6F6"
+textColor = "#1F2933"
+linkColor = "#0F766E"
+borderColor = "#DDE3E3"
+showWidgetBorder = true
+baseRadius = "0.6rem"
+buttonRadius = "0.6rem"
+headingFontWeights = [700, 650, 600, 600, 600, 600]

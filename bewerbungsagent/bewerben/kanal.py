@@ -107,7 +107,7 @@ def bestimme_kanal(job: Job, gefundene_email: str | None = None, *, ba_login: bo
                 if ersatz:
                     return KanalWahl("email", empfaenger=ersatz, grund="einzige E-Mail-Adresse in der Anzeige")
                 return KanalWahl("manuell", url=url, grund=(
-                    "Bewerbung nur über das Konto bei der Arbeitsagentur – Login unter Profil → 🔑 Zugänge "
+                    "Bewerbung nur über das Konto bei der Arbeitsagentur – Login unter Einstellungen → Konten "
                     "eintragen oder selbst bewerben."))
         return KanalWahl("formular", url=url, grund="Bewerbung über die Bewerbungsseite")
     if ersatz:

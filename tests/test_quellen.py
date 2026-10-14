@@ -135,7 +135,7 @@ def test_adzuna_und_jooble():
 
 def test_adzuna_ohne_schluessel_meldet_klaren_fehler(monkeypatch):
     monkeypatch.delenv("ADZUNA_APP_ID", raising=False)
-    with aggregatoren.AdzunaClient() as client, pytest.raises(Exception, match="Zugänge"):
+    with aggregatoren.AdzunaClient() as client, pytest.raises(Exception, match="Konten"):
         client.hole_jobs(was="Python")
 
 

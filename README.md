@@ -28,12 +28,14 @@ Zeitplan (Cron) oder Knopf
 
 ## ✨ Features
 
-- **🏠 Cockpit mit Ja/Nein:** Vorbereitete Bewerbungen als Karten mit Passung, Gründen,
-  Versandweg, Probelauf-Ergebnis und bearbeitbarem Anschreiben – ein Klick schickt ab
+- **🏠 „Heute“ mit Ja/Nein:** Vorbereitete Bewerbungen als kompakte Karten (Passung,
+  Versandweg, Formular-Test, Anschreiben-Vorschau zum Lesen/Bearbeiten) – ein Klick schickt ab;
+  läuft auch bequem am Handy
+- **👋 Erststart-Assistent:** In fünf Schritten startklar – Daten, Jobtitel, Lebenslauf,
+  E-Mail-Konto (nur Adresse + Passwort, Server werden automatisch erkannt), los
 - **🤖 Automatik per Zeitplan:** Suchen, bewerten und die besten Stellen vorbereiten
   (z. B. täglich 6:00); Modus *Automatisch*, *Nur suchen* oder *Aus*
-- **🧭 Schritt für Schritt:** Geführter manueller Prozess Suchen → Auswählen →
-  Prüfen & freigeben → Status
+- **🔍 Selbst suchen:** Suchen → Stellen auswählen; die Entscheidung fällt dann auf „Heute“
 - **🌐 Viele Jobbörsen:** Bundesagentur für Arbeit, GET IN IT, Arbeitnow, service.bund.de,
   Interamt, EURES (EU-Ausland), Remote-Börsen (Himalayas, Remotive, Remote OK, Jobicy,
   We Work Remotely), Adzuna und Jooble (mit kostenlosem Key) – Dubletten werden zusammengeführt
@@ -51,16 +53,17 @@ Zeitplan (Cron) oder Knopf
 - **🚀 Autopilot (optional, Standard aus):** Die KI bewirbt sich allein – nur bei hoher
   Passung, geprüftem Anschreiben, sicherem Versandweg, mit Tageslimit, höchstens einmal je
   Arbeitgeber in 30 Tagen, wahlweise mit Einspruchsfrist und Stopp-Knopf
-- **🔑 Zugänge in der UI:** SMTP, IMAP, KI-Schlüssel und Jobbörsen-Keys direkt im Profil
-  eintragen und testen – ohne `.env` und ohne Neustart
+- **🔑 Konten in der UI:** E-Mail-Konto mit Adresse + Passwort verbinden (Anbieter wird
+  erkannt), KI-Schlüssel, Browser-Test und Jobbörsen-Keys unter Einstellungen → Konten –
+  ohne `.env` und ohne Neustart
 - **📧 Versand per E-Mail:** Aus deinem Postfach (SMTP) mit Anschreiben-PDF, Lebenslauf
   und Zeugnissen, Kopie per Bcc an dich
 - **🌐 Online-Formulare:** browser-use füllt Bewerbungsformulare aus – inklusive
   gängiger Bewerbermanagement-Systeme (softgarden, Personio, Workday, …)
 - **📊 Bewertung:** Skill-Matching, Tonalität der Anzeige und LLM-Bewertung (Claude,
   ChatGPT oder Ollama) mit deinem Lebenslauf als Kontext
-- **📬 Tracker & Nachweis:** Rückmeldungen eintragen, fällige Nachfragen, Export der
-  Eigenbemühungen als PDF/CSV für Agentur für Arbeit oder Jobcenter
+- **📬 Rückmeldungen & Nachweis:** Antworten auf „Heute“ antippen, Nachfass-Mails als
+  Vorschlag, Export der Eigenbemühungen als PDF/CSV für Agentur für Arbeit oder Jobcenter
 - **🛡️ Sicherheitsnetze:** Ohne Autopilot geht nichts ohne dein Ja raus, Tageslimit, kein
   automatisches Wiederholen fehlgeschlagener Sendungen, keine erfundenen Angaben,
   keine Jobbörsen, deren Bedingungen automatische Abfragen verbieten (StepStone, Indeed,
@@ -80,8 +83,9 @@ playwright install chromium
 
 ## ⚙️ Einrichten
 
-Am einfachsten über die Web-UI: **Profil & Einstellungen** – dort Daten, Lebenslauf und
-unter **🔑 Zugänge** SMTP, IMAP und KI-Schlüssel eintragen und mit einem Klick testen.
+Am einfachsten über die Web-UI: Beim ersten Start führt ein Assistent durch Daten,
+Jobtitel, Lebenslauf und E-Mail-Konto. Alles Weitere unter **Einstellungen** (Über mich ·
+Suche · Automatik · Konten) – dort auch KI-Schlüssel eintragen und mit einem Klick testen.
 Die Zugänge liegen in `daten/zugangsdaten.json` (nur für dich lesbar, nie im Git) und
 haben Vorrang vor der `.env`. Alternativ per Datei:
 
@@ -93,7 +97,7 @@ $EDITOR config/profil.yaml           # Person, Suchbegriffe, Skills, Ausschlüss
 
 ### 🤖 LLM-Konfiguration
 
-Entweder OpenAI/ChatGPT, Anthropic oder ein lokaler/Ollama-Server (UI: Profil → 🔑 Zugänge):
+Entweder OpenAI/ChatGPT, Anthropic oder ein lokaler/Ollama-Server (UI: Einstellungen → Konten):
 
 ```bash
 # Anthropic
@@ -112,14 +116,15 @@ OLLAMA_MODEL=                        # optional; sonst Auswahl in der UI
 Claude-Modelle (`claude-*`) laufen über Anthropic, GPT-/o-Modelle über die
 OpenAI-API und die übrigen Modelle über Ollama. Der Agent fragt beim Anbieter ab,
 welche Modelle es wirklich gibt (`bewerbungsagent modelle`): Fehlt das gewählte
-Modell (*model not found*), weicht er auf ein verfügbares aus und sagt es dir im
-Cockpit. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
+Modell (*model not found*), weicht er auf ein verfügbares aus und sagt es dir in
+der Oberfläche. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
 die Vorlage zurück.
 
 ### 📧 Bewerbungen per E-Mail
 
-Für den E-Mail-Versand trägst du die Zugangsdaten deines Postfachs unter
-**Profil → 🔑 Zugänge** ein (oder in die `.env` bzw. die Umgebung des Containers).
+Für den E-Mail-Versand verbindest du dein Postfach unter **Einstellungen → Konten**
+(Adresse + Passwort genügen, Server und Ports werden automatisch erkannt) – oder trägst
+die Zugangsdaten in die `.env` bzw. die Umgebung des Containers ein.
 Mit IMAP-Zugang erkennt der Agent außerdem Antworten (Eingangsbestätigung,
 Einladung, Absage) selbst:
 
@@ -140,8 +145,8 @@ schicken. Jede Bewerbung geht als Bcc auch an dich.
 Im Docker-Container ruft Cron alle 5 Minuten `bewerbungsagent tick` auf. Der Tick
 startet den Automatiklauf, sobald der Zeitplan aus dem Profil fällig ist
 (Standard: täglich 06:00 deutscher Zeit), und verschickt freigegebene
-Bewerbungen. Modus und Zeitplan änderst du im Cockpit bzw. unter
-**Profil → Automatik & Versand** – ohne Neustart.
+Bewerbungen. Modus und Zeitplan änderst du unter **Einstellungen → Automatik** – ohne
+Neustart.
 
 ```yaml
 automatisierung:
@@ -160,18 +165,18 @@ automatisierung:
 
 ### 🚀 Autopilot
 
-Standard ist **aus**. Eingeschaltet (Cockpit oder Profil → Automatik) verschickt die
+Standard ist **aus**. Eingeschaltet (Einstellungen → Automatik) verschickt die
 KI eine vorbereitete Bewerbung nur, wenn alles stimmt: Passung ≥ 75, KI-Anschreiben
 mit Qualität ≥ 80 und ohne unbelegte Aussagen, eindeutige Bewerbungsadresse bzw.
 erfolgreicher Formular-Probelauf, Versandweg eingerichtet, Frist nicht abgelaufen,
 Tageslimit frei und höchstens eine Bewerbung je Arbeitgeber in 30 Tagen. Im Modus
-*mit Einspruchsfrist* steht die Karte erst X Stunden mit **✋ Stopp**-Knopf im
-Cockpit. Alles, was eine Grenze verfehlt, bleibt eine normale Ja/Nein-Karte – mit
+*mit Einspruchsfrist* steht die Karte erst X Stunden mit **Stopp**-Knopf auf
+„Heute“. Alles, was eine Grenze verfehlt, bleibt eine normale Ja/Nein-Karte – mit
 der Begründung.
 
 Lokal gibt `bewerbungsagent cron` die passende Crontab-Zeile aus (sie wird nicht
 selbst installiert). Jeder Abruf und jeder Lauf wird in der SQLite-Datenbank
-protokolliert und im Cockpit angezeigt.
+protokolliert und auf „Heute“ angezeigt.
 
 ---
 
@@ -186,10 +191,11 @@ streamlit run app.py        # oder ./start-ui.sh
 
 Öffne `http://localhost:8501`:
 
-1. **👤 Profil & Einstellungen** – Daten, Formular-Angaben, Lebenslauf, Suchbegriffe, Automatik
-2. **🏠 Cockpit** – hier wartet jeden Morgen die Auswahl: **✅ Ja** schickt ab, **❌ Nein** blendet aus
-3. **🧭 Schritt für Schritt** – selbst suchen (mit Vorschlägen), Stellen auswählen, freigeben
-4. **📬 Bewerbungen** – Rückmeldungen, Nachfassen, Nachweis der Eigenbemühungen
+1. **Heute** – beim ersten Start der Einrichtungs-Assistent; danach wartet hier jeden Morgen
+   die Auswahl: **Ja** schickt ab, **Nein** blendet aus. Darunter: Hilfe bei Fehlschlägen,
+   Ideen des Agenten, deine Bewerbungen mit Rückmeldung und der **Nachweis fürs Amt**
+2. **Suchen** – selbst suchen (mit Vorschlägen) und Stellen auswählen
+3. **Einstellungen** – Über mich · Suche · Automatik · Konten
 
 Siehe [UI_README.md](UI_README.md) für Details.
 
@@ -263,7 +269,7 @@ Der Gesamtscore ist `Passung × 0,7 + Ton × 0,3`.
 ```
 bewerbung-agent/
 ├── app.py                        # Web-UI: Navigation
-├── seiten/                       # Cockpit, Schritt für Schritt, Bewerbungen, Profil
+├── seiten/                       # Heute (cockpit.py), Suchen, Einstellungen (profil.py)
 ├── bewerbungsagent/
 │   ├── ablauf.py                 # suchen → bewerten → vorbereiten → freigeben → senden
 │   ├── zeitplan.py               # Cron-Ausdrücke (Tick-Logik)

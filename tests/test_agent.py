@@ -226,7 +226,7 @@ def test_autopilot_ohne_smtp_und_ohne_ki_sendet_nie(umgebung):
     v = _vorbereitet(db, profil)
     assert v.status == "wartet"
     gruende = v.pruefung_daten["autopilot"]["gruende"]
-    assert any("Vorlage" in g for g in gruende) and any("SMTP" in g for g in gruende)
+    assert any("Vorlage" in g for g in gruende) and any("E-Mail-Konto" in g for g in gruende)
 
 
 def test_autopilot_mit_frist_und_stopp(umgebung, ki, monkeypatch):

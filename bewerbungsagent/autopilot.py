@@ -76,7 +76,8 @@ def pruefe(db: Speicher, profil: Profil, v: Vorgang, job: Job, score: Score | No
         probe = v.probelauf_daten
         if not probe:
             gruende.append("Kein Probelauf des Formulars.")
-        elif probe.get("hindernis") or probe.get("fehlende_angaben") or probe.get("versehentlich_abgeschickt"):
+        elif (probe.get("hindernis") or probe.get("fehlende_angaben") or probe.get("versehentlich_abgeschickt")
+              or probe.get("browser_startfehler") or not probe.get("ausgefuellte_felder")):
             gruende.append("Probelauf war nicht vollständig erfolgreich.")
     else:
         gruende.append("Kein automatischer Bewerbungsweg.")

@@ -407,7 +407,7 @@ def cmd_modelle(args: argparse.Namespace) -> int:
     profil = lade_profil(args.profil)
     anbieter = llm_modul.provider(profil.bewertung.modell)
     if anbieter is None:
-        console.print("[yellow]Kein KI-Zugang eingerichtet (Profil → Zugänge oder .env).[/]")
+        console.print("[yellow]Kein KI-Zugang eingerichtet (Einstellungen → Konten oder .env).[/]")
         return 1
     modelle = llm_modul.verfuegbare_modelle(anbieter, neu_laden=True)
     if not modelle:
@@ -420,6 +420,17 @@ def cmd_modelle(args: argparse.Namespace) -> int:
     if hinweis:
         console.print(f"[yellow]{hinweis}[/]")
     return 0
+
+
+def cmd_browser_test(args: argparse.Namespace) -> int:
+    """Startet den Browser einmal (ohne KI) und meldet, ob Online-Formulare moeglich sind."""
+    from .bewerben import browser
+
+    ergebnis = browser.selbsttest()
+    console.print(("[green]✓ " if ergebnis.ok else "[red]✗ ") + ergebnis.meldung + "[/]")
+    if ergebnis.pfad:
+        console.print(f"Browser: {ergebnis.pfad}")
+    return 0 if ergebnis.ok else 1
 
 
 def cmd_postfach(args: argparse.Namespace) -> int:
@@ -664,6 +675,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     mo = sub.add_parser("modelle", help="Verfuegbare KI-Modelle des eingerichteten Zugangs anzeigen")
     mo.set_defaults(func=cmd_modelle)
+
+    bt = sub.add_parser("browser-test", help="Pruefen, ob der Browser fuer Online-Formulare startet")
+    bt.set_defaults(func=cmd_browser_test)
 
     pf = sub.add_parser("postfach", help="Antworten im Postfach jetzt auswerten (IMAP)")
     pf.set_defaults(func=cmd_postfach)

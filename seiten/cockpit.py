@@ -1,176 +1,147 @@
-"""Cockpit (Startseite): Automatik steuern und vorbereitete Bewerbungen mit Ja/Nein freigeben."""
+"""Heute: was gerade ansteht – Entscheidungen, Hilfe, Antworten, Nachweis und Automatik."""
 
 from datetime import datetime, timezone
 
 import streamlit as st
 
-from bewerbungsagent import ablauf, ui, zeitplan
-from bewerbungsagent.config import ermittle_profil_pfad, speichere_profil
-
-MODI = {"automatisch": "🤖 Automatisch", "nur_suchen": "🔍 Nur suchen", "aus": "⏸️ Aus"}
-AUTOPILOT = {"aus": "✋ Aus", "mit_frist": "⏳ Mit Einspruchsfrist", "sofort": "🚀 Sofort"}
-AUTOPILOT_HILFE = {
-    "aus": "Jede Bewerbung braucht dein Ja.",
-    "mit_frist": "Sehr gut passende, geprüfte Bewerbungen gehen nach {stunden} h automatisch raus, wenn du nicht "
-                 "„Stopp“ oder „Nein“ sagst. Alles andere wartet auf dein Ja.",
-    "sofort": "Sehr gut passende, geprüfte Bewerbungen schickt die KI sofort ab. Alles andere wartet auf dein Ja.",
-}
-MODUS_HILFE = {
-    "automatisch": "Sucht nach Zeitplan, bewertet und bereitet die besten Stellen vor. "
-                   "Raus geht nur, was du hier mit Ja bestätigst.",
-    "nur_suchen": "Sucht und bewertet nach Zeitplan; welche Stellen du nimmst, wählst du unter "
-                  "„Schritt für Schritt“.",
-    "aus": "Kein Zeitplan. Du startest Suche und Bewerbungen selbst.",
-}
-
-st.title("📬 Bewerbungsagent")
+from bewerbungsagent import ablauf, ui, ui_assistent, zeitplan
 
 profil = ui.profil_laden()
-if profil is None:
-    st.info(
-        "### 👋 Willkommen!\n"
-        "Lege zuerst dein Profil an: persönliche Daten, Suchbegriffe und deinen Lebenslauf. "
-        "Danach sucht der Agent passende Stellen, schreibt Anschreiben und schickt Bewerbungen "
-        "nach deinem **Ja** ab."
-    )
-    st.page_link("seiten/profil.py", label="Profil einrichten", icon="👤")
+if ui_assistent.aktiv(profil):
+    ui_assistent.zeige()
     st.stop()
 
 a = profil.automatisierung
 jetzt = datetime.now(timezone.utc)
+stunde = jetzt.astimezone(zeitplan.ZEITZONE).hour
+gruss = "Guten Morgen" if stunde < 11 else ("Guten Abend" if stunde >= 18 else "Hallo")
+st.title(f"{gruss}, {profil.person.vorname}" if profil.person.vorname else gruss)
+
+AUTOPILOT_TEXT = {
+    "mit_frist": "Sehr gut passende, geprüfte Bewerbungen gehen nach {stunden} h von selbst raus, wenn du nicht "
+                 "widersprichst. Alles andere wartet auf dein Ja.",
+    "sofort": "Sehr gut passende, geprüfte Bewerbungen schicke ich sofort ab. Alles andere wartet auf dein Ja.",
+}
+
+
+def jetzt_suchen() -> None:
+    ui.starte_hintergrund("automatik", "--ausloeser", "knopf", meldung="Ich suche – das dauert ein paar Minuten.")
+
 
 with ui.oeffne_db() as db:
     wartend = db.vorgaenge("wartet")
     fehlgeschlagen = db.vorgaenge("fehlgeschlagen")
+    beworben = db.vorgaenge(("abgeschickt", "selbst_beworben"))
     diese_woche = db.beworben_seit(ablauf.wochenbeginn_utc(jetzt))
-    rueckmeldungen = [v for v in db.vorgaenge(("abgeschickt", "selbst_beworben")) if v.rueckmeldung]
-    einladungen = sum(1 for v in rueckmeldungen if v.rueckmeldung in ("einladung", "zusage"))
-    offen = len(db.kandidaten(min_score=profil.bewertung.min_score, limit=200,
-                              ausschluss_arbeitgeber=profil.bewertung.ausschluss_arbeitgeber))
-    letzte_automatik = db.letzte_laeufe("automatik", limit=1)
+    einladungen = [v for v in beworben if v.rueckmeldung in ("einladung", "zusage")]
     vorschlaege = ui.offene_vorschlaege(db)
+    letzte_automatik = db.letzte_laeufe("automatik", limit=1)
+    laeuft = bool(db.laufende_laeufe(("automatik", "vorbereiten")))
+    naechster = ablauf.naechster_automatik_termin(profil)
+
+    # ------------------------------------------------------------------ Statuszeile
+    teile = [f"**{len(wartend)}** warten auf dein Ja" if wartend else "Gerade wartet nichts auf dich",
+             f"diese Woche **{diese_woche} von {a.ziel_pro_woche}** beworben"]
+    if einladungen:
+        teile.append(f"**{len(einladungen)}** Einladung(en)")
+    if a.effektiver_autopilot != "aus":
+        teile.append(":violet-badge[:material/smart_toy: Autopilot an]")
+    st.markdown(" · ".join(teile))
+    st.progress(min(1.0, diese_woche / max(1, a.ziel_pro_woche)))
 
     ui.zeige_einrichtung(profil)
 
     # ------------------------------------------------------------------ Einladungen zuerst
-    for v in db.vorgaenge(("abgeschickt", "selbst_beworben")):
-        if v.rueckmeldung in ("einladung", "zusage") and v.rueckmeldung_am and \
-                (jetzt - (zeitplan.als_datetime(v.rueckmeldung_am) or jetzt)).days <= 21:
+    for v in einladungen:
+        if v.rueckmeldung_am and (jetzt - (zeitplan.als_datetime(v.rueckmeldung_am) or jetzt)).days <= 21:
             job = db.job(v.ref)
             if job:
                 nachricht = next((n for n in db.nachrichten(v.ref, limit=5) if n.get("art") == v.rueckmeldung), None)
                 st.success(
-                    f"🎉 **{ui.RUECKMELDUNG_TEXT[v.rueckmeldung]}: {job.titel} – {job.arbeitgeber}**"
-                    + (f"  \n✉️ „{nachricht['betreff']}“ von {nachricht['absender']}" if nachricht else "")
+                    f"**{ui.RUECKMELDUNG_TEXT[v.rueckmeldung]}: {job.titel} – {job.arbeitgeber}**"
+                    + (f"  \n„{nachricht['betreff']}“ von {nachricht['absender']}" if nachricht else ""),
+                    icon=":material/celebration:",
                 )
-
-    # ------------------------------------------------------------------ Kennzahlen
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("✋ Warten auf dich", len(wartend))
-    k2.metric("📤 Diese Woche beworben", f"{diese_woche} / {a.ziel_pro_woche}")
-    k3.metric("💬 Rückmeldungen", len(rueckmeldungen),
-              delta=f"{einladungen} Einladung(en)" if einladungen else None)
-    k4.metric("🎯 Weitere passende Stellen", offen,
-              help=f"Mindestens {profil.bewertung.min_score:.0f} Punkte, aber noch nicht vorbereitet – "
-                   "der nächste Lauf oder „Schritt für Schritt“ nimmt sie auf.")
-    st.progress(min(1.0, diese_woche / max(1, a.ziel_pro_woche)),
-                text=f"Wochenziel: {diese_woche} von {a.ziel_pro_woche} Bewerbungen")
-
-    # ------------------------------------------------------------------ Automatik
-    with st.container(border=True):
-        links, rechts = st.columns([3, 2], vertical_alignment="center")
-        with links:
-            modus = st.segmented_control(
-                "Automatik", list(MODI), default=a.effektiver_modus, format_func=MODI.get, key="cockpit_modus",
-            )
-            if modus and modus != a.effektiver_modus:
-                a.modus, a.aktiv = modus, modus != "aus"
-                speichere_profil(profil, ermittle_profil_pfad())
-                st.toast(f"Modus: {MODI[modus]}", icon="💾")
-            st.caption(MODUS_HILFE[a.effektiver_modus])
-            naechster = ablauf.naechster_automatik_termin(profil)
-            zeile = f"Zeitplan `{a.cron}`"
-            if naechster:
-                zeile += f" · nächster Lauf **{zeitplan.beschreibe(naechster)}**"
-            if letzte_automatik:
-                zeile += f"  \nLetzter Lauf: {ui.lauf_zusammenfassung(letzte_automatik[0])}"
-            st.markdown(zeile)
-        with rechts:
-            laeuft = bool(db.laufende_laeufe(("automatik", "vorbereiten")))
-            if st.button("▶️ Jetzt suchen & vorbereiten", type="primary", width="stretch", disabled=laeuft,
-                         help="Sucht mit den Begriffen aus deinem Profil, bewertet und bereitet "
-                              f"bis zu {a.max_pro_lauf} Bewerbungen vor."):
-                ui.starte_hintergrund("automatik", "--ausloeser", "knopf",
-                                      meldung="Suche gestartet – das dauert ein paar Minuten.")
-                st.rerun()
-            st.page_link("seiten/schritt_fuer_schritt.py", label="Lieber selbst suchen & auswählen",
-                         icon="🧭")
-        pilot = st.segmented_control(
-            "Autopilot – darf die KI allein bewerben?", list(AUTOPILOT), default=a.effektiver_autopilot,
-            format_func=AUTOPILOT.get, key="cockpit_autopilot",
-            help="Nur Bewerbungen mit hoher Passung, geprüftem KI-Anschreiben ohne unbelegte Aussagen, "
-                 "sicherem Versandweg und erfolgreichem Probelauf. Tageslimit und höchstens eine Bewerbung "
-                 "pro Arbeitgeber in 30 Tagen. Einstellbar unter Profil → Automatik.",
-        )
-        if pilot and pilot != a.effektiver_autopilot:
-            a.autopilot = pilot
-            speichere_profil(profil, ermittle_profil_pfad())
-            st.toast(f"Autopilot: {AUTOPILOT[pilot]}", icon="🤖")
-        hilfe = AUTOPILOT_HILFE[a.effektiver_autopilot].format(stunden=a.autopilot_frist_stunden)
-        (st.caption if a.effektiver_autopilot == "aus" else st.warning)(hilfe)
 
     # ------------------------------------------------------------------ Laufender Stand
     @st.fragment(run_every=5 if ui.laeuft_etwas(db) else None)
     def laufstatus():
         with ui.oeffne_db() as frisch:
             if not ui.zeige_laufstatus(frisch):
-                if st.session_state.get("cockpit_lief"):
-                    st.session_state["cockpit_lief"] = False
+                if st.session_state.get("heute_lief"):
+                    st.session_state["heute_lief"] = False
                     st.rerun()
             else:
-                st.session_state["cockpit_lief"] = True
+                st.session_state["heute_lief"] = True
 
     laufstatus()
 
     # ------------------------------------------------------------------ Entscheidungen
-    st.subheader(f"✋ Deine Entscheidung ({len(wartend)})")
+    st.subheader(f":material/how_to_reg: Deine Entscheidung ({len(wartend)})")
     if not wartend:
-        st.info(
-            "Gerade wartet keine Bewerbung auf dich. "
-            + (f"Der nächste automatische Lauf ist am **{zeitplan.beschreibe(naechster)}**. " if naechster else "")
-            + "Du kannst auch jetzt suchen oder Stellen selbst auswählen."
-        )
+        with st.container(border=True):
+            st.markdown("Gerade wartet keine Bewerbung auf dich.")
+            if naechster and a.effektiver_modus != "aus":
+                st.caption(f"Ich suche wieder **{zeitplan.beschreibe(naechster)}** – oder jetzt sofort.")
+            with st.container(horizontal=True):
+                st.button("Jetzt suchen", type="primary", icon=":material/travel_explore:", disabled=laeuft,
+                          on_click=jetzt_suchen, key="heute_suchen_leer")
+                st.page_link(ui.SEITE_SUCHEN, label="Selbst suchen & auswählen", icon=":material/search:")
     else:
-        st.caption("Prüfe Anschreiben und Versandweg. **Ja** schickt die Bewerbung sofort ab, "
-                   "**Nein** blendet die Stelle dauerhaft aus.")
+        st.caption("**Ja** schickt die Bewerbung ab. **Nein** blendet die Stelle aus – mit Grund lerne ich dazu.")
         for v in reversed(wartend):  # aelteste zuerst
             ui.freigabe_karte(db, profil, v, praefix="cockpit")
 
-    # ------------------------------------------------------------------ Vorschlaege des Agenten
-    if vorschlaege:
-        st.subheader(f"💡 Der Agent schlägt vor ({len(vorschlaege)})")
-        st.caption("Nachfass-Mails und Verbesserungen, die der Agent aus deinen Entscheidungen gelernt hat. "
-                   "Nichts davon passiert ohne dein Ja.")
-        for vorschlag in vorschlaege:
-            ui.vorschlag_karte(vorschlag, praefix="cockpit")
-
     # ------------------------------------------------------------------ Hilfe bei Fehlschlaegen
     if fehlgeschlagen:
-        st.subheader(f"⚠️ Braucht deine Hilfe ({len(fehlgeschlagen)})")
+        st.subheader(f":material/support: Braucht deine Hilfe ({len(fehlgeschlagen)})")
         st.caption("Diese Bewerbungen konnten nicht automatisch verschickt werden.")
         for v in fehlgeschlagen:
             ui.hilfe_karte(db, v, praefix="cockpit")
 
-    # ------------------------------------------------------------------ Zuletzt verschickt
-    zuletzt = db.vorgaenge(("abgeschickt", "selbst_beworben"))[:5]
-    if zuletzt:
-        st.subheader("✅ Zuletzt beworben")
-        for v in zuletzt:
-            job = db.job(v.ref)
-            if job:
-                st.markdown(
-                    f"- **{job.titel}** – {job.arbeitgeber} · {ui.KANAL_TEXT.get(v.kanal, v.kanal)} · "
-                    f"{ui.zeit(v.gesendet_am)}"
-                    + (f" · {ui.RUECKMELDUNG_TEXT[v.rueckmeldung]}" if v.rueckmeldung else "")
-                )
-        st.page_link("seiten/bewerbungen.py", label="Alle Bewerbungen & Rückmeldungen", icon="📬")
+    # ------------------------------------------------------------------ Vorschlaege des Agenten
+    if vorschlaege:
+        st.subheader(f":material/lightbulb: Ideen von mir ({len(vorschlaege)})")
+        st.caption("Gelernt aus deinen Entscheidungen. Nichts davon passiert ohne dein Ja.")
+        ui.suchbegriffe_karte([x for x in vorschlaege if x["art"] == "suchbegriff"], praefix="cockpit")
+        for vorschlag in vorschlaege:
+            if vorschlag["art"] != "suchbegriff":
+                ui.vorschlag_karte(vorschlag, praefix="cockpit")
+
+    # ------------------------------------------------------------------ Bewerbungen & Nachweis
+    st.subheader(":material/outbox: Deine Bewerbungen")
+    if not beworben:
+        st.caption("Hier erscheinen deine verschickten Bewerbungen – mit Antworten und dem Nachweis fürs Amt.")
+    else:
+        st.caption("Tippe an, was zurückkam. Antworten im Postfach erkenne ich selbst, wenn dein E-Mail-Konto "
+                   "verbunden ist.")
+        for v in beworben[:5]:
+            ui.beworben_zeile(db, v, praefix="heute")
+        if len(beworben) > 5:
+            with st.expander(f"Ältere Bewerbungen ({len(beworben) - 5})", icon=":material/history:"):
+                for v in beworben[5:]:
+                    ui.beworben_zeile(db, v, praefix="heute")
+    if st.button("Nachweis fürs Amt", icon=":material/description:", key="heute_nachweis",
+                 help="Liste deiner Bewerbungen für Agentur für Arbeit oder Jobcenter (PDF oder Excel)."):
+        ui.nachweis_dialog()
+
+    # ------------------------------------------------------------------ Automatik
+    with st.container(border=True):
+        st.markdown("**:material/schedule: Automatik**")
+        if a.effektiver_modus == "aus":
+            st.markdown("Ist aus – ich suche nur, wenn du es sagst.")
+        else:
+            was = "suche und bereite vor" if a.effektiver_modus == "automatisch" else "suche"
+            st.markdown(f"Ich {was} **{ui.zeitplan_text(a.cron)}**"
+                        + (f" · nächstes Mal **{zeitplan.beschreibe(naechster)}**" if naechster else ""))
+        if letzte_automatik:
+            st.caption(f"Zuletzt: {ui.lauf_zusammenfassung(letzte_automatik[0])}")
+        if a.effektiver_autopilot != "aus":
+            st.caption(":material/smart_toy: **Autopilot:** "
+                       + AUTOPILOT_TEXT[a.effektiver_autopilot].format(stunden=a.autopilot_frist_stunden))
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.page_link(ui.SEITE_EINSTELLUNGEN, label="Ändern", icon=":material/tune:",
+                         query_params={"tab": "Automatik"})
+            if wartend:
+                st.button("Jetzt suchen", icon=":material/travel_explore:", disabled=laeuft, on_click=jetzt_suchen,
+                          key="heute_suchen")

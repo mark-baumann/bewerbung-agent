@@ -266,10 +266,10 @@ def test_ohne_smtp_wartet_email_auf_einrichtung(umgebung, monkeypatch):
     ablauf.vorbereiten(db, profil, "1", mit_llm=False, link_aufloesen=False)
     v = ablauf.freigeben(db, profil, "1")
     # Das Ja gilt, der Hinweis sagt, was noch fehlt
-    assert v.status == "freigegeben" and "SMTP" in v.hinweis
+    assert v.status == "freigegeben" and "E-Mail-Konto" in v.hinweis
     assert ablauf.sende_freigegebene(db, profil)["zurueckgestellt"] == 1
     v = db.vorgang("1")
-    assert v.status == "freigegeben" and "SMTP" in v.hinweis
+    assert v.status == "freigegeben" and "E-Mail-Konto" in v.hinweis
     # Sobald SMTP eingerichtet ist, geht sie raus
     smtp_env(monkeypatch)
     assert ablauf.sende_freigegebene(db, profil, mail_sender=FakeSmtp())["abgeschickt"] == 1

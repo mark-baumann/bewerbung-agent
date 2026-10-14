@@ -136,7 +136,7 @@ def suche_ausfuehren(
     for quelle in quellen:
         info = QUELLEN[quelle]
         if not info.verfuegbar():
-            ergebnis.hinweise.append(f"{info.label}: API-Schlüssel fehlt (Profil → Zugänge)")
+            ergebnis.hinweise.append(f"{info.label}: API-Schlüssel fehlt (Einstellungen → Konten)")
             nummer += len(begriffe)
             continue
 
@@ -329,6 +329,12 @@ def _probelauf(
             start_url=v.bewerbungs_url, anschreiben_pdf=v.anschreiben_pdf,
         ))
     except Exception as e:
+        from .bewerben.browser import ist_startfehler, startfehler_text
+
+        if ist_startfehler(str(e)):
+            # Der Browser kam nicht hoch - das sagt nichts ueber das Formular
+            v.hinweis = f"Formular-Test war nicht möglich: {startfehler_text(str(e))}"
+            return
         v.hinweis = f"Probelauf fehlgeschlagen: {str(e)[:300]}"
         db.speichere_bewerbung(Application(
             ref=job.ref, status="fehlgeschlagen", url=v.bewerbungs_url,
@@ -340,6 +346,10 @@ def _probelauf(
     roh.update({"zusammenfassung": lauf.zusammenfassung, "schritte": lauf.schritte,
                 "zeitpunkt": _jetzt(), "letzte_url": roh.get("letzte_url") or lauf.url})
     v.probelauf = json.dumps(roh, ensure_ascii=False)
+    if roh.get("browser_startfehler"):
+        # Der Browser kam nicht hoch - das sagt nichts ueber das Formular
+        v.hinweis = f"Formular-Test war nicht möglich: {lauf.zusammenfassung}"
+        return
     db.speichere_bewerbung(lauf.als_application(v.anschreiben))
 
     email = (roh.get("bewerbungs_email") or "").strip()
@@ -437,12 +447,12 @@ def vorbereiten(
 def versandweg_fehlt(kanal: str, profil: Profil | None = None, *, browser_fabrik: Any = None) -> str | None:
     """Warum der gewaehlte Weg gerade nicht nutzbar ist (None = alles bereit)."""
     if kanal == "email" and mail.smtp_konfig(profil) is None:
-        return "Der E-Mail-Versand ist noch nicht eingerichtet (Profil → 🔑 Zugänge → SMTP)."
+        return "Dein E-Mail-Konto ist noch nicht verbunden (Einstellungen → Konten)."
     if kanal == "formular" and browser_fabrik is None:
         if not browser_verfuegbar():
             return "Der Browser-Agent (browser-use) ist nicht installiert."
         if not llm_modul.client_verfuegbar():
-            return "Der Browser-Agent braucht einen KI-Zugang (Profil → 🔑 Zugänge)."
+            return "Der Browser-Agent braucht einen KI-Zugang (Einstellungen → Konten)."
     return None
 
 
@@ -590,7 +600,7 @@ def aufraeumen(db: Speicher) -> int:
 def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender: Callable | None) -> tuple[bool, str]:
     konfig = mail.smtp_konfig(profil)
     if konfig is None:
-        return False, "E-Mail-Versand ist nicht eingerichtet (Profil → 🔑 Zugänge → SMTP)."
+        return False, "Dein E-Mail-Konto ist noch nicht verbunden (Einstellungen → Konten)."
     anhaenge = [p for p in [v.anschreiben_pdf, *profil.anhaenge()] if p and Path(p).exists()]
     nachricht = mail.baue_nachricht(
         absender=konfig.absender, absender_name=profil.person.name,
@@ -602,18 +612,56 @@ def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender
     return True, f"E-Mail an {v.empfaenger} gesendet."
 
 
+@dataclass
+class FormularErgebnis:
+    ok: bool
+    text: str
+    gearbeitet: bool = False   # der Agent war wirklich auf der Bewerbungsseite
+    startfehler: bool = False  # der Browser kam gar nicht erst hoch
+
+
 def _sende_formular(
     db: Speicher, profil: Profil, job: Job, v: Vorgang, browser_fabrik: Callable[[Profil], Any] | None,
-) -> tuple[bool, str]:
+) -> FormularErgebnis:
     if browser_fabrik is None and not browser_verfuegbar():
-        return False, "Browser-Agent (browser-use) ist nicht installiert."
+        return FormularErgebnis(False, "Browser-Agent (browser-use) ist nicht installiert.", startfehler=True)
     browser = (browser_fabrik or _standard_browser)(profil)
-    lauf = asyncio.run(browser.bewerbe(
-        job, v.anschreiben or "", dry_run=False,
-        start_url=v.bewerbungs_url, anschreiben_pdf=v.anschreiben_pdf,
-    ))
-    db.speichere_bewerbung(lauf.als_application(v.anschreiben))
-    return lauf.abgeschickt, lauf.zusammenfassung
+    try:
+        lauf = asyncio.run(browser.bewerbe(
+            job, v.anschreiben or "", dry_run=False,
+            start_url=v.bewerbungs_url, anschreiben_pdf=v.anschreiben_pdf,
+        ))
+    except Exception as e:
+        from .bewerben.browser import ist_startfehler, startfehler_text
+
+        if ist_startfehler(str(e)):
+            # Auch nach den Wiederholungen kein Browser - nichts wurde abgeschickt
+            return FormularErgebnis(False, startfehler_text(str(e)), startfehler=True)
+        raise
+    startfehler = bool((lauf.rohdaten or {}).get("browser_startfehler"))
+    if not startfehler:
+        db.speichere_bewerbung(lauf.als_application(v.anschreiben))
+    return FormularErgebnis(lauf.abgeschickt, lauf.zusammenfassung,
+                            gearbeitet=lauf.schritte > 0 and not startfehler, startfehler=startfehler)
+
+
+# Nach einem gescheiterten Browser-Selbsttest so lange nicht erneut testen (der Tick laeuft alle 5 Minuten)
+BROWSER_PAUSE_MIN = 30
+
+
+def _browser_bereit(browser_fabrik: Callable[[Profil], Any] | None) -> tuple[bool, str]:
+    """Kann der Server gerade einen Browser starten? Testet hoechstens alle 30 Minuten neu."""
+    if browser_fabrik is not None:
+        return True, ""
+    from .bewerben import browser as browser_modul
+
+    letzter = browser_modul.letzter_selbsttest()
+    if letzter and not letzter.get("ok"):
+        zeit = zeitplan.als_datetime(letzter.get("zeit"))
+        if zeit and datetime.now(timezone.utc) - zeit < timedelta(minutes=BROWSER_PAUSE_MIN):
+            return False, letzter.get("meldung") or "Browser startet nicht."
+    test = browser_modul.selbsttest()
+    return test.ok, test.meldung
 
 
 def sende_freigegebene(
@@ -627,6 +675,7 @@ def sende_freigegebene(
     zaehler = {"abgeschickt": 0, "fehlgeschlagen": 0, "zurueckgestellt": 0}
     aufraeumen(db)
     bearbeitet: set[str] = set()
+    browser_status: tuple[bool, str] | None = None  # einmal je Lauf pruefen
     while True:
         offen = [v for v in reversed(db.vorgaenge("freigegeben")) if v.ref not in bearbeitet]
         if not offen:
@@ -645,6 +694,15 @@ def sende_freigegebene(
             zaehler["zurueckgestellt"] += len(offen)
             break
         fehlt = versandweg_fehlt(v.kanal, profil, browser_fabrik=browser_fabrik)
+        if not fehlt and not profil.lebenslauf_pfad():
+            fehlt = ("Die Lebenslauf-Datei fehlt (z. B. nach einem Update) – bitte unter Einstellungen → "
+                     "Über mich erneut hochladen.")
+        if not fehlt and v.kanal == "formular":
+            if browser_status is None:
+                browser_status = _browser_bereit(browser_fabrik)
+            if not browser_status[0]:
+                fehlt = (f"Der Browser startet auf dem Server gerade nicht ({browser_status[1]}) – "
+                         "ich versuche es automatisch wieder.")
         if fehlt:
             db.aktualisiere_vorgang(v.ref, hinweis=f"Geht raus, sobald das erledigt ist: {fehlt}")
             zaehler["zurueckgestellt"] += 1
@@ -653,11 +711,10 @@ def sende_freigegebene(
             continue
         v = db.vorgang(v.ref) or v  # frischer Stand nach dem Beanspruchen
         job = db.job(v.ref)
+        gearbeitet = startfehler = False
         try:
             if job is None:
                 raise ValueError("Stelle nicht mehr in der Datenbank.")
-            if not profil.unterlagen.lebenslauf or not profil.anhaenge():
-                raise ValueError("Kein Lebenslauf hinterlegt – bitte im Profil hochladen.")
             if v.kanal == "email":
                 ok, text = _sende_email(db, profil, job, v, mail_sender)
                 if ok:
@@ -666,7 +723,8 @@ def sende_freigegebene(
                         anschreiben=v.anschreiben, ergebnis=text, dry_run=False,
                     ))
             elif v.kanal == "formular":
-                ok, text = _sende_formular(db, profil, job, v, browser_fabrik)
+                f = _sende_formular(db, profil, job, v, browser_fabrik)
+                ok, text, gearbeitet, startfehler = f.ok, f.text, f.gearbeitet, f.startfehler
             else:
                 ok, text = False, "Kein automatischer Bewerbungsweg."
         except Exception as e:
@@ -675,8 +733,14 @@ def sende_freigegebene(
         if ok:
             db.aktualisiere_vorgang(v.ref, status="abgeschickt", gesendet_am=_jetzt(), hinweis=text[:1000])
             zaehler["abgeschickt"] += 1
+        elif startfehler:
+            # Nichts ist passiert - die Freigabe bleibt bestehen, naechster Lauf versucht es erneut
+            db.aktualisiere_vorgang(v.ref, status="freigegeben",
+                                    hinweis=f"Geht raus, sobald der Browser startet: {text}"[:1000])
+            browser_status = (False, text)
+            zaehler["zurueckgestellt"] += 1
         else:
-            if v.kanal == "formular":
+            if v.kanal == "formular" and gearbeitet:
                 # Der Agent kann abgeschickt haben, ohne die Bestaetigung zu sehen
                 text = ("Nicht sicher abgeschickt – bitte prüfen, ob eine Bestätigung kam, bevor du erneut "
                         "sendest. " + text)

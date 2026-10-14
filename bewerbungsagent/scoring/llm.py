@@ -128,7 +128,7 @@ class ModellNichtGefunden(LLMNichtVerfuegbar):
     def __init__(self, modell: str, antwort: str = ""):
         super().__init__(
             f"Das Modell „{modell}“ gibt es bei deinem KI-Zugang nicht. "
-            "Wähle unter Profil → Zugänge ein verfügbares Modell."
+            "Wähle unter Einstellungen → Konten ein verfügbares Modell."
             + (f" (Antwort: {antwort[:200]})" if antwort else "")
         )
         self.modell = modell
@@ -461,7 +461,7 @@ def pruefe_modell(anbieter: str, modell: str | None, *, ausser: tuple[str, ...] 
     ersatz = waehle_ersatz(anbieter, wunsch, liste) or wunsch
     hinweis = (
         f"Das Modell „{wunsch}“ gibt es bei deinem KI-Zugang nicht – ich nutze stattdessen „{ersatz}“. "
-        "Unter Profil → Zugänge kannst du ein verfügbares Modell fest auswählen."
+        "Unter Einstellungen → Konten kannst du ein verfügbares Modell fest auswählen."
     )
     if modell_hinweise.get(anbieter) != hinweis:
         log.warning(hinweis)

@@ -2,79 +2,68 @@
 
 Streamlit-Oberfläche für den kompletten Bewerbungsablauf. Ziel: Der Agent erledigt
 Suche, Bewertung, Anschreiben und Versand – du entscheidest nur noch **Ja** oder **Nein**.
+Gebaut für Desktop **und** Handy: drei Ziele in einer Leiste oben, Karten mit fester
+Anatomie, Material-Icons, ein ruhiges Teal-Farbschema (`.streamlit/config.toml`).
 
 ## 🚀 Start
 
 ```bash
 pip install -e ".[ui,browser]"     # browser = Online-Formulare per browser-use
-playwright install chromium
 streamlit run app.py               # http://localhost:8501
 ```
 
-Zugangsdaten (KI, SMTP, IMAP, BA-Login, Jobbörsen-Keys) trägst du unter
-**Profil → 🔑 Zugänge** ein. Sie liegen in `daten/zugangsdaten.json` (Rechte 0600, nicht
-im Profil, nicht im Git), gelten sofort für UI, Hintergrund-Worker und Cron und haben
-Vorrang vor `.env` bzw. Docker-Umgebung.
+Beim ersten Start führt ein **Assistent** in fünf Schritten durch die Einrichtung:
+Wer bist du → Was suchst du → Lebenslauf → E-Mail-Konto → Los geht's. Erst danach
+startet die Automatik.
+
+Zugangsdaten (E-Mail-Konto, KI, BA-Login, Jobbörsen-Keys) liegen in
+`daten/zugangsdaten.json` (Rechte 0600, nicht im Profil, nicht im Git), gelten sofort für
+UI, Hintergrund-Worker und Cron und haben Vorrang vor `.env` bzw. Docker-Umgebung.
 
 ## 🧭 Seiten
 
-### 🏠 Cockpit (Startseite)
-- **Einladungen zuerst:** vom Postfach erkannte Einladungen/Zusagen stehen ganz oben
-- **Einrichtungs-Check:** zeigt, was noch fehlt (Lebenslauf, KI-Zugang inkl. Modellprüfung, SMTP,
-  Browser-Agent, Formular-Angaben)
-- **Kennzahlen:** wartet auf dich · diese Woche beworben (mit Wochenziel) · Rückmeldungen · weitere passende Stellen
-- **Automatik:** Modus *Automatisch* / *Nur suchen* / *Aus*, Zeitplan mit nächstem Lauf,
-  Knopf **„Jetzt suchen & vorbereiten“** (läuft im Hintergrund) und der **Autopilot**
-  (*Aus* / *Mit Einspruchsfrist* / *Sofort*)
-- **Deine Entscheidung:** pro vorbereiteter Bewerbung eine Karte mit Passung, Gründen,
-  Versandweg (E-Mail-Empfänger bzw. Formular-Domain), Probelauf-Ergebnis und
-  bearbeitbarem Anschreiben. Dazu die **Qualität des Anschreibens** aus der Selbstprüfung,
-  Warnungen zu Aussagen, die der Lebenslauf nicht belegt, und – falls das Formular noch etwas
-  wissen will – Eingabefelder für genau diese **fehlenden Angaben** (werden im Profil gemerkt).
-  **✅ Ja, absenden** verschickt sofort, **❌ Nein** (mit Grund, optional „Arbeitgeber nie
-  wieder“) blendet die Stelle aus, **🔄 Neu** erzeugt Anschreiben und Probelauf neu. Hat der
-  Autopilot die Karte mit Einspruchsfrist versehen, hält **✋ Stopp** sie an.
-- **Der Agent schlägt vor:** Nachfass-Mails (Text bearbeitbar, Ja sendet im selben Thread)
-  und gelernte Änderungen wie „Zeitarbeit ausschließen?“ oder „Suchbegriff übernehmen?“.
-- **Braucht deine Hilfe:** fehlgeschlagene Sendungen mit Ursache, „Nochmal senden“,
-  Link zum Selbstbewerben, Anschreiben zum Kopieren und „Selbst erledigt“.
+### Heute (Startseite)
+- **Begrüßung + Statuszeile:** wie viele warten auf dein Ja, Wochenziel, Einladungen, Autopilot
+- **Startklar x von 5:** was noch fehlt (Kontaktdaten, Lebenslauf, E-Mail-Konto, KI,
+  Online-Formulare) – jeweils mit Knopf, der direkt einen Dialog öffnet (hochladen,
+  verbinden, einrichten, Browser testen)
+- **Einladungen zuerst:** vom Postfach erkannte Einladungen/Zusagen
+- **Deine Entscheidung:** pro vorbereiteter Bewerbung eine Karte: Titel, Firma · Ort · Quelle,
+  eine Zeile Badges (Passung, Versandweg, Qualität des Anschreibens, Formular-Test),
+  Warnungen nur wenn nötig (unbelegte Aussagen, fehlende Formular-Angaben – vorbelegt aus dem
+  Profil), eine Vorschau des Anschreibens und unten **[Lesen & bearbeiten] [Mehr] [Nein] [Ja, absenden]**.
+  „Lesen & bearbeiten“ öffnet einen Dialog mit Versandweg, Empfänger, E-Mail-Text und
+  Anschreiben; „Mehr“ enthält Anzeige, „Neu schreiben lassen“ (mit Hinweis) und „Selbst beworben“.
+- **Braucht deine Hilfe:** fehlgeschlagene Sendungen mit Ursache und dem einfachsten Ausweg
+  (per E-Mail statt Formular, nochmal versuchen, selbst bewerben, Browser testen)
+- **Ideen von mir:** Nachfass-Mails (Text bearbeitbar) und gelernte Änderungen; neue Suchbegriffe
+  gebündelt in einer Karte zum Antippen
+- **Deine Bewerbungen:** verschickte Bewerbungen mit Rückmeldung zum Antippen (Eingang,
+  Einladung, Absage, Zusage) und **Nachweis fürs Amt** (Zeitraum wählen, PDF oder Excel)
+- **Automatik:** in Klartext („Ich suche und bereite vor täglich 6:00 · nächstes Mal …“),
+  letzter Lauf, „Ändern“ und „Jetzt suchen“
 
-### 🧭 Schritt für Schritt
-Der manuelle Weg als geführter Prozess mit Fortschrittsleiste:
-1. **Suchen** – Suchbegriffe, Ort, Umkreis, Zeitraum, Jobbörsen. Daneben **Ideen für deine Suche**:
-   ähnliche Jobtitel aus gut passenden Treffern, KI-Vorschläge, Tipps (z. B. Umkreis erweitern)
-   und eine Auswertung, welche Suchbegriffe passende Stellen bringen. Nach der Suche wird
-   automatisch bewertet.
-2. **Auswählen** – offene Stellen nach Passung, Anzeige lesen, 👍 anhaken oder 👎 „nicht interessant“.
-3. **Prüfen & freigeben** – Anschreiben und Probelauf entstehen im Hintergrund; danach dieselben
-   Ja/Nein-Karten wie im Cockpit.
-4. **Status** – was gerade verschickt wird, was heute rausging, was Hilfe braucht.
+### Suchen
+1. **Suchen** – Jobtitel (mit ähnlichen Jobtiteln zum Antippen und KI-Ideen), Ort, Umkreis;
+   weitere Filter eingeklappt. Tipps und die Auswertung „Was bringen deine Jobtitel?“ darunter.
+2. **Auswählen** – Stellen nach Passung, Anzeige lesen, anhaken oder „Nicht interessant“.
+   **„Weiter: N Bewerbung(en) vorbereiten“** startet Anschreiben (und Formular-Test) im
+   Hintergrund und springt nach **Heute** – dort wird entschieden.
 
-### 📬 Bewerbungen
-- **Übersicht:** alle Vorgänge mit Status; Rückmeldung (Eingang, Einladung, Absage, Zusage)
-  und Notiz direkt in der Tabelle eintragen; Details mit Anschreiben und Protokoll.
-- **Nachfassen:** Bewerbungen ohne Rückmeldung nach X Tagen (Profil), mit fertigem Text – bei
-  E-Mail-Bewerbungen per Ja direkt im selben Thread.
-- **Antworten im Postfach:** in den Details jeder Bewerbung, sofern IMAP eingerichtet ist.
-- **Nachweis fürs Amt:** Eigenbemühungen eines Zeitraums als PDF oder CSV.
-
-### 👤 Profil & Einstellungen
-- **Persönliche Daten** inkl. **Angaben für Formulare** (Anrede, Titel, verfügbar ab, Kündigungsfrist,
-  Gehaltsvorstellung, Arbeitserlaubnis, Staatsangehörigkeit, Abschluss, Berufserfahrung,
-  Umzugsbereitschaft, Führerschein, Sprachen, weitere gelernte Antworten)
-- **Suche & Bewertung** (Suchbegriffe, Skills, Ausschlüsse, gesperrte Arbeitgeber, Mindest-Passung)
-- **🌐 Jobbörsen** (jede Quelle an/aus mit letztem Abruf, Remote, Ausbildung, Zeitarbeit,
-  EURES-Länder) und **Wunsch-Arbeitgeber** (Karriereseite einfügen → Bewerbermanagement
-  wird erkannt)
-- **Unterlagen** (Lebenslauf, Zeugnisse, Anschreiben-Stil; Vorschau des gelesenen Lebenslauftexts)
-- **Automatik & Versand** (Modus, Zeitplan, Limits, Probelauf, Wochenziel, SMTP-Testmail,
-  selbstständiges Dazulernen, Kostenbremse, Autopilot mit Schutzgrenzen)
-- **🔑 Zugänge** (SMTP, IMAP, KI, BA-Login, Jobbörsen-Keys – maskiert, mit Verbindungstest;
-  KI-Modell aus der Liste, die dein Anbieter wirklich anbietet)
+### Einstellungen
+- **Über mich:** Kontakt, „Kurz über dich“, Angaben für Online-Formulare, Unterlagen
+  (Lebenslauf, Zeugnisse – gespeichert im Datenordner, überleben Updates), Stil der Anschreiben
+- **Suche:** Jobtitel, Ort, Umkreis, Mindest-Passung, Feinheiten der Bewertung; Jobbörsen
+  (an/aus mit letztem Abruf, Remote, Ausbildung, Zeitarbeit, EURES) und Wunsch-Arbeitgeber
+- **Automatik:** was regelmäßig passiert, wann (Klartext-Auswahl, eigener Zeitplan nur für
+  Fortgeschrittene), Grenzen, Wochenziel, Formular-Test, Autopilot mit Schutzgrenzen, Dazulernen
+- **Konten:** E-Mail-Konto (Adresse + Passwort, Anbieter wird erkannt, Testmail), KI (Schlüssel,
+  Test, Modellwahl), Online-Formulare (Browser-Test), Arbeitsagentur-Login, Jobbörsen-Keys;
+  Mail-Server von Hand nur eingeklappt für Fortgeschrittene
 
 ## ⚙️ Wie Hintergrundarbeit läuft
 
-Vorbereiten (mit Probelauf) und Versand dauern Minuten. Die UI startet dafür
+Vorbereiten (mit Formular-Test) und Versand dauern Minuten. Die UI startet dafür
 `bewerbungsagent vorbereiten …` bzw. `bewerbungsagent senden` als eigenen Prozess
 (Ausgabe in `daten/worker.log`) und aktualisiert die Anzeige automatisch. Der
 Cron-Tick (alle 5 Minuten) verschickt freigegebene Bewerbungen auch dann, wenn die
@@ -84,14 +73,15 @@ nur einmal beansprucht und gesendet werden.
 ## 🛠️ Struktur
 
 ```
-app.py                       # Navigation (st.navigation)
+app.py                       # Navigation (versteckt) + eigene Leiste oben
+.streamlit/config.toml       # Farben, Rundungen, schlanke Werkzeugleiste
 seiten/
-├── cockpit.py               # Startseite: Automatik + Ja/Nein
-├── schritt_fuer_schritt.py  # geführter manueller Prozess
-├── bewerbungen.py           # Tracker, Nachfassen, Nachweis
-└── profil.py                # Profil & Einstellungen
-bewerbungsagent/ui.py        # gemeinsame Bausteine (Karten, Einrichtungs-Check, Laufstatus)
-bewerbungsagent/ui_einstellungen.py  # Tabs „Jobbörsen“ und „Zugänge“
+├── cockpit.py               # Heute: Entscheidungen, Hilfe, Bewerbungen, Nachweis, Automatik
+├── schritt_fuer_schritt.py  # Suchen: Suchen → Auswählen
+└── profil.py                # Einstellungen: Über mich · Suche · Automatik · Konten
+bewerbungsagent/ui.py              # gemeinsame Bausteine (Karten, Dialoge, Startklar, Laufstatus)
+bewerbungsagent/ui_assistent.py    # Erststart-Assistent
+bewerbungsagent/ui_einstellungen.py  # Konten, Lebenslauf-Upload, Jobbörsen
 ```
 
 Die Seiten liegen bewusst nicht in `pages/`, damit Streamlit nur die Navigation aus
@@ -99,14 +89,16 @@ Die Seiten liegen bewusst nicht in `pages/`, damit Streamlit nur die Navigation 
 
 ## 🐛 Troubleshooting
 
-- **„E-Mail-Versand ist nicht eingerichtet“** → Profil → 🔑 Zugänge → SMTP eintragen und testen.
-  Bereits freigegebene Bewerbungen gehen dann automatisch raus.
-- **„The model … does not exist“ / model not found** → Profil → 🔑 Zugänge → KI-Modell aus der
-  Liste wählen. Der Agent weicht inzwischen selbst auf ein verfügbares Modell aus und zeigt das
-  im Einrichtungs-Check an (`bewerbungsagent modelle` listet die Modelle deines Zugangs).
-- **„Browser-Agent ist nicht installiert“** → `pip install -e ".[browser]"` und `playwright install chromium`.
+- **„Dein E-Mail-Konto ist noch nicht verbunden“** → Einstellungen → Konten → Adresse und
+  Passwort eingeben. Bereits freigegebene Bewerbungen gehen dann automatisch raus.
+- **„The model … does not exist“ / model not found** → Einstellungen → Konten → KI-Modell aus
+  der Liste wählen. Der Agent weicht selbst auf ein verfügbares Modell aus und zeigt das an
+  (`bewerbungsagent modelle` listet die Modelle deines Zugangs).
+- **Online-Formulare scheitern** → Einstellungen → Konten → „Browser testen“ (oder
+  `bewerbungsagent browser-test`). Startet der Browser nicht, bleiben Formular-Bewerbungen
+  freigegeben und gehen beim nächsten Lauf raus.
 - **Formular braucht Login/Captcha** → Die Karte schlägt „Selbst bewerben“ vor; Link öffnen,
-  Anschreiben kopieren, danach „Erledigt“.
+  Anschreiben kopieren, danach „Habe mich selbst beworben“.
 - **Es passiert nichts nach „Ja“** → `daten/worker.log` bzw. `daten/cron.log` ansehen.
-- **Keine Vorschläge im Cockpit** → Mindest-Passung im Profil senken oder unter „Schritt für Schritt“
-  die Suchvorschläge nutzen.
+- **Keine Vorschläge auf Heute** → Mindest-Passung unter Einstellungen → Suche senken oder
+  unter „Suchen“ die ähnlichen Jobtitel nutzen.

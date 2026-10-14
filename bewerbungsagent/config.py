@@ -13,6 +13,34 @@ STANDARD_PFAD = Path("config/profil.yaml")
 BENUTZER_PFAD = Path.home() / ".config" / "bewerbungsagent" / "profil.yaml"
 
 
+def daten_dir() -> Path:
+    """Persistenter Datenordner (im Docker-Betrieb das gemountete Volume /app/daten)."""
+    return Path(os.environ.get("BEWERBUNGSAGENT_DB", "daten/bewerbungen.sqlite3")).parent
+
+
+def daten_profil_pfad() -> Path:
+    return daten_dir() / "profil.yaml"
+
+
+def unterlagen_dir() -> Path:
+    """Hochgeladene Unterlagen liegen im Datenordner - sie ueberleben so jedes Container-Update."""
+    return daten_dir() / "unterlagen"
+
+
+def finde_datei(pfad: str | None) -> Path | None:
+    """Gespeicherten Pfad aufloesen; alte Pfade (unterlagen/x) auch im Datenordner suchen."""
+    if not pfad:
+        return None
+    p = Path(pfad).expanduser()
+    if p.exists():
+        return p
+    for basis in (unterlagen_dir(), Path("unterlagen")):
+        kandidat = basis / p.name
+        if kandidat.exists():
+            return kandidat
+    return None
+
+
 @dataclass
 class Person:
     vorname: str = ""
@@ -155,13 +183,18 @@ class Profil:
     def ba_passwort(self) -> str | None:
         return os.environ.get("BA_PASSWORT")
 
+    def lebenslauf_pfad(self) -> Path | None:
+        """Die tatsaechlich vorhandene Lebenslauf-Datei (oder None, wenn sie fehlt)."""
+        return finde_datei(self.unterlagen.lebenslauf)
+
     def anhaenge(self) -> list[str]:
         pfade = [self.unterlagen.lebenslauf, *self.unterlagen.zeugnisse]
-        return [str(Path(p).expanduser().resolve()) for p in pfade if p and Path(p).expanduser().exists()]
+        gefunden = [finde_datei(p) for p in pfade if p]
+        return list(dict.fromkeys(str(g.resolve()) for g in gefunden if g))
 
     def fehlende_anhaenge(self) -> list[str]:
         pfade = [self.unterlagen.lebenslauf, *self.unterlagen.zeugnisse]
-        return [p for p in pfade if p and not Path(p).expanduser().exists()]
+        return [p for p in pfade if p and finde_datei(p) is None]
 
 
 def _fill(cls, daten: dict[str, Any] | None):
@@ -173,12 +206,13 @@ def _fill(cls, daten: dict[str, Any] | None):
     return cls(**daten)
 
 
-def lade_profil(pfad: str | Path | None = None) -> Profil:
+def lade_profil(pfad: str | Path | None = None, *, pruefen: bool = True) -> Profil:
+    """Profil laden; `pruefen=False` erlaubt halb ausgefuellte Profile (Erststart-Assistent)."""
     p = ermittle_profil_pfad(pfad)
     if not p.exists():
         raise FileNotFoundError(
-            "Noch kein Profil angelegt. Öffne die Seite '👤 Profil' und lege dort "
-            "dein Profil über die Oberfläche an."
+            "Noch kein Profil angelegt. Öffne die Weboberfläche – der Assistent auf „Heute“ "
+            "führt dich in fünf Schritten durch die Einrichtung."
         )
     roh = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     profil = Profil(
@@ -194,20 +228,24 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
     if profil.suche.quellen == ["arbeitsagentur", "get-in-it"]:
         # Unveraenderter alter Standard: neue Jobboersen automatisch mitnehmen
         profil.suche.quellen = Suche().quellen
-    if not profil.suche.was:
+    if pruefen and not profil.suche.was:
         raise ValueError("suche.was ist leer - mindestens ein Suchbegriff noetig.")
     return profil
 
 
 def ermittle_profil_pfad(pfad: str | Path | None = None) -> Path:
-    """Liefert den expliziten oder den vorhandenen Standardpfad für das Profil."""
+    """Liefert den expliziten oder den vorhandenen Pfad für das Profil.
+
+    Reihenfolge: config/profil.yaml (lokal oder gemountet) -> Sicherung im
+    Datenordner (ueberlebt Container-Updates) -> ~/.config. Ein neues Profil
+    entsteht im Datenordner.
+    """
     if pfad is not None:
         return Path(pfad)
-    if STANDARD_PFAD.exists():
-        return STANDARD_PFAD
-    if BENUTZER_PFAD.exists():
-        return BENUTZER_PFAD
-    return STANDARD_PFAD
+    for kandidat in (STANDARD_PFAD, daten_profil_pfad(), BENUTZER_PFAD):
+        if kandidat.exists():
+            return kandidat
+    return daten_profil_pfad()
 
 
 def erstelle_profil(pfad: str | Path | None = None) -> Path:
@@ -232,12 +270,57 @@ def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
         "angaben": _to_dict(profil.angaben),
         "zielfirmen": profil.zielfirmen,
     }
-    p.parent.mkdir(parents=True, exist_ok=True)
-    # Atomar schreiben: UI, Hintergrund-Worker und Cron lesen parallel
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
-    tmp.write_text(yaml.safe_dump(daten, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    os.replace(tmp, p)
+    text = yaml.safe_dump(daten, allow_unicode=True, sort_keys=False)
+    ziele = [p]
+    # config/ ist im Docker-Betrieb oft nicht gemountet: Sicherung im Datenordner
+    if p.resolve() == STANDARD_PFAD.resolve():
+        ziele.append(daten_profil_pfad())
+    for ziel in ziele:
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        # Atomar schreiben: UI, Hintergrund-Worker und Cron lesen parallel
+        tmp = ziel.with_name(f".{ziel.name}.{os.getpid()}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, ziel)
     return p
+
+
+def unterlagen_sichern(profil: Profil, pfad: str | Path | None = None) -> bool:
+    """Unterlagen ausserhalb des Datenordners dorthin kopieren und das Profil umstellen.
+
+    So gehen hochgeladene Dateien bei einem Container-Update nicht mehr verloren.
+    Liefert True, wenn etwas geaendert wurde.
+    """
+    import shutil
+
+    ziel_dir = unterlagen_dir()
+    geaendert = False
+
+    def sichere(eintrag: str) -> str:
+        nonlocal geaendert
+        quelle = finde_datei(eintrag)
+        if quelle is None:
+            return eintrag
+        try:
+            if quelle.resolve().is_relative_to(ziel_dir.resolve()):
+                neu = quelle
+            else:
+                ziel_dir.mkdir(parents=True, exist_ok=True)
+                neu = ziel_dir / quelle.name
+                if not neu.exists() or neu.stat().st_size != quelle.stat().st_size:
+                    shutil.copy2(quelle, neu)
+        except OSError:
+            return eintrag
+        if str(neu) != eintrag:
+            geaendert = True
+        return str(neu)
+
+    u = profil.unterlagen
+    if u.lebenslauf:
+        u.lebenslauf = sichere(u.lebenslauf)
+    u.zeugnisse = [sichere(z) for z in u.zeugnisse]
+    if geaendert:
+        speichere_profil(profil, ermittle_profil_pfad(pfad))
+    return geaendert
 
 
 def lade_env(pfad: str | Path = ".env") -> int:

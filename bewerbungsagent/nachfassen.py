@@ -104,7 +104,7 @@ def senden(db: Speicher, profil: Profil, vorschlag: dict[str, Any], *, mail_send
     """Ja zum Nachfassen: Mail im selben Thread verschicken."""
     konfig = mail.smtp_konfig(profil)
     if konfig is None:
-        return "E-Mail-Versand ist nicht eingerichtet (Profil → 🔑 Zugänge) – Vorschlag bleibt offen."
+        return "Dein E-Mail-Konto ist noch nicht verbunden (Einstellungen → Konten) – Vorschlag bleibt offen."
     daten = vorschlag["daten"]
     nachricht = mail.baue_nachricht(
         absender=konfig.absender, absender_name=profil.person.name, empfaenger=daten["empfaenger"],
