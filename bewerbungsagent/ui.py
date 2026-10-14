@@ -157,7 +157,7 @@ def einrichtung(profil: Profil) -> list[tuple[bool, bool, str, str]]:
     return [
         (bool(p.name and p.email and p.telefon and p.ort), True, "Persönliche Daten",
          "Name, E-Mail, Telefon und Ort im Profil eintragen."),
-        (bool(profil.anhaenge()) and bool(profil.unterlagen.lebenslauf), True, "Lebenslauf",
+        (profil.lebenslauf_pfad() is not None, True, "Lebenslauf",
          "Lebenslauf (PDF) unter Profil → Unterlagen hochladen."),
         (ki_ok, False, "KI für Bewertung & Anschreiben", ki_text),
         (mail.smtp_eingerichtet(), False, "E-Mail-Versand",
@@ -571,6 +571,46 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
                               help="Anschreiben und Probelauf neu erzeugen", width="stretch")
 
 
+def bewerbungs_email(job: Job, v: Vorgang) -> str | None:
+    """Eine Adresse, an die man sich statt des Formulars per E-Mail bewerben kann."""
+    from .bewerben.kanal import finde_bewerbungs_email
+
+    kandidaten = [v.probelauf_daten.get("bewerbungs_email"), finde_bewerbungs_email(job.beschreibung)[0],
+                  job.kontakt_email]
+    return next((k.strip().lower() for k in kandidaten if k and "@" in k), None)
+
+
+def _cb_per_email(ref: str, adresse: str) -> None:
+    profil = lade_profil()
+    with oeffne_db() as db:
+        try:
+            ablauf.freigeben(db, profil, ref, kanal="email", empfaenger=adresse)
+        except ValueError as e:
+            st.session_state[f"nochmal_fehler_{ref}"] = str(e)
+            return
+    starte_hintergrund("senden", "--ausloeser", "ja", meldung=f"Bewerbung geht per E-Mail an {adresse} …")
+
+
+def _cb_browser_test() -> None:
+    from .bewerben import browser
+
+    with st.spinner("Starte den Browser testweise …"):
+        browser.selbsttest()
+
+
+def browser_test_anzeige(schluessel: str = "browser_test") -> None:
+    """Letztes Ergebnis des Browser-Selbsttests + Knopf zum erneuten Testen."""
+    from .bewerben import browser
+
+    letzter = browser.letzter_selbsttest()
+    if letzter:
+        text = f"{letzter.get('meldung')} (getestet {zeit(letzter.get('zeit'))})"
+        (st.success if letzter.get("ok") else st.error)(text)
+    else:
+        st.caption("Noch nicht getestet, ob der Browser für Online-Formulare auf dem Server startet.")
+    st.button("Browser testen", key=schluessel, on_click=_cb_browser_test, icon=":material/play_circle:")
+
+
 def hilfe_karte(db: Speicher, v: Vorgang, praefix: str = "hk") -> None:
     """Fehlgeschlagene Bewerbung: Ursache zeigen und beim Selbstbewerben helfen."""
     job = db.job(v.ref)
@@ -582,6 +622,16 @@ def hilfe_karte(db: Speicher, v: Vorgang, praefix: str = "hk") -> None:
         fehler = st.session_state.get(f"nochmal_fehler_{v.ref}")
         if fehler:
             st.error(fehler)
+        adresse = bewerbungs_email(job, v) if v.kanal == "formular" else None
+        if adresse:
+            if mail.smtp_eingerichtet():
+                st.button(f"Stattdessen per E-Mail an {adresse} senden", key=f"{praefix}_mail_{v.ref}",
+                          on_click=_cb_per_email, args=(v.ref, adresse), type="primary", icon=":material/mail:")
+            else:
+                st.caption(f"Die Anzeige nennt {adresse} – verbinde dein E-Mail-Konto (Einstellungen → Konten), "
+                           "dann geht die Bewerbung auch ohne Formular raus.")
+        if v.kanal == "formular" and v.hinweis and ("Browser" in v.hinweis or "browser" in v.hinweis):
+            browser_test_anzeige(f"{praefix}_btest_{v.ref}")
         if v.anschreiben:
             with st.expander("📋 Anschreiben zum Kopieren"):
                 st.code(v.anschreiben, language=None, wrap_lines=True)

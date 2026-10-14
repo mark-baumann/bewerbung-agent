@@ -206,6 +206,11 @@ def zeige_zugaenge(profil: Profil, speichern: Callable[[str], None]) -> None:
     with st.container(border=True):
         st.markdown("##### :material/mail: Dein E-Mail-Konto")
         mailkonto_verbinden(profil)
+    with st.container(border=True):
+        from .ui import browser_test_anzeige
+
+        st.markdown("##### :material/language: Online-Formulare (Browser auf dem Server)")
+        browser_test_anzeige("zugang_browser_test")
     for gruppe, titel in zugangsdaten.GRUPPEN.items():
         if gruppe in ("smtp", "imap"):
             continue

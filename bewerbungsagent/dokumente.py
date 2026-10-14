@@ -159,8 +159,8 @@ def _dateiname(ref: str) -> str:
 
 def lebenslauf_text(profil: Profil, cache_dir: str | Path | None = None) -> str:
     """Text des hinterlegten Lebenslaufs (PDF/TXT/MD), gecacht nach Aenderungszeit."""
-    pfad = Path(profil.unterlagen.lebenslauf).expanduser() if profil.unterlagen.lebenslauf else None
-    if not pfad or not pfad.exists():
+    pfad = profil.lebenslauf_pfad()
+    if not pfad:
         return ""
     cache = Path(cache_dir or DATEN_DIR) / "lebenslauf_cache.json"
     stempel = f"{pfad.resolve()}|{pfad.stat().st_mtime_ns}"

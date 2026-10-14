@@ -11,9 +11,12 @@ browser-use ist ein optionales Extra:  pip install -e ".[browser]"
 from __future__ import annotations
 
 import asyncio
+import glob
+import inspect
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,12 +55,161 @@ class BrowserUseFehlt(RuntimeError):
 
 
 def _pruefe_browser_use() -> None:
+    _browser_umgebung()
     try:
         import browser_use  # noqa: F401
     except ImportError as e:
         raise BrowserUseFehlt(
             'browser-use ist nicht installiert. Installiere es mit:  pip install -e ".[browser]"'
         ) from e
+    _cdp_wartezeit_verlaengern()
+
+
+# --------------------------------------------------------------------------- #
+# Browser-Start robust machen (Raspberry Pi, Docker)
+# --------------------------------------------------------------------------- #
+
+# browser-use gibt Chromium standardmaessig nur 30 s zum Starten - auf einem
+# Raspberry Pi (SD-Karte, wenig RAM) reicht das oft nicht.
+START_TIMEOUT_S = 150
+_CDP_GEPATCHT = False
+
+
+def _browser_umgebung() -> None:
+    """Grosszuegige Startzeiten setzen - muss vor dem Import von browser_use passieren."""
+    for name in ("TIMEOUT_BrowserStartEvent", "TIMEOUT_BrowserLaunchEvent", "TIMEOUT_BrowserConnectedEvent"):
+        os.environ.setdefault(name, str(START_TIMEOUT_S))
+    os.environ.setdefault("BROWSER_USE_CDP_TIMEOUT_S", "90")
+    os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
+    if Path("/.dockerenv").exists():
+        os.environ.setdefault("IN_DOCKER", "true")
+
+
+def _cdp_wartezeit_verlaengern() -> None:
+    """browser-use wartet hart kodiert 30 s auf Chromium; auf langsamen Geraeten verlaengern."""
+    global _CDP_GEPATCHT
+    if _CDP_GEPATCHT:
+        return
+    try:
+        from browser_use.browser.watchdogs.local_browser_watchdog import LocalBrowserWatchdog
+    except Exception:  # andere browser-use-Version: nichts anfassen
+        return
+    original = getattr(LocalBrowserWatchdog, "_wait_for_cdp_url", None)
+    if original is None or "timeout" not in inspect.signature(original).parameters:
+        return
+
+    async def warte(port: int, timeout: float = 30, process: Any = None) -> str:
+        return await original(port, timeout=max(float(timeout), START_TIMEOUT_S - 30), process=process)
+
+    LocalBrowserWatchdog._wait_for_cdp_url = staticmethod(warte)
+    _CDP_GEPATCHT = True
+
+
+def browser_pfad() -> str | None:
+    """Chromium/Chrome finden: Umgebung, Systempaket, dann Playwright-Downloads."""
+    kandidaten = [os.environ.get("BROWSER_EXECUTABLE_PATH"), "/usr/bin/chromium", "/usr/bin/chromium-browser",
+                  "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"]
+    for basis in {os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "", str(Path.home() / ".cache" / "ms-playwright")}:
+        if basis:
+            kandidaten += sorted(glob.glob(f"{basis}/chromium-*/chrome-linux*/chrome"), reverse=True)
+    for kandidat in kandidaten:
+        if kandidat and Path(kandidat).is_file() and os.access(kandidat, os.X_OK):
+            return kandidat
+    return None
+
+
+_STARTFEHLER = re.compile(r"BrowserStartEvent|BrowserLaunchEvent|exited before CDP|No local Chrome|"
+                          r"failed to install with playwright|CDP became available|browser.*(timed out|not start)",
+                          re.IGNORECASE)
+
+
+def ist_startfehler(text: str | None) -> bool:
+    return bool(text and _STARTFEHLER.search(text))
+
+
+def startfehler_text(fehler: str) -> str:
+    """Technische Startfehler in eine verstaendliche Ursache uebersetzen."""
+    f = fehler.lower()
+    if "no local chrome" in f or "failed to install" in f:
+        return ("Auf dem Server ist kein Chromium-Browser installiert. Im Docker-Image wird er ab diesem Update "
+                "mitgeliefert – nach dem nächsten Deploy erneut testen.")
+    if "exited before cdp" in f:
+        return ("Chromium stürzt beim Start ab (oft zu wenig Arbeitsspeicher oder fehlende Systembibliotheken). "
+                f"Technisch: {fehler[:200]}")
+    if "timed out" in f or "timeout" in f:
+        return (f"Der Browser startet zu langsam (über {START_TIMEOUT_S} s). Der Server ist ausgelastet oder "
+                "Chromium hängt beim Start.")
+    return f"Der Browser lässt sich nicht starten: {fehler[:240]}"
+
+
+@dataclass
+class Selbsttest:
+    ok: bool
+    sekunden: float
+    meldung: str
+    pfad: str | None = None
+
+
+async def _selbsttest_async(timeout: float) -> Selbsttest:
+    from browser_use import BrowserProfile, BrowserSession
+
+    pfad = browser_pfad()
+    profil = BrowserProfile(headless=True, chromium_sandbox=_sandbox_moeglich(), executable_path=pfad,
+                            enable_default_extensions=False)
+    sitzung = BrowserSession(browser_profile=profil)
+    beginn = time.monotonic()
+    try:
+        await asyncio.wait_for(sitzung.start(), timeout)
+        dauer = time.monotonic() - beginn
+        return Selbsttest(True, dauer, f"Browser startet in {dauer:.0f} s ({pfad or 'browser-use-Standard'}).", pfad)
+    finally:
+        try:
+            await asyncio.wait_for(sitzung.kill(), 30)
+        except Exception:
+            pass
+
+
+def _testdatei() -> Path:
+    from ..db import STANDARD_DB
+
+    return STANDARD_DB.parent / "browser_test.json"
+
+
+def letzter_selbsttest() -> dict[str, Any] | None:
+    """Ergebnis des letzten Selbsttests (auch aus anderen Prozessen, z. B. dem Cron-Tick)."""
+    import json
+
+    try:
+        return json.loads(_testdatei().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def selbsttest(timeout: float = START_TIMEOUT_S) -> Selbsttest:
+    """Startet den Browser einmal headless und schliesst ihn wieder - ohne KI, ohne Webseite."""
+    import json
+    from datetime import datetime, timezone
+
+    beginn = time.monotonic()
+    try:
+        _pruefe_browser_use()
+        ergebnis = asyncio.run(_selbsttest_async(timeout))
+    except BrowserUseFehlt as e:
+        ergebnis = Selbsttest(False, 0.0, str(e), browser_pfad())
+    except (TimeoutError, asyncio.TimeoutError):
+        ergebnis = Selbsttest(False, time.monotonic() - beginn, startfehler_text("timed out"), browser_pfad())
+    except Exception as e:
+        ergebnis = Selbsttest(False, time.monotonic() - beginn, startfehler_text(f"{type(e).__name__}: {e}"),
+                              browser_pfad())
+    try:
+        _testdatei().parent.mkdir(parents=True, exist_ok=True)
+        _testdatei().write_text(json.dumps({
+            "ok": ergebnis.ok, "sekunden": round(ergebnis.sekunden, 1), "meldung": ergebnis.meldung,
+            "pfad": ergebnis.pfad, "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return ergebnis
 
 
 def _browser_llm(modell: str, ausser: tuple[str, ...] = ()):
@@ -149,8 +301,8 @@ BROWSER_START_BACKOFF_S = 10.0     # Wartezeit zwischen den Versuchen
 
 
 def _lebenslauf_vorhanden(profil: Profil) -> bool:
-    pfad = profil.unterlagen.lebenslauf
-    return bool(pfad) and Path(pfad).expanduser().exists()
+    # findet alte Pfade auch im Datenordner wieder (nach Container-Updates)
+    return profil.lebenslauf_pfad() is not None
 
 
 async def _run_mit_retry(run_factory):
@@ -236,10 +388,10 @@ def _anhang_zeilen(anschreiben_pdf: str | None, profil: Profil) -> tuple[list[st
         pfad = str(Path(anschreiben_pdf).resolve())
         pfade.append(pfad)
         zeilen.append(f"- Anschreiben: {pfad}")
-    lebenslauf = profil.unterlagen.lebenslauf
+    lebenslauf = profil.lebenslauf_pfad()
     for pfad in profil.anhaenge():
         pfade.append(pfad)
-        art = "Lebenslauf" if lebenslauf and Path(pfad) == Path(lebenslauf).expanduser().resolve() else "Zeugnis/Anlage"
+        art = "Lebenslauf" if lebenslauf and Path(pfad) == lebenslauf.resolve() else "Zeugnis/Anlage"
         zeilen.append(f"- {art}: {pfad}")
     return pfade, "\n".join(zeilen) or "- (keine Dateien hinterlegt)"
 
@@ -425,7 +577,9 @@ class BewerbungsBrowser:
             # Chromium startet als root nicht mit aktivierter Sandbox (Container,
             # CI). Lokal als normaler Nutzer bleibt die Sandbox an.
             chromium_sandbox=_sandbox_moeglich(),
-            executable_path=os.environ.get("BROWSER_EXECUTABLE_PATH") or None,
+            executable_path=browser_pfad(),
+            # Keine Erweiterungen bei jedem Start aus dem Netz laden (kostet auf dem Pi die Startzeit)
+            enable_default_extensions=False,
         )
 
         # Zugangsdaten erreichen das Modell nie im Klartext: browser-use setzt
@@ -455,6 +609,13 @@ class BewerbungsBrowser:
             save_conversation_path=self.aufzeichnung,
             use_vision=vision,
         )
+
+    @staticmethod
+    def _startfehler(history: Any) -> bool:
+        if not history.has_errors() or history.number_of_steps() > 1:
+            return False
+        fehler = [f for f in history.errors() if f]
+        return bool(fehler) and ist_startfehler(fehler[-1])
 
     def _modell_fehlte(self, history: Any, agent: Any) -> bool:
         """True, wenn der Lauf am unbekannten Modell scheiterte und ein Ersatz bereitsteht."""
@@ -517,6 +678,14 @@ class BewerbungsBrowser:
                 job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
             )
             history = await agent.run(max_steps=self.max_schritte)
+            if self._startfehler(history):
+                # Chromium kam nicht hoch (langsamer Pi, Kaltstart) und browser-use hat den
+                # Fehler nur protokolliert statt ihn zu werfen: genau ein zweiter Versuch
+                log.warning("Browser-Start fehlgeschlagen - zweiter Versuch.")
+                agent = self.baue_agent(
+                    job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
+                )
+                history = await agent.run(max_steps=self.max_schritte)
             if self._modell_fehlte(history, agent):
                 # Das Modell gibt es beim Anbieter nicht: einmal mit einem verfuegbaren neu starten
                 agent = self.baue_agent(
@@ -562,7 +731,11 @@ class BewerbungsBrowser:
                         "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Profil → Zugänge "
                         "ein verfügbares Modell wählen und erneut versuchen."
                     )
-                zusammenfassung += f"\nFehler: {fehler[-1]}"
+                if ist_startfehler(fehler[-1]):
+                    zusammenfassung = startfehler_text(fehler[-1])
+                    rohdaten = {**(rohdaten or {}), "browser_startfehler": True}
+                else:
+                    zusammenfassung += f"\nFehler: {fehler[-1]}"
 
         return BewerbungsLauf(
             ref=job.ref,

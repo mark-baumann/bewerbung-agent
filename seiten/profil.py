@@ -7,12 +7,13 @@ import streamlit as st
 from bewerbungsagent import ablauf, dokumente, ui, ui_einstellungen, zeitplan
 from bewerbungsagent.bewerben import mail
 from bewerbungsagent.config import MODI, erstelle_profil, ermittle_profil_pfad, lade_profil, speichere_profil
+from bewerbungsagent.config import unterlagen_dir as unterlagen_dir_fn
 
 st.title("👤 Profil & Einstellungen")
 
 profil_pfad = ermittle_profil_pfad()
-unterlagen_dir = Path("unterlagen")
-unterlagen_dir.mkdir(exist_ok=True)
+unterlagen_dir = unterlagen_dir_fn()
+unterlagen_dir.mkdir(parents=True, exist_ok=True)
 
 try:
     profil = lade_profil(profil_pfad)

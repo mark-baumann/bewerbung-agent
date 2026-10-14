@@ -31,8 +31,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System-Abhängigkeiten: Chromium + Playwright-Browser + Browser-Treiber
+# System-Abhängigkeiten inkl. Chromium aus Debian (läuft zuverlässig auch auf
+# ARM64/Raspberry Pi; der browser-use-Agent nutzt ihn über BROWSER_EXECUTABLE_PATH)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
     curl \
     cron \
     tzdata \
@@ -63,8 +65,7 @@ COPY pyproject.toml README.md ./
 COPY bewerbungsagent ./bewerbungsagent
 RUN pip install --no-cache-dir -e ".[browser,ui]"
 
-# Chromium für Playwright installieren (headless-fähig)
-RUN python -m playwright install chromium
+# Kein zusätzlicher Playwright-Browser-Download: der Debian-Chromium oben reicht.
 
 # Streamlit-UI-Code (Hauptseite + Unterseiten). Läuft nur, wenn der
 # Container ohne Argumente gestartet wird (siehe docker-entrypoint.sh).
@@ -80,6 +81,12 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p /app/daten
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8501
 ENV TZ=Europe/Berlin
+# Browser-Agent: System-Chromium, Docker-Startparameter, großzügige Startzeit für den Pi
+ENV BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV IN_DOCKER=true
+ENV TIMEOUT_BrowserStartEvent=150
+ENV TIMEOUT_BrowserLaunchEvent=150
+ENV ANONYMIZED_TELEMETRY=false
 
 EXPOSE $PORT
 

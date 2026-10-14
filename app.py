@@ -14,6 +14,20 @@ from bewerbungsagent.config import lade_env  # noqa: E402
 lade_env()
 zugangsdaten.anwenden()
 
+
+@st.cache_resource
+def _unterlagen_einmal_sichern() -> None:
+    """Alte Uploads (unterlagen/) beim Start in den dauerhaften Datenordner kopieren."""
+    from bewerbungsagent.config import lade_profil, unterlagen_sichern
+
+    try:
+        unterlagen_sichern(lade_profil())
+    except Exception:
+        pass
+
+
+_unterlagen_einmal_sichern()
+
 st.set_page_config(page_title="Bewerbungsagent", page_icon="📬", layout="wide")
 
 seiten = st.navigation([
