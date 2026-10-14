@@ -71,6 +71,7 @@ RUN pip install --no-cache-dir -e ".[browser,ui]"
 # Container ohne Argumente gestartet wird (siehe docker-entrypoint.sh).
 COPY app.py ./
 COPY seiten ./seiten
+COPY .streamlit ./.streamlit
 COPY config ./config
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

@@ -1,4 +1,4 @@
-"""Einstieg der Web-UI: Navigation zwischen Cockpit, Prozess, Tracker und Profil."""
+"""Einstieg der Web-UI: Heute (Entscheidungen), Suchen und Einstellungen."""
 
 import sys
 from pathlib import Path
@@ -28,12 +28,15 @@ def _unterlagen_einmal_sichern() -> None:
 
 _unterlagen_einmal_sichern()
 
-st.set_page_config(page_title="Bewerbungsagent", page_icon="📬", layout="wide")
+st.set_page_config(page_title="Bewerbungsagent", page_icon=":material/work:", layout="centered")
 
+from bewerbungsagent import ui  # noqa: E402
+
+# Eigene Leiste oben statt Seitenleiste: am Handy immer sichtbar, nur drei Ziele.
 seiten = st.navigation([
-    st.Page("seiten/cockpit.py", title="Cockpit", icon="🏠", default=True),
-    st.Page("seiten/schritt_fuer_schritt.py", title="Schritt für Schritt", icon="🧭", url_path="schritte"),
-    st.Page("seiten/bewerbungen.py", title="Bewerbungen", icon="📬", url_path="bewerbungen"),
-    st.Page("seiten/profil.py", title="Profil & Einstellungen", icon="👤", url_path="profil"),
-])
+    st.Page(ui.SEITE_HEUTE, title="Heute", icon=":material/today:", default=True),
+    st.Page(ui.SEITE_SUCHEN, title="Suchen", icon=":material/search:", url_path="suchen"),
+    st.Page(ui.SEITE_EINSTELLUNGEN, title="Einstellungen", icon=":material/settings:", url_path="einstellungen"),
+], position="hidden")
+ui.navleiste()
 seiten.run()

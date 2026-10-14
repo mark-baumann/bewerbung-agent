@@ -206,12 +206,13 @@ def _fill(cls, daten: dict[str, Any] | None):
     return cls(**daten)
 
 
-def lade_profil(pfad: str | Path | None = None) -> Profil:
+def lade_profil(pfad: str | Path | None = None, *, pruefen: bool = True) -> Profil:
+    """Profil laden; `pruefen=False` erlaubt halb ausgefuellte Profile (Erststart-Assistent)."""
     p = ermittle_profil_pfad(pfad)
     if not p.exists():
         raise FileNotFoundError(
-            "Noch kein Profil angelegt. Öffne die Seite '👤 Profil' und lege dort "
-            "dein Profil über die Oberfläche an."
+            "Noch kein Profil angelegt. Öffne die Weboberfläche – der Assistent auf „Heute“ "
+            "führt dich in fünf Schritten durch die Einrichtung."
         )
     roh = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     profil = Profil(
@@ -227,7 +228,7 @@ def lade_profil(pfad: str | Path | None = None) -> Profil:
     if profil.suche.quellen == ["arbeitsagentur", "get-in-it"]:
         # Unveraenderter alter Standard: neue Jobboersen automatisch mitnehmen
         profil.suche.quellen = Suche().quellen
-    if not profil.suche.was:
+    if pruefen and not profil.suche.was:
         raise ValueError("suche.was ist leer - mindestens ein Suchbegriff noetig.")
     return profil
 

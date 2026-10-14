@@ -1,4 +1,4 @@
-"""Profil-Tabs „Zugänge“ und „Jobbörsen & Wunsch-Arbeitgeber“.
+"""Einstellungen: Konten (E-Mail, KI, Browser, Arbeitsagentur), Lebenslauf, Jobbörsen.
 
 Zugangsdaten landen in `daten/zugangsdaten.json` (siehe `zugangsdaten.py`),
 nie in der Profil-YAML. Geheime Felder werden nie im Klartext angezeigt: ein
@@ -8,12 +8,13 @@ leeres Passwortfeld bedeutet „unverändert“.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Callable
 
 import streamlit as st
 
 from . import zugangsdaten
-from .config import Profil
+from .config import Profil, ermittle_profil_pfad, speichere_profil, unterlagen_dir
 from .db import Speicher
 from .scoring import llm as llm_modul
 from .sources import QUELLEN
@@ -21,14 +22,21 @@ from .sources.ats import ATS_NAMEN, erkenne_ats, kurzbeschreibung
 
 HERKUNFT_TEXT = {"ui": "hier gespeichert", "umgebung": "aus .env/Umgebung", None: "nicht gesetzt"}
 TEST = {
-    "smtp": ("🔌 Anmeldung testen", lambda profil: zugangsdaten.teste_smtp()),
-    "imap": ("🔌 Postfach testen", lambda profil: zugangsdaten.teste_imap()),
-    "ki": ("🔌 KI testen", lambda profil: zugangsdaten.teste_ki(profil.bewertung.modell)),
+    "smtp": ("Anmeldung testen", lambda profil: zugangsdaten.teste_smtp()),
+    "imap": ("Postfach testen", lambda profil: zugangsdaten.teste_imap()),
+    "ki": ("KI testen", lambda profil: zugangsdaten.teste_ki(profil.bewertung.modell)),
+}
+GRUPPEN_TITEL = {
+    "smtp": "Postausgang (SMTP)",
+    "imap": "Posteingang (IMAP)",
+    "ki": ":material/auto_awesome: KI für Bewertung und Anschreiben",
+    "ba": ":material/account_balance: Konto bei der Arbeitsagentur (optional)",
+    "quellen": ":material/travel_explore: Schlüssel für zusätzliche Jobbörsen (optional)",
 }
 LAENDER = {"at": "Österreich", "ch": "Schweiz", "nl": "Niederlande", "lu": "Luxemburg", "be": "Belgien",
            "dk": "Dänemark", "fr": "Frankreich", "it": "Italien", "es": "Spanien", "pl": "Polen",
            "cz": "Tschechien", "se": "Schweden", "no": "Norwegen", "ie": "Irland", "pt": "Portugal"}
-ART_TEXT = {"suche": "🔎 Stichwortsuche", "feed": "📰 Feed (lokal gefiltert)", "arbeitgeber": "🏢 Karriereseiten"}
+ART_TEXT = {"suche": "Stichwortsuche", "feed": "Feed (lokal gefiltert)", "arbeitgeber": "Karriereseiten"}
 
 
 def _testergebnis(schluessel: str) -> None:
@@ -56,7 +64,7 @@ def _gruppe(gruppe: str, profil: Profil) -> None:
                     )
                 else:
                     werte[f.name] = st.text_input(f.label, value=aktuell, help=hilfe)
-        if st.form_submit_button("💾 Speichern", type="primary"):
+        if st.form_submit_button("Speichern", type="primary", icon=":material/save:"):
             aenderungen: dict[str, str | None] = {}
             for f in felder:
                 neu = (werte[f.name] or "").strip()
@@ -75,11 +83,12 @@ def _gruppe(gruppe: str, profil: Profil) -> None:
     knoepfe = st.columns([1, 2, 2])
     if gruppe in TEST:
         text, funktion = TEST[gruppe]
-        if knoepfe[0].button(text, key=f"zugang_testen_{gruppe}"):
+        if knoepfe[0].button(text, key=f"zugang_testen_{gruppe}", icon=":material/power:"):
             with st.spinner("Teste …"):
                 st.session_state[f"zugang_test_{gruppe}"] = funktion(profil)
     hier = [f.name for f in felder if f.name in gespeichert]
-    if hier and knoepfe[1].button("🗑️ Hier gespeicherte löschen", key=f"zugang_loeschen_{gruppe}",
+    if hier and knoepfe[1].button("Hier gespeicherte löschen", key=f"zugang_loeschen_{gruppe}",
+                                   icon=":material/delete:",
                                    help="Danach gelten wieder die Werte aus .env/Umgebung (falls vorhanden)."):
         zugangsdaten.speichere({name: None for name in hier})
         llm_modul.vergiss_modelle()
@@ -90,19 +99,19 @@ def _gruppe(gruppe: str, profil: Profil) -> None:
 def _ki_modell(profil: Profil, speichern: Callable[[str], None]) -> None:
     anbieter = llm_modul.provider(profil.bewertung.modell)
     if anbieter is None:
-        st.info("Trage oben einen Schlüssel für Claude, ChatGPT oder einen Ollama-Server ein – ohne KI wird per "
-                "Stichworten bewertet und das Anschreiben aus einer Vorlage erstellt.")
+        st.caption("Trage oben einen Schlüssel für Claude oder ChatGPT oder die Adresse deines Ollama-Servers ein – "
+                   "ohne KI bewerte ich per Stichworten und schreibe Anschreiben aus einer Vorlage.")
         return
     modelle = llm_modul.verfuegbare_modelle(anbieter)
     ziel, hinweis = llm_modul.pruefe_modell(anbieter, profil.bewertung.modell)
-    st.markdown(f"**Aktiver Anbieter:** {anbieter} · **genutztes Modell:** `{ziel}`")
+    st.markdown(f"**Verbunden mit {anbieter}** · Modell `{ziel}`")
     if hinweis:
         st.warning(hinweis)
     if not modelle:
         st.warning(llm_modul.modell_fehler.get(anbieter) or "Der KI-Server hat keine Modellliste geliefert.")
         with st.form("ki_modell_frei"):
             name = st.text_input("Modellname", value=profil.bewertung.modell)
-            if st.form_submit_button("💾 Modell speichern") and name.strip():
+            if st.form_submit_button("Modell speichern", icon=":material/save:") and name.strip():
                 profil.bewertung.modell = name.strip()
                 speichern(f"Modell auf {name.strip()} gesetzt.")
         return
@@ -117,12 +126,12 @@ def _ki_modell(profil: Profil, speichern: Callable[[str], None]) -> None:
             "Denkaufwand (nur Claude)", ["low", "medium", "high"], default=profil.bewertung.effort,
             format_func={"low": "niedrig", "medium": "mittel", "high": "hoch"}.get,
         )
-        if st.form_submit_button("💾 Modell speichern"):
+        if st.form_submit_button("Modell speichern", icon=":material/save:"):
             profil.bewertung.modell = gewaehlt
             profil.bewertung.effort = aufwand or profil.bewertung.effort
             llm_modul.modell_hinweise.pop(anbieter, None)
             speichern(f"Modell auf {gewaehlt} gesetzt.")
-    if st.button("🔄 Modellliste neu laden"):
+    if st.button("Modellliste neu laden", icon=":material/refresh:"):
         llm_modul.verfuegbare_modelle(anbieter, neu_laden=True)
         st.rerun()
 
@@ -159,7 +168,7 @@ def mailkonto_verbinden(profil: Profil, *, schluessel: str = "mailkonto") -> boo
         return True
 
     st.markdown("Gib die Adresse und das Passwort deines Postfachs ein – Server und Einstellungen "
-                "sucht der Agent selbst heraus und prüft die Anmeldung sofort.")
+                "suche ich selbst heraus und prüfe die Anmeldung sofort.")
     vorschlag = os.environ.get("SMTP_BENUTZER") or profil.person.email
     with st.form(f"{schluessel}_form", border=False):
         adresse = st.text_input("E-Mail-Adresse", value=vorschlag, placeholder="vorname@beispiel.de",
@@ -197,48 +206,85 @@ def mailkonto_verbinden(profil: Profil, *, schluessel: str = "mailkonto") -> boo
     return False
 
 
+def _speichern_fuer(profil: Profil) -> Callable[[str], None]:
+    def speichern(meldung: str = "Gespeichert.") -> None:
+        speichere_profil(profil, ermittle_profil_pfad())
+        st.success(meldung, icon=":material/check_circle:")
+
+    return speichern
+
+
+def ki_einrichten(profil: Profil) -> None:
+    """Schluessel eintragen, testen, Modell waehlen – auch im Dialog nutzbar."""
+    _gruppe("ki", profil)
+    if llm_modul.provider(profil.bewertung.modell) is not None:
+        st.divider()
+    _ki_modell(profil, _speichern_fuer(profil))
+
+
+def lebenslauf_hochladen(profil: Profil, *, schluessel: str = "lebenslauf_upload") -> bool:
+    """Upload in den dauerhaften Datenordner; True, wenn danach ein Lebenslauf vorliegt."""
+    upload = st.file_uploader("Lebenslauf (am besten als PDF)", type=["pdf", "docx", "txt", "md"], key=schluessel)
+    if upload is not None:
+        ziel = unterlagen_dir() / upload.name
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        ziel.write_bytes(upload.getbuffer())
+        if profil.unterlagen.lebenslauf != str(ziel):
+            profil.unterlagen.lebenslauf = str(ziel)
+            speichere_profil(profil, ermittle_profil_pfad())
+            st.toast(f"Lebenslauf gespeichert: {ziel.name}", icon=":material/description:")
+    datei = profil.lebenslauf_pfad()
+    if datei is not None:
+        st.success(f"Hinterlegt: **{datei.name}** ({datei.stat().st_size / 1024:.0f} KB)",
+                   icon=":material/description:")
+    elif profil.unterlagen.lebenslauf:
+        st.warning(f"Die Datei „{Path(profil.unterlagen.lebenslauf).name}“ fehlt (z. B. nach einem Update) – "
+                   "bitte erneut hochladen.", icon=":material/warning:")
+    return datei is not None
+
+
 def zeige_zugaenge(profil: Profil, speichern: Callable[[str], None]) -> None:
-    st.caption(
-        "Zugangsdaten werden nur auf diesem Gerät gespeichert (`daten/zugangsdaten.json`, nur für dich lesbar) – "
-        "nie im Profil und nie im Git. Was du hier einträgst, hat Vorrang vor der `.env` und gilt sofort, "
-        "auch für Automatik und Versand. Passwortfelder leer lassen = unverändert."
-    )
+    """Tab „Konten“: alles, was der Agent zum Bewerben braucht – wichtigstes zuerst."""
     with st.container(border=True):
         st.markdown("##### :material/mail: Dein E-Mail-Konto")
-        mailkonto_verbinden(profil)
+        if mailkonto_verbinden(profil):
+            from .bewerben import mail
+
+            if st.button("Testmail an mich senden", key="zugang_testmail", icon=":material/outgoing_mail:"):
+                try:
+                    mail.testmail(profil)
+                    st.success("Testmail verschickt – bitte Postfach prüfen.")
+                except Exception as e:
+                    st.error(f"Testmail fehlgeschlagen: {e}")
+    with st.container(border=True):
+        st.markdown(f"##### {GRUPPEN_TITEL['ki']}")
+        ki_einrichten(profil)
     with st.container(border=True):
         from .ui import browser_test_anzeige
 
-        st.markdown("##### :material/language: Online-Formulare (Browser auf dem Server)")
+        st.markdown("##### :material/language: Online-Formulare")
+        st.caption("Für Bewerbungen über Formulare startet auf dem Server ein unsichtbarer Browser.")
         browser_test_anzeige("zugang_browser_test")
-    for gruppe, titel in zugangsdaten.GRUPPEN.items():
-        if gruppe in ("smtp", "imap"):
-            continue
-        with st.container(border=True):
-            st.markdown(f"##### {titel}")
-            if gruppe == "imap":
-                st.caption("Damit erkennt der Agent Eingangsbestätigungen, Einladungen und Absagen selbst. "
-                           "Mails werden nur gelesen, nie verändert. Benutzer/Passwort leer = wie SMTP.")
-            if gruppe == "ba":
-                st.caption("Für „Online bewerben“ auf arbeitsagentur.de. Der Browser-Agent bekommt die Daten nur als "
-                           "Platzhalter – das KI-Modell sieht sie nie im Klartext.")
-            _gruppe(gruppe, profil)
-            if gruppe == "ki":
-                st.divider()
-                _ki_modell(profil, speichern)
-            if gruppe == "quellen":
-                for name in ("adzuna", "jooble"):
-                    info = QUELLEN[name]
-                    status = "✅ aktiv nutzbar" if info.verfuegbar() else "➖ Schlüssel fehlt"
-                    c1, c2 = st.columns([3, 1])
-                    c1.caption(f"**{info.label}**: {status}")
-                    if info.verfuegbar() and c2.button("🔌 Testen", key=f"quelle_test_{name}"):
-                        st.session_state[f"zugang_test_{name}"] = zugangsdaten.teste_quelle(name)
-                    _testergebnis(name)
+    with st.expander(GRUPPEN_TITEL["ba"]):
+        st.caption("Für „Online bewerben“ auf arbeitsagentur.de. Der Browser-Agent bekommt die Daten nur als "
+                   "Platzhalter – die KI sieht sie nie im Klartext.")
+        _gruppe("ba", profil)
+    with st.expander(GRUPPEN_TITEL["quellen"]):
+        _gruppe("quellen", profil)
+        for name in ("adzuna", "jooble"):
+            info = QUELLEN[name]
+            c1, c2 = st.columns([3, 1], vertical_alignment="center")
+            c1.caption(f"**{info.label}**: {'nutzbar' if info.verfuegbar() else 'Schlüssel fehlt'}")
+            if info.verfuegbar() and c2.button("Testen", key=f"quelle_test_{name}", icon=":material/power:"):
+                st.session_state[f"zugang_test_{name}"] = zugangsdaten.teste_quelle(name)
+            _testergebnis(name)
     with st.expander("Mail-Server selbst eintragen (für Fortgeschrittene)", icon=":material/tune:"):
+        st.caption("Nur nötig, wenn das automatische Verbinden oben nicht klappt.")
         for gruppe in ("smtp", "imap"):
-            st.markdown(f"**{zugangsdaten.GRUPPEN[gruppe]}**")
+            st.markdown(f"**{GRUPPEN_TITEL[gruppe]}**")
             _gruppe(gruppe, profil)
+    st.caption(":material/lock: Zugangsdaten bleiben nur auf diesem Gerät (`daten/zugangsdaten.json`, nur für dich "
+               "lesbar) – nie im Profil und nie im Git. Leere Passwortfelder bedeuten „unverändert“.")
 
 
 # --------------------------------------------------------------------------- #
@@ -252,20 +298,20 @@ def _letzter_abruf_text(db: Speicher, quelle: str) -> str:
     from .ui import zeit
 
     if abruf.get("fehler"):
-        return f"⚠️ letzter Abruf {zeit(abruf['gestartet_am'])} fehlgeschlagen: {str(abruf['fehler'])[:120]}"
+        return f":orange[:material/warning:] letzter Abruf {zeit(abruf['gestartet_am'])} fehlgeschlagen: {str(abruf['fehler'])[:120]}"
     return f"zuletzt {zeit(abruf['gestartet_am'])} · {abruf.get('treffer') or 0} Treffer"
 
 
 def zeige_jobboersen(profil: Profil, speichern: Callable[[str], None], db: Speicher) -> None:
     s, b = profil.suche, profil.bewertung
-    st.caption("Der Agent fragt alle aktivierten Jobbörsen bei jeder Suche ab und führt doppelte Anzeigen zusammen. "
+    st.caption("Ich frage alle aktivierten Jobbörsen bei jeder Suche ab und führe doppelte Anzeigen zusammen. "
                "StepStone, Indeed, LinkedIn und XING sind bewusst nicht dabei – deren Bedingungen verbieten "
                "automatische Abfragen.")
     with st.form("jobboersen"):
         aktiv: dict[str, bool] = {}
         for name, info in QUELLEN.items():
             c1, c2 = st.columns([1, 3], vertical_alignment="center")
-            hinweis = "" if info.verfuegbar() else " · API-Key unter 🔑 Zugänge eintragen"
+            hinweis = "" if info.verfuegbar() else " · Schlüssel unter Konten eintragen"
             aktiv[name] = c1.toggle(info.label, value=name in s.quellen, key=f"quelle_{name}",
                                     disabled=not info.verfuegbar() and name not in s.quellen)
             c2.caption(f"{ART_TEXT.get(info.art, info.art)} · {info.beschreibung}{hinweis}  \n"
@@ -278,21 +324,21 @@ def zeige_jobboersen(profil: Profil, speichern: Callable[[str], None], db: Speic
                                      value=any(a.lower() == "zeitarbeit" for a in b.ausschluss))
         ausland = c2.multiselect("EURES: auch in diesen Ländern suchen", list(LAENDER), default=list(s.ausland),
                                  format_func=lambda k: LAENDER.get(k, k))
-        if st.form_submit_button("💾 Jobbörsen speichern", type="primary"):
+        if st.form_submit_button("Jobbörsen speichern", type="primary", icon=":material/save:"):
             s.quellen = [n for n, an in aktiv.items() if an] or ["arbeitsagentur"]
             s.remote, s.ausbildung, s.ausland = remote, ausbildung, list(ausland)
             ohne = [a for a in b.ausschluss if a.lower() != "zeitarbeit"]
             b.ausschluss = [*ohne, "Zeitarbeit"] if zeitarbeit_aus else ohne
             speichern("Jobbörsen gespeichert.")
 
-    st.markdown("##### 🏢 Wunsch-Arbeitgeber")
-    st.caption("Füge die Karriereseite einer Firma ein – der Agent erkennt das Bewerbermanagement "
-               f"({', '.join(ATS_NAMEN.values())}) und holt neue passende Stellen direkt von dort.")
+    st.markdown("##### :material/apartment: Wunsch-Arbeitgeber")
+    st.caption("Füge die Karriereseite einer Firma ein – ich erkenne das Bewerbermanagement "
+               f"({', '.join(ATS_NAMEN.values())}) und hole neue passende Stellen direkt von dort.")
     with st.form("zielfirma_neu", clear_on_submit=True):
         c1, c2 = st.columns([2, 3])
         name = c1.text_input("Firma", placeholder="z. B. Musterfirma GmbH")
         url = c2.text_input("Karriereseite", placeholder="https://musterfirma.de/karriere")
-        if st.form_submit_button("➕ Hinzufügen & erkennen"):
+        if st.form_submit_button("Hinzufügen", icon=":material/add:"):
             if not url.strip():
                 st.error("Bitte die Adresse der Karriereseite angeben.")
             else:
@@ -315,7 +361,7 @@ def zeige_jobboersen(profil: Profil, speichern: Callable[[str], None], db: Speic
     for i, firma in enumerate(profil.zielfirmen):
         c1, c2 = st.columns([5, 1], vertical_alignment="center")
         erkannt = bool(firma.get("ats") and firma.get("kennung"))
-        c1.markdown(("✅ " if erkannt else "❔ ") + (kurzbeschreibung(firma) if erkannt else firma.get("name", "?"))
+        c1.markdown((":green[:material/check_circle:] " if erkannt else ":gray[:material/help:] ") + (kurzbeschreibung(firma) if erkannt else firma.get("name", "?"))
                     + (f"  \n[{firma['url']}]({firma['url']})" if firma.get("url") else ""))
         if c2.button("Entfernen", key=f"zielfirma_weg_{i}"):
             profil.zielfirmen = [f for j, f in enumerate(profil.zielfirmen) if j != i]

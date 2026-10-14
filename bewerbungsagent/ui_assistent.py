@@ -1,0 +1,160 @@
+"""Erststart-Assistent: in fuenf kurzen Schritten startklar.
+
+Wer bist du → Was & wo → Lebenslauf → E-Mail-Konto → Los geht's. Das Profil
+entsteht leer (kein Beispielprofil) und wird nach jedem Schritt gespeichert;
+die Automatik startet erst, wenn der letzte Schritt bestaetigt ist.
+"""
+
+from __future__ import annotations
+
+import streamlit as st
+
+from .config import Profil, Suche, ermittle_profil_pfad, lade_profil, speichere_profil
+
+SCHRITTE = ["Wer bist du?", "Was suchst du?", "Lebenslauf", "E-Mail-Konto", "Los geht's"]
+SCHLUESSEL = "assistent"
+
+
+def aktiv(profil: Profil | None) -> bool:
+    """Assistent zeigen, solange kein Profil existiert oder er gerade laeuft."""
+    if profil is None and SCHLUESSEL not in st.session_state:
+        st.session_state[SCHLUESSEL] = 1
+    return SCHLUESSEL in st.session_state
+
+
+def _weiter(schritt: int) -> None:
+    st.session_state[SCHLUESSEL] = schritt
+
+
+def _profil() -> Profil:
+    try:
+        return lade_profil(pruefen=False)
+    except FileNotFoundError:
+        profil = Profil(suche=Suche(was=[], wo=""))
+        profil.automatisierung.modus, profil.automatisierung.aktiv = "aus", False
+        return profil
+
+
+def _speichern(profil: Profil) -> None:
+    speichere_profil(profil, ermittle_profil_pfad())
+
+
+def _schritt_person() -> None:
+    profil = _profil()
+    p = profil.person
+    st.markdown("Damit ich Anschreiben und Formulare in deinem Namen ausfüllen kann.")
+    with st.form("assistent_person", border=False):
+        c1, c2 = st.columns(2)
+        vorname = c1.text_input("Vorname", value=p.vorname, key="assistent_vorname")
+        nachname = c2.text_input("Nachname", value=p.nachname, key="assistent_nachname")
+        email = st.text_input("E-Mail", value=p.email, key="assistent_email", autocomplete="email")
+        telefon = st.text_input("Telefon", value=p.telefon, key="assistent_telefon", autocomplete="tel")
+        c3, c4 = st.columns([1, 2])
+        plz = c3.text_input("PLZ", value=p.plz, key="assistent_plz")
+        ort = c4.text_input("Ort", value=p.ort, key="assistent_ort")
+        strasse = st.text_input("Straße und Hausnummer", value=p.strasse, key="assistent_strasse")
+        los = st.form_submit_button("Weiter", type="primary", icon=":material/arrow_forward:")
+    if los:
+        if not (vorname.strip() and nachname.strip() and email.strip()):
+            st.error("Bitte mindestens Vorname, Nachname und E-Mail eintragen.")
+            return
+        p.vorname, p.nachname, p.email = vorname.strip(), nachname.strip(), email.strip()
+        p.telefon, p.plz, p.ort, p.strasse = telefon.strip(), plz.strip(), ort.strip(), strasse.strip()
+        if not profil.suche.wo:
+            profil.suche.wo = p.ort
+        _speichern(profil)
+        _weiter(2)
+        st.rerun()
+
+
+def _schritt_suche() -> None:
+    profil = _profil()
+    s = profil.suche
+    st.markdown("Nenne ein paar Jobtitel – je mehr, desto mehr Treffer. Ich finde später selbst ähnliche dazu.")
+    with st.form("assistent_suche", border=False):
+        was = st.text_area("Jobtitel (einer pro Zeile)", value="\n".join(s.was), height=120, key="assistent_was",
+                           placeholder="z. B.\nSachbearbeiter Buchhaltung\nBuchhalter")
+        c1, c2 = st.columns([2, 1])
+        wo = c1.text_input("Wo?", value=s.wo or profil.person.ort, key="assistent_wo",
+                           help="Leer lassen für ganz Deutschland")
+        umkreis = c2.number_input("Umkreis (km)", 0, 200, int(s.umkreis), step=5, key="assistent_umkreis")
+        remote = st.checkbox("Auch Stellen im Homeoffice/remote zeigen", value=s.remote, key="assistent_remote")
+        with st.container(horizontal=True):
+            zurueck = st.form_submit_button("Zurück", icon=":material/arrow_back:")
+            los = st.form_submit_button("Weiter", type="primary", icon=":material/arrow_forward:")
+    if zurueck:
+        _weiter(1)
+        st.rerun()
+    if los:
+        begriffe = [z.strip() for z in was.splitlines() if z.strip()]
+        if not begriffe:
+            st.error("Bitte mindestens einen Jobtitel eintragen.")
+            return
+        s.was, s.wo, s.umkreis, s.remote = begriffe, wo.strip(), int(umkreis), bool(remote)
+        _speichern(profil)
+        _weiter(3)
+        st.rerun()
+
+
+def _schritt_lebenslauf() -> None:
+    from .ui_einstellungen import lebenslauf_hochladen
+
+    st.markdown("Dein Lebenslauf geht mit jeder Bewerbung mit. Außerdem lese ich daraus, was du kannst – "
+                "so schreibe ich keine Aussagen ins Anschreiben, die nicht stimmen.")
+    vorhanden = lebenslauf_hochladen(_profil(), schluessel="assistent_lebenslauf")
+    with st.container(horizontal=True):
+        st.button("Zurück", on_click=_weiter, args=(2,), icon=":material/arrow_back:", key="assistent_z3")
+        st.button("Weiter" if vorhanden else "Später hochladen", on_click=_weiter, args=(4,),
+                  type="primary" if vorhanden else "secondary", icon=":material/arrow_forward:", key="assistent_w3")
+
+
+def _schritt_mail() -> None:
+    from .ui_einstellungen import mailkonto_verbinden
+
+    st.markdown("Über dein Postfach verschicke ich Bewerbungen per E-Mail und erkenne Antworten "
+                "(Eingangsbestätigung, Einladung, Absage) von selbst.")
+    verbunden = mailkonto_verbinden(_profil(), schluessel="assistent_mail")
+    with st.container(horizontal=True):
+        st.button("Zurück", on_click=_weiter, args=(3,), icon=":material/arrow_back:", key="assistent_z4")
+        st.button("Weiter" if verbunden else "Überspringen", on_click=_weiter, args=(5,),
+                  type="primary" if verbunden else "secondary", icon=":material/arrow_forward:", key="assistent_w4")
+
+
+MODI = {"automatisch": "Automatisch vorbereiten (empfohlen)", "nur_suchen": "Nur suchen, ich wähle selbst aus"}
+
+
+def _schritt_los() -> None:
+    from . import ui
+
+    profil = _profil()
+    a = profil.automatisierung
+    st.markdown(
+        f"Ich suche **{ui.zeitplan_text(a.cron)}** nach **{', '.join(profil.suche.was[:3]) or '–'}**"
+        f"{' in ' + profil.suche.wo if profil.suche.wo else ''}, schreibe für die besten Stellen ein Anschreiben "
+        "und lege sie dir unter **Heute** vor. **Raus geht nur, was du mit Ja bestätigst.**"
+    )
+    modus = st.radio("Wie soll ich arbeiten?", list(MODI), format_func=MODI.get, key="assistent_modus")
+    ziel = st.number_input("Wie viele Bewerbungen pro Woche? (z. B. aus deiner Eingliederungsvereinbarung)", 1, 50,
+                           int(a.ziel_pro_woche), key="assistent_ziel")
+    with st.container(horizontal=True):
+        if st.button("Zurück", icon=":material/arrow_back:", key="assistent_z5"):
+            _weiter(4)
+            st.rerun()
+        if st.button("Fertig – jetzt erste Suche starten", type="primary", icon=":material/rocket_launch:",
+                     key="assistent_fertig"):
+            a.modus, a.aktiv, a.ziel_pro_woche = modus, True, int(ziel)
+            _speichern(profil)
+            st.session_state.pop(SCHLUESSEL, None)
+            ui.starte_hintergrund("automatik", "--ausloeser", "knopf",
+                                  meldung="Die erste Suche läuft – das dauert ein paar Minuten.")
+            st.rerun()
+
+
+def zeige() -> None:
+    schritt = int(st.session_state.get(SCHLUESSEL, 1))
+    st.title("Willkommen!")
+    st.caption("In fünf kurzen Schritten bin ich startklar und bewerbe mich für dich – nur mit deinem Ja.")
+    st.progress(schritt / len(SCHRITTE), text=f"Schritt {schritt} von {len(SCHRITTE)}: {SCHRITTE[schritt - 1]}")
+    with st.container(border=True):
+        st.subheader(SCHRITTE[schritt - 1])
+        [_schritt_person, _schritt_suche, _schritt_lebenslauf, _schritt_mail, _schritt_los][schritt - 1]()

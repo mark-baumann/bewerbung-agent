@@ -89,7 +89,7 @@ class AdzunaClient(QuellenClient):
                   nur_vollzeit: bool = False, max_treffer: int = 50, **_ignoriert: Any) -> list[Job]:
         app_id, app_key = os.environ.get("ADZUNA_APP_ID"), os.environ.get("ADZUNA_APP_KEY")
         if not (app_id and app_key):
-            raise QuelleFehler("Adzuna: app_id/app_key fehlen (Profil → Zugänge)")
+            raise QuelleFehler("Adzuna: app_id/app_key fehlen (Einstellungen → Konten)")
         params: dict[str, Any] = {
             "app_id": app_id, "app_key": app_key, "what": was, "results_per_page": min(50, int(max_treffer)),
             "max_days_old": int(veroeffentlicht_seit_tagen or 30), "content-type": "application/json",
@@ -135,7 +135,7 @@ class JoobleClient(QuellenClient):
                   **_ignoriert: Any) -> list[Job]:
         key = os.environ.get("JOOBLE_API_KEY")
         if not key:
-            raise QuelleFehler("Jooble: API-Key fehlt (Profil → Zugänge)")
+            raise QuelleFehler("Jooble: API-Key fehlt (Einstellungen → Konten)")
         anfrage = {"keywords": was, "location": wo, "radius": str(int(umkreis or 25)), "page": "1",
                    "ResultOnPage": str(min(50, int(max_treffer)))}
         antwort = self.http.post(JOOBLE.format(key=key), json=anfrage)

@@ -136,7 +136,7 @@ def suche_ausfuehren(
     for quelle in quellen:
         info = QUELLEN[quelle]
         if not info.verfuegbar():
-            ergebnis.hinweise.append(f"{info.label}: API-Schlüssel fehlt (Profil → Zugänge)")
+            ergebnis.hinweise.append(f"{info.label}: API-Schlüssel fehlt (Einstellungen → Konten)")
             nummer += len(begriffe)
             continue
 
@@ -447,12 +447,12 @@ def vorbereiten(
 def versandweg_fehlt(kanal: str, profil: Profil | None = None, *, browser_fabrik: Any = None) -> str | None:
     """Warum der gewaehlte Weg gerade nicht nutzbar ist (None = alles bereit)."""
     if kanal == "email" and mail.smtp_konfig(profil) is None:
-        return "Der E-Mail-Versand ist noch nicht eingerichtet (Profil → 🔑 Zugänge → SMTP)."
+        return "Dein E-Mail-Konto ist noch nicht verbunden (Einstellungen → Konten)."
     if kanal == "formular" and browser_fabrik is None:
         if not browser_verfuegbar():
             return "Der Browser-Agent (browser-use) ist nicht installiert."
         if not llm_modul.client_verfuegbar():
-            return "Der Browser-Agent braucht einen KI-Zugang (Profil → 🔑 Zugänge)."
+            return "Der Browser-Agent braucht einen KI-Zugang (Einstellungen → Konten)."
     return None
 
 
@@ -600,7 +600,7 @@ def aufraeumen(db: Speicher) -> int:
 def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender: Callable | None) -> tuple[bool, str]:
     konfig = mail.smtp_konfig(profil)
     if konfig is None:
-        return False, "E-Mail-Versand ist nicht eingerichtet (Profil → 🔑 Zugänge → SMTP)."
+        return False, "Dein E-Mail-Konto ist noch nicht verbunden (Einstellungen → Konten)."
     anhaenge = [p for p in [v.anschreiben_pdf, *profil.anhaenge()] if p and Path(p).exists()]
     nachricht = mail.baue_nachricht(
         absender=konfig.absender, absender_name=profil.person.name,

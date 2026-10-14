@@ -224,7 +224,7 @@ def _browser_llm(modell: str, ausser: tuple[str, ...] = ()):
     anbieter = llm_modul.provider(modell)
     if anbieter is None:
         raise llm_modul.LLMNichtVerfuegbar(
-            "Kein KI-Zugang eingerichtet – der Browser-Agent braucht ein Modell (Profil → Zugänge)."
+            "Kein KI-Zugang eingerichtet – der Browser-Agent braucht ein Modell (Einstellungen → Konten)."
         )
     ziel, _ = llm_modul.pruefe_modell(anbieter, modell, ausser=ausser)
     if anbieter == "ollama":
@@ -728,7 +728,7 @@ class BewerbungsBrowser:
 
                     llm_modul.vergiss_modelle()
                     zusammenfassung += (
-                        "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Profil → Zugänge "
+                        "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Einstellungen → Konten "
                         "ein verfügbares Modell wählen und erneut versuchen."
                     )
                 if ist_startfehler(fehler[-1]):

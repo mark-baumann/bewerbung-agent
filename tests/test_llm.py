@@ -289,7 +289,7 @@ def test_chat_ohne_ersatz_meldet_klar(monkeypatch):
 
     echter_client = llm.OllamaClient
     monkeypatch.setattr(llm, "OllamaClient", lambda: echter_client(transport=httpx.MockTransport(transport)))
-    with pytest.raises(llm.ModellNichtGefunden, match="Profil → Zugänge"):
+    with pytest.raises(llm.ModellNichtGefunden, match="Einstellungen → Konten"):
         llm.chat("glm-5.3-flash", system="S", nutzer="N")
 
 

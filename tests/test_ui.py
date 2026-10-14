@@ -15,7 +15,7 @@ from bewerbungsagent.db import Speicher  # noqa: E402
 from bewerbungsagent.models import Job, Score, Vorgang  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-SEITEN = ["seiten/schritt_fuer_schritt.py", "seiten/bewerbungen.py", "seiten/profil.py"]
+SEITEN = ["seiten/schritt_fuer_schritt.py", "seiten/profil.py"]
 
 
 @pytest.fixture
@@ -124,3 +124,72 @@ def test_schritt_fuer_schritt_auswahl_startet_vorbereitung(app):
     assert gestartet[-1][:2] == ("vorbereiten", "j4")
     with Speicher() as db:
         assert db.vorgang("j4").status == "vorbereitung"
+
+
+def test_assistent_fuehrt_durch_die_einrichtung(tmp_path, monkeypatch):
+    from bewerbungsagent import config
+
+    monkeypatch.chdir(tmp_path)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "OLLAMA_API_KEY", "SMTP_HOST",
+                 "BEWERBUNGSAGENT_DB"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "BENUTZER_PFAD", tmp_path / "gibt-es-nicht.yaml")
+    gestartet: list[tuple[str, ...]] = []
+    monkeypatch.setattr("bewerbungsagent.hintergrund.starte", lambda *a: gestartet.append(a) or 0)
+
+    at = AppTest.from_file(str(REPO / "app.py"), default_timeout=30).run()
+    _ohne_fehler(at)
+    assert at.title[0].value == "Willkommen!"
+    at.text_input(key="assistent_vorname").input("Erika")
+    at.text_input(key="assistent_nachname").input("Muster")
+    at.text_input(key="assistent_email").input("erika@example.org")
+    at.text_input(key="assistent_ort").input("Köln")
+    next(b for b in at.button if b.label == "Weiter").click().run()
+    _ohne_fehler(at)
+    assert lade_profil(pruefen=False).person.vorname == "Erika"
+
+    at.text_area(key="assistent_was").input("Buchhalterin\nSachbearbeiterin")
+    next(b for b in at.button if b.label == "Weiter").click().run()
+    at.button(key="assistent_w3").click().run()  # Lebenslauf spaeter
+    at.button(key="assistent_w4").click().run()  # E-Mail-Konto ueberspringen
+    _ohne_fehler(at)
+    at.button(key="assistent_fertig").click().run()
+    _ohne_fehler(at)
+
+    profil = lade_profil()
+    assert profil.suche.was == ["Buchhalterin", "Sachbearbeiterin"] and profil.suche.wo == "Köln"
+    assert profil.automatisierung.aktiv and profil.automatisierung.modus == "automatisch"
+    assert gestartet[-1][0] == "automatik"
+    assert any("Startklar" in m.value for m in at.markdown)  # Lebenslauf fehlt noch
+
+
+def test_rueckmeldung_auf_heute(app):
+    neue_app, profil, _ = app
+    _befuelle(profil)
+    with Speicher() as db:
+        db.aktualisiere_vorgang("j1", status="abgeschickt", gesendet_am="2026-10-01T08:00:00+00:00")
+    at = neue_app().run()
+    _ohne_fehler(at)
+    at.pills(key="heute_rm_j1").set_value("einladung").run()
+    _ohne_fehler(at)
+    with Speicher() as db:
+        assert db.vorgang("j1").rueckmeldung == "einladung"
+    at.button(key="heute_nachweis").click().run()
+    _ohne_fehler(at)
+
+
+def test_suchbegriff_vorschlaege_gebuendelt(app):
+    from bewerbungsagent import lernen
+
+    neue_app, profil, _ = app
+    with Speicher() as db:
+        lernen.schlage_suchbegriff_vor(db, "Datenanalyst", 3)
+        lernen.schlage_suchbegriff_vor(db, "BI-Entwickler", 2)
+    at = neue_app().run()
+    _ohne_fehler(at)
+    at.pills(key="cockpit_begriffe").set_value(["Datenanalyst"]).run()
+    at.button(key="cockpit_begriffe_ok").click().run()
+    _ohne_fehler(at)
+    assert "Datenanalyst" in lade_profil().suche.was and "BI-Entwickler" not in lade_profil().suche.was
+    with Speicher() as db:
+        assert db.vorschlaege("offen") == []

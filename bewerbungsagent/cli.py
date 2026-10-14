@@ -407,7 +407,7 @@ def cmd_modelle(args: argparse.Namespace) -> int:
     profil = lade_profil(args.profil)
     anbieter = llm_modul.provider(profil.bewertung.modell)
     if anbieter is None:
-        console.print("[yellow]Kein KI-Zugang eingerichtet (Profil → Zugänge oder .env).[/]")
+        console.print("[yellow]Kein KI-Zugang eingerichtet (Einstellungen → Konten oder .env).[/]")
         return 1
     modelle = llm_modul.verfuegbare_modelle(anbieter, neu_laden=True)
     if not modelle:
