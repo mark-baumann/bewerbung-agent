@@ -666,8 +666,8 @@ class BewerbungsBrowser:
                 dry_run=dry_run,
                 abgeschickt=False,
                 zusammenfassung=(
-                    "Kein Lebenslauf hinterlegt - bitte im Profil hochladen "
-                    "(unterlagen.lebenslauf). Bewerbung nicht gestartet."
+                    "Kein Lebenslauf hinterlegt – bitte unter Einstellungen → Über mich hochladen. "
+                    "Bewerbung nicht gestartet."
                 ),
                 schritte=0,
                 url=url,
