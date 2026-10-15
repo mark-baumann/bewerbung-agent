@@ -191,6 +191,21 @@ def test_gleichnamige_unterlagen_ueberschreiben_sich_nicht(umgebung):
     assert len(profil.anhaenge()) == 2
 
 
+def test_sicherung_ueberschreibt_keinen_upload(umgebung):
+    """Alter Pfad unterlagen/cv.pdf und neuer Upload daten/unterlagen/cv.pdf mit anderem Inhalt."""
+    profil, _, _ = umgebung
+    upload = config.unterlagen_dir() / "cv.pdf"
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    upload.write_text("NEUER LEBENSLAUF (Upload)", encoding="utf-8")
+    alt = Path("unterlagen") / "cv.pdf"
+    alt.write_text("altes Zeugnis", encoding="utf-8")
+    profil.unterlagen.lebenslauf, profil.unterlagen.zeugnisse = str(upload), ["unterlagen/cv.pdf"]
+    assert config.unterlagen_sichern(profil) == 1
+    assert upload.read_text(encoding="utf-8") == "NEUER LEBENSLAUF (Upload)"
+    alt.unlink()
+    assert config.finde_datei("unterlagen/cv.pdf").read_text(encoding="utf-8") == "altes Zeugnis"
+
+
 def test_profil_sicherung_behaelt_kommentare(umgebung):
     _, _, pfad = umgebung
     pfad.write_text("# meine Notiz\n" + pfad.read_text(encoding="utf-8"), encoding="utf-8")

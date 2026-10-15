@@ -30,15 +30,16 @@ def unterlagen_dir() -> Path:
 def sicherungs_pfad(pfad: str | Path) -> Path:
     """Wo die Sicherung einer Unterlage im Datenordner liegt – eindeutig je Herkunft.
 
-    `unterlagen/a/x.pdf` -> `daten/unterlagen/a/x.pdf`; alles andere ausserhalb des
-    Datenordners -> `daten/unterlagen/_extern/<hash>_<name>`. So ueberschreiben sich
-    gleichnamige Dateien aus verschiedenen Ordnern nie gegenseitig.
+    `unterlagen/a/x.pdf` -> `daten/unterlagen/_alt/a/x.pdf`; alles andere ausserhalb des
+    Datenordners -> `daten/unterlagen/_extern/<hash>_<name>`. Beide Unterordner nutzen Uploads
+    nie (die liegen direkt in `daten/unterlagen/`), so ueberschreibt keine Sicherung eine
+    hochgeladene Datei und gleichnamige Dateien verschiedener Ordner kollidieren nicht.
     """
     import hashlib
 
     p = Path(pfad).expanduser()
     if not p.is_absolute() and len(p.parts) > 1 and p.parts[0] == "unterlagen":
-        return unterlagen_dir().joinpath(*p.parts[1:])
+        return unterlagen_dir() / "_alt" / Path(*p.parts[1:])
     kennung = hashlib.sha1(str(p).encode("utf-8")).hexdigest()[:8]
     return unterlagen_dir() / "_extern" / f"{kennung}_{p.name}"
 

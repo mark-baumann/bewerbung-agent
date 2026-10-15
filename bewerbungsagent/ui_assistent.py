@@ -31,10 +31,19 @@ def _gespeicherter_schritt() -> int | None:
     return schritt if 1 <= schritt <= len(SCHRITTE) else None
 
 
+def _eingerichtet(profil: Profil | None) -> bool:
+    """Fertig eingerichtet: Jobtitel vorhanden und die Automatik eingeschaltet (macht „Fertig“ oder
+    Einstellungen → Automatik). Dann ist ein gemerkter Assistenten-Schritt nur noch ein Rest."""
+    return profil is not None and bool(profil.suche.was) and profil.automatisierung.aktiv
+
+
 def aktiv(profil: Profil | None) -> bool:
     """Assistent zeigen, solange kein Profil existiert oder er noch nicht abgeschlossen ist."""
     s = st.session_state
     if SCHLUESSEL not in s:
+        if _eingerichtet(profil):
+            _fortschritt_datei().unlink(missing_ok=True)
+            return False
         gespeichert = _gespeicherter_schritt()
         if gespeichert:
             s[SCHLUESSEL] = gespeichert
@@ -45,6 +54,8 @@ def aktiv(profil: Profil | None) -> bool:
 
 def _weiter(schritt: int) -> None:
     st.session_state[SCHLUESSEL] = schritt
+    if _eingerichtet(_profil()):
+        return  # anderswo schon fertig eingerichtet (z. B. am Handy): nichts mehr merken
     try:
         _fortschritt_datei().parent.mkdir(parents=True, exist_ok=True)
         _fortschritt_datei().write_text(json.dumps({"schritt": schritt}), encoding="utf-8")
@@ -164,7 +175,8 @@ def _schritt_los() -> None:
         f"{' in ' + profil.suche.wo if profil.suche.wo else ''}, schreibe für die besten Stellen ein Anschreiben "
         "und lege sie dir unter **Heute** vor. **Raus geht nur, was du mit Ja bestätigst.**"
     )
-    modus = st.radio("Wie soll ich arbeiten?", list(MODI), format_func=MODI.get, key="assistent_modus")
+    modus = st.radio("Wie soll ich arbeiten?", list(MODI), format_func=MODI.get, key="assistent_modus",
+                     index=list(MODI).index(a.modus) if a.modus in MODI else 0)
     ziel = st.number_input("Wie viele Bewerbungen pro Woche? (z. B. aus deiner Eingliederungsvereinbarung)", 1, 50,
                            int(a.ziel_pro_woche), key="assistent_ziel")
     with st.container(horizontal=True):
@@ -189,3 +201,6 @@ def zeige() -> None:
     with st.container(border=True):
         st.subheader(SCHRITTE[schritt - 1])
         [_schritt_person, _schritt_suche, _schritt_lebenslauf, _schritt_mail, _schritt_los][schritt - 1]()
+    if schritt > 2:  # Jobtitel stehen: man kann auch ohne Assistent weitermachen
+        st.button("Assistent beenden – den Rest stelle ich unter Einstellungen ein", type="tertiary",
+                  key="assistent_beenden", on_click=_abschliessen, icon=":material/close:")

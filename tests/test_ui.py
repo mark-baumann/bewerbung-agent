@@ -308,3 +308,15 @@ def test_eintragen_oeffnet_ueber_mich(app):
     at.button(key="startklar_daten").click().run()
     _ohne_fehler(at)
     assert at.session_state["tab"] == "Über mich"
+
+
+def test_alter_assistenten_stand_blockiert_fertiges_profil_nicht(app):
+    neue_app, profil, _ = app
+    assert profil.automatisierung.aktiv
+    datei = Path("daten/assistent.json")
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text('{"schritt": 2}', encoding="utf-8")
+    at = neue_app().run()
+    _ohne_fehler(at)
+    assert not [t for t in at.title if t.value == "Willkommen!"]
+    assert not datei.exists()
