@@ -17,11 +17,12 @@ zugangsdaten.anwenden()
 
 @st.cache_resource
 def _unterlagen_einmal_sichern() -> None:
-    """Alte Uploads (unterlagen/) beim Start in den dauerhaften Datenordner kopieren."""
-    from bewerbungsagent.config import lade_profil, unterlagen_sichern
+    """Profil und Unterlagen beim Start in den dauerhaften Datenordner sichern (nur Kopien)."""
+    from bewerbungsagent.config import lade_profil, profil_sichern, unterlagen_sichern
 
     try:
-        unterlagen_sichern(lade_profil())
+        profil_sichern()
+        unterlagen_sichern(lade_profil(pruefen=False))
     except Exception:
         pass
 
@@ -38,5 +39,6 @@ seiten = st.navigation([
     st.Page(ui.SEITE_SUCHEN, title="Suchen", icon=":material/search:", url_path="suchen"),
     st.Page(ui.SEITE_EINSTELLUNGEN, title="Einstellungen", icon=":material/settings:", url_path="einstellungen"),
 ], position="hidden")
+ui.neuer_seitenlauf()
 ui.navleiste()
 seiten.run()

@@ -380,8 +380,10 @@ def cmd_automatik(args: argparse.Namespace) -> int:
             console.print("[yellow]Ein Automatiklauf läuft bereits.[/]")
             return 1
         with Speicher(args.db) as db:
+            # „Nur suchen“ aus dem Profil gilt auch fuer Laeufe per Knopf (Assistent, „Jetzt suchen“)
+            nur_suchen = args.nur_suchen or profil.automatisierung.effektiver_modus == "nur_suchen"
             ergebnis = ablauf.automatik_lauf(
-                db, profil, ausloeser=args.ausloeser, nur_suchen=args.nur_suchen,
+                db, profil, ausloeser=args.ausloeser, nur_suchen=nur_suchen,
                 mit_llm=not args.ohne_llm,
             )
     _zeige_zusammenfassung("Automatiklauf", ergebnis)
@@ -391,6 +393,13 @@ def cmd_automatik(args: argparse.Namespace) -> int:
 def cmd_tick(args: argparse.Namespace) -> int:
     """Cron-Einstieg: faelligen Automatiklauf starten und Freigaben senden."""
     profil = lade_profil(args.profil)
+    try:  # Sicherungen frisch halten (nur Kopien, das Profil bleibt unveraendert)
+        from .config import profil_sichern, unterlagen_sichern
+
+        profil_sichern()
+        unterlagen_sichern(profil)
+    except Exception as e:  # Sicherung darf den Tick nie aufhalten
+        console.print(f"[yellow]Sicherung der Unterlagen fehlgeschlagen: {e}[/]")
     with Speicher(args.db) as db:
         ergebnis = ablauf.tick(db, profil)
     # Nur protokollieren, wenn etwas passiert ist (cron.log klein halten)

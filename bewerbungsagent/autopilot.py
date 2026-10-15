@@ -159,6 +159,20 @@ def faellige_freigeben(db: Speicher, profil: Profil, *, jetzt: datetime | None =
     return anzahl
 
 
+def fristen_aufheben(db: Speicher) -> int:
+    """Autopilot ausgeschaltet: laufende Einspruchsfristen verfallen.
+
+    Sonst wuerden alte, laengst abgelaufene Fristen beim Wieder-Einschalten sofort
+    senden, ohne dass die Karte in der Zwischenzeit einen Stopp-Knopf zeigte.
+    """
+    anzahl = 0
+    for v in db.vorgaenge("wartet"):
+        if v.auto_senden_ab:
+            db.aktualisiere_vorgang(v.ref, auto_senden_ab=None)
+            anzahl += 1
+    return anzahl
+
+
 def stoppen(db: Speicher, ref: str) -> None:
     """Einspruch: diese Bewerbung nicht automatisch senden (bleibt als Karte)."""
     v = db.vorgang(ref)

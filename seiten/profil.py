@@ -259,6 +259,11 @@ with tab_automatik:
         au.postfach, au.nachfassen_tage = postfach_an, int(nachfassen_tage)
         profil.bewertung.max_llm_pro_lauf = int(kosten)
         au.autopilot, au.autopilot_frist_stunden = pilot, int(frist)
+        if pilot == "aus":
+            from bewerbungsagent import autopilot
+
+            with ui.oeffne_db() as db:
+                autopilot.fristen_aufheben(db)
         au.autopilot_min_passung, au.autopilot_min_qualitaet = float(min_passung), float(min_qualitaet)
         speichern("Gespeichert – gilt ab dem nächsten Lauf (spätestens in 5 Minuten).")
 

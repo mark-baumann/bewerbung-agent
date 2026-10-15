@@ -6,7 +6,10 @@ import streamlit as st
 
 from bewerbungsagent import ablauf, ui, ui_assistent, zeitplan
 
-profil = ui.profil_laden()
+profil, fehler = ui.profil_status()
+if fehler:
+    ui.profil_fehler(fehler)
+    st.stop()
 if ui_assistent.aktiv(profil):
     ui_assistent.zeige()
     st.stop()
@@ -68,7 +71,8 @@ with ui.oeffne_db() as db:
     def laufstatus():
         with ui.oeffne_db() as frisch:
             if not ui.zeige_laufstatus(frisch):
-                if st.session_state.get("heute_lief"):
+                # Fertig: Seite neu aufbauen – aber nie, solange ein Dialog offen ist (er wuerde sich schliessen)
+                if st.session_state.get("heute_lief") and not ui.dialog_offen():
                     st.session_state["heute_lief"] = False
                     st.rerun()
             else:

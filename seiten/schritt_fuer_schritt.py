@@ -10,7 +10,10 @@ from bewerbungsagent.scoring import llm as llm_modul
 SCHRITTE = {1: "Suchen", 2: "Auswählen"}
 TAGE = [7, 14, 30, 100]
 
-profil = ui.profil_laden()
+profil, fehler = ui.profil_status()
+if fehler:
+    ui.profil_fehler(fehler)
+    st.stop()
 if profil is None:
     st.info("Noch nicht eingerichtet – der Assistent führt dich in fünf kurzen Schritten durch.",
             icon=":material/waving_hand:")

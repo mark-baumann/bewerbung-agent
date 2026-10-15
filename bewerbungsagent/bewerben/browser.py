@@ -118,9 +118,15 @@ def browser_pfad() -> str | None:
     return None
 
 
-_STARTFEHLER = re.compile(r"BrowserStartEvent|BrowserLaunchEvent|exited before CDP|No local Chrome|"
-                          r"failed to install with playwright|CDP became available|browser.*(timed out|not start)",
-                          re.IGNORECASE)
+# Nur Meldungen, die browser-use beim Starten von Chromium erzeugt. Ein Timeout mitten im Lauf
+# (Navigation, Klick, Download, KI-Aufruf) ist KEIN Startfehler: danach kann das Formular schon
+# abgeschickt sein, die Bewerbung darf dann nicht automatisch erneut rausgehen.
+_STARTFEHLER = re.compile(
+    r"BrowserStartEvent|BrowserLaunchEvent|BrowserConnectedEvent|exited before CDP|No local Chrome|"
+    r"failed to install with playwright|No local browser path|Failed to launch browser|"
+    r"Browser did not start within|Failed to establish CDP connection|Chrome not found",
+    re.IGNORECASE,
+)
 
 
 def ist_startfehler(text: str | None) -> bool:
@@ -136,7 +142,7 @@ def startfehler_text(fehler: str) -> str:
     if "exited before cdp" in f:
         return ("Chromium stürzt beim Start ab (oft zu wenig Arbeitsspeicher oder fehlende Systembibliotheken). "
                 f"Technisch: {fehler[:200]}")
-    if "timed out" in f or "timeout" in f:
+    if "timed out" in f or "timeout" in f or "did not start within" in f:
         return (f"Der Browser startet zu langsam (über {START_TIMEOUT_S} s). Der Server ist ausgelastet oder "
                 "Chromium hängt beim Start.")
     return f"Der Browser lässt sich nicht starten: {fehler[:240]}"
@@ -292,10 +298,6 @@ def _host_domains(url: str) -> list[str]:
     return [host, basis, f"*.{basis}"]
 
 
-# Watchdog-Timeout von browser-use/bubus, typisch bei langsamem Browser-Start
-# (erster Download, träge Netzwerkverbindung, viele parallel laufende Agenten).
-_BROWSER_START_TIMEOUT_RE = re.compile(r"BrowserStartEvent|timed out", re.IGNORECASE)
-
 BROWSER_START_RETRIES = 2          # zusaetzlich zum ersten Versuch
 BROWSER_START_BACKOFF_S = 10.0     # Wartezeit zwischen den Versuchen
 
@@ -306,12 +308,13 @@ def _lebenslauf_vorhanden(profil: Profil) -> bool:
 
 
 async def _run_mit_retry(run_factory):
-    """Fuehrt `run_factory` aus, bei transientem Browser-Start-Timeout erneut.
+    """Fuehrt `run_factory` aus, bei transientem Browser-Start-Fehler erneut.
 
-    Ein Timeout des `BrowserStartEvent`-Watchdogs bedeutet nur, dass Chromium
-    nicht innerhalb der Standard-30s hochkam. Das ist transient, deshalb wird
-    mit kurzem Backoff erneut versucht. `run_factory` ist async, baut pro
-    Versuch einen neuen Agenten und liefert das history-Objekt.
+    Kam Chromium nicht hoch (z. B. Timeout des `BrowserStartEvent`-Watchdogs),
+    wird mit kurzem Backoff erneut versucht. Andere Fehler – auch Timeouts
+    mitten im Lauf – werden nie wiederholt: das Formular koennte schon
+    abgeschickt sein. `run_factory` ist async, baut pro Versuch einen neuen
+    Agenten und liefert das history-Objekt.
     """
     letzter_fehler: BaseException | None = None
     for versuch in range(1 + BROWSER_START_RETRIES):
@@ -319,7 +322,7 @@ async def _run_mit_retry(run_factory):
             return await run_factory()
         except Exception as e:
             letzter_fehler = e
-            if not _BROWSER_START_TIMEOUT_RE.search(str(e)):
+            if not ist_startfehler(str(e)):
                 raise
             log.warning(
                 "Browser-Start-Timeout (Versuch %d/%d): %s",
@@ -731,7 +734,8 @@ class BewerbungsBrowser:
                         "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Einstellungen → Konten "
                         "ein verfügbares Modell wählen und erneut versuchen."
                     )
-                if ist_startfehler(fehler[-1]):
+                if strukturiert is None and self._startfehler(history):
+                    # Der Browser kam nie hoch - nichts wurde ausgefuellt oder abgeschickt
                     zusammenfassung = startfehler_text(fehler[-1])
                     rohdaten = {**(rohdaten or {}), "browser_startfehler": True}
                 else:

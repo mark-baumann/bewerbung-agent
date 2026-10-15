@@ -7,23 +7,54 @@ die Automatik startet erst, wenn der letzte Schritt bestaetigt ist.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import streamlit as st
 
-from .config import Profil, Suche, ermittle_profil_pfad, lade_profil, speichere_profil
+from .config import Profil, Suche, daten_dir, ermittle_profil_pfad, lade_profil, speichere_profil
 
 SCHRITTE = ["Wer bist du?", "Was suchst du?", "Lebenslauf", "E-Mail-Konto", "Los geht's"]
 SCHLUESSEL = "assistent"
 
 
+def _fortschritt_datei() -> Path:
+    # Ueberlebt Neu-Laden der Seite (am Handy z. B. nach dem Datei-Dialog fuer den Lebenslauf)
+    return daten_dir() / "assistent.json"
+
+
+def _gespeicherter_schritt() -> int | None:
+    try:
+        schritt = int(json.loads(_fortschritt_datei().read_text(encoding="utf-8")).get("schritt", 0))
+    except (OSError, ValueError, AttributeError):
+        return None
+    return schritt if 1 <= schritt <= len(SCHRITTE) else None
+
+
 def aktiv(profil: Profil | None) -> bool:
-    """Assistent zeigen, solange kein Profil existiert oder er gerade laeuft."""
-    if profil is None and SCHLUESSEL not in st.session_state:
-        st.session_state[SCHLUESSEL] = 1
-    return SCHLUESSEL in st.session_state
+    """Assistent zeigen, solange kein Profil existiert oder er noch nicht abgeschlossen ist."""
+    s = st.session_state
+    if SCHLUESSEL not in s:
+        gespeichert = _gespeicherter_schritt()
+        if gespeichert:
+            s[SCHLUESSEL] = gespeichert
+        elif profil is None:
+            s[SCHLUESSEL] = 1
+    return SCHLUESSEL in s
 
 
 def _weiter(schritt: int) -> None:
     st.session_state[SCHLUESSEL] = schritt
+    try:
+        _fortschritt_datei().parent.mkdir(parents=True, exist_ok=True)
+        _fortschritt_datei().write_text(json.dumps({"schritt": schritt}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _abschliessen() -> None:
+    st.session_state.pop(SCHLUESSEL, None)
+    _fortschritt_datei().unlink(missing_ok=True)
 
 
 def _profil() -> Profil:
@@ -144,7 +175,7 @@ def _schritt_los() -> None:
                      key="assistent_fertig"):
             a.modus, a.aktiv, a.ziel_pro_woche = modus, True, int(ziel)
             _speichern(profil)
-            st.session_state.pop(SCHLUESSEL, None)
+            _abschliessen()
             ui.starte_hintergrund("automatik", "--ausloeser", "knopf",
                                   meldung="Die erste Suche läuft – das dauert ein paar Minuten.")
             st.rerun()
