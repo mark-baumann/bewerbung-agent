@@ -329,8 +329,10 @@ def zeige_einrichtung(profil: Profil, praefix: str = "startklar") -> None:
             icon = ":red[:material/error:]" if pflicht else ":gray[:material/radio_button_unchecked:]"
             links.markdown(f"{icon} **{titel}**  \n:gray[{hinweis}]")
             if aktion == "daten":
-                rechts.page_link(SEITE_EINSTELLUNGEN, label="Eintragen", icon=":material/edit:",
-                                 query_params={"tab": "Über mich"})
+                # Den gemerkten Tab direkt setzen: ein URL-Wert gleich dem Standard-Tab wuerde ignoriert
+                if rechts.button("Eintragen", key=f"{praefix}_daten", icon=":material/edit:", width="stretch"):
+                    st.session_state["tab"] = "Über mich"
+                    st.switch_page(SEITE_EINSTELLUNGEN)
             elif rechts.button(_AKTION_TEXT[aktion], key=f"{praefix}_{aktion}", width="stretch"):
                 _DIALOGE[aktion]()
 
@@ -973,8 +975,9 @@ def beworben_zeile(db: Speicher, v: Vorgang, praefix: str = "bw") -> None:
         return
     schluessel, zuletzt = f"{praefix}_rm_{v.ref}", f"{praefix}_rm_db_{v.ref}"
     db_wert = v.rueckmeldung or None
-    if zuletzt not in st.session_state or st.session_state[zuletzt] != db_wert:
-        # Neu oder vom Postfach geaendert: Anzeige auf den gespeicherten Stand bringen (vor dem Widget erlaubt)
+    if schluessel not in st.session_state or st.session_state.get(zuletzt, "–") != db_wert:
+        # Neu, nach einem Seitenwechsel verworfen oder vom Postfach geaendert: Anzeige auf den
+        # gespeicherten Stand bringen (vor dem Widget erlaubt)
         st.session_state[schluessel] = st.session_state[zuletzt] = db_wert
     with st.container(border=True):
         icon = RUECKMELDUNG_ICON.get(v.rueckmeldung or "", ":material/schedule_send:")

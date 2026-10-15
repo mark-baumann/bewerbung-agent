@@ -312,6 +312,11 @@ class Verlauf:
     def number_of_steps(self):
         return self._schritte
 
+    def model_outputs(self):
+        return self.antworten
+
+    antworten: list = []
+
 
 def _echter_browser(monkeypatch, profil, *laeufe):
     """BewerbungsBrowser mit nachgebautem Agenten; `laeufe` = Verlauf oder Ausnahme je agent.run()."""
@@ -342,7 +347,9 @@ def test_ist_startfehler_ohne_fehlalarm():
         assert not browser.ist_startfehler(mitten_im_lauf), mitten_im_lauf
     for start in (START_TIMEOUT, "No local Chrome/Chromium install found, and failed to install with playwright",
                   "Browser process (PID 7) exited before CDP became available on port 9222",
-                  "Browser did not start within 30 seconds"):
+                  "Browser did not start within 30 seconds",
+                  "connect() timed out after 15s — CDP connection to ws://127.0.0.1:9222/devtools/browser/x "
+                  "is too slow or unresponsive"):
         assert browser.ist_startfehler(start), start
 
 
@@ -396,3 +403,27 @@ def test_probelauf_versehentlich_abgeschickt_geht_vor(umgebung):
     v = ablauf.vorbereiten(db, profil, "1", mit_llm=False, probelauf=True, link_aufloesen=False,
                            browser_fabrik=lambda p: b)
     assert v.status == "abgeschickt" and "schon abgeschickt" in v.hinweis
+
+
+def test_modell_ersatz_startet_nach_getaner_arbeit_nicht_neu(umgebung, monkeypatch):
+    """Modell-Fehler in Schritt 3, danach hat der Agent gearbeitet: kein zweiter kompletter Lauf."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from bewerbungsagent.scoring import llm as llm_modul
+
+    profil, _, _ = umgebung
+    verlauf = Verlauf(15, [None, None, "The model `gpt-x` does not exist"] + [None] * 12)
+    verlauf.antworten = [object()] * 12
+    b = _echter_browser(monkeypatch, profil, verlauf, Verlauf(5, [None] * 5))
+    monkeypatch.setattr(b, "baue_agent", lambda *a, _alt=b.baue_agent, **k: _mit_modell(_alt(*a, **k)))
+    monkeypatch.setattr(llm_modul, "provider", lambda *a, **k: "openai")
+    monkeypatch.setattr(llm_modul, "pruefe_modell", lambda *a, **k: ("gpt-y", None))
+    monkeypatch.setattr(llm_modul, "vergiss_modelle", lambda *a, **k: None)
+    asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert b.aufrufe == 1
+
+
+def _mit_modell(agent):
+    agent.llm = __import__("types").SimpleNamespace(model="gpt-x")
+    return agent

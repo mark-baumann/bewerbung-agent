@@ -124,7 +124,8 @@ def browser_pfad() -> str | None:
 _STARTFEHLER = re.compile(
     r"BrowserStartEvent|BrowserLaunchEvent|BrowserConnectedEvent|exited before CDP|No local Chrome|"
     r"failed to install with playwright|No local browser path|Failed to launch browser|"
-    r"Browser did not start within|Failed to establish CDP connection|Chrome not found",
+    r"Browser did not start within|Failed to establish CDP connection|Chrome not found|"
+    r"connect\(\) timed out after \d+s|CDP connection to \S+ is too slow or unresponsive",
     re.IGNORECASE,
 )
 
@@ -300,6 +301,14 @@ def _host_domains(url: str) -> list[str]:
 
 BROWSER_START_RETRIES = 2          # zusaetzlich zum ersten Versuch
 BROWSER_START_BACKOFF_S = 10.0     # Wartezeit zwischen den Versuchen
+
+
+def _hat_gearbeitet(history: Any) -> bool:
+    """True, wenn das KI-Modell in mindestens einem Schritt geantwortet hat."""
+    try:
+        return bool(history.model_outputs())
+    except Exception:
+        return history.number_of_steps() > 1
 
 
 def _lebenslauf_vorhanden(profil: Profil) -> bool:
@@ -625,6 +634,10 @@ class BewerbungsBrowser:
         from ..scoring import llm as llm_modul
 
         if self._modell_ausser or not history.has_errors():
+            return False
+        # Hat das Modell schon geantwortet (oder gar ein Ergebnis geliefert), wurde auf der Seite gearbeitet:
+        # dann nie den ganzen Agenten neu starten – das Formular koennte schon abgeschickt sein.
+        if getattr(history, "structured_output", None) is not None or _hat_gearbeitet(history):
             return False
         fehler = [f for f in history.errors() if f]
         if not fehler or not _MODELL_FEHLT.search(fehler[-1]):

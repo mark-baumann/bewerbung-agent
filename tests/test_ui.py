@@ -280,3 +280,31 @@ def test_assistent_geht_nach_neu_laden_weiter(tmp_path, monkeypatch):
     neu = AppTest.from_file(str(REPO / "app.py"), default_timeout=30).run()
     _ohne_fehler(neu)
     assert neu.title[0].value == "Willkommen!" and any(s.value == "Lebenslauf" for s in neu.subheader)
+
+
+def test_rueckmeldung_bleibt_nach_seitenwechsel(app):
+    neue_app, profil, _ = app
+    _befuelle(profil)
+    with Speicher() as db:
+        db.aktualisiere_vorgang("j1", status="abgeschickt", gesendet_am="2026-10-01T08:00:00+00:00",
+                                rueckmeldung="absage")
+    at = neue_app().run()
+    assert at.pills(key="heute_rm_j1").value == "absage"
+    at.switch_page("seiten/profil.py").run()
+    at.switch_page("seiten/cockpit.py").run()
+    _ohne_fehler(at)
+    assert at.pills(key="heute_rm_j1").value == "absage"
+
+
+def test_eintragen_oeffnet_ueber_mich(app):
+    neue_app, profil, _ = app
+    profil.person.telefon = ""  # Kontaktdaten unvollstaendig -> Startklar zeigt „Eintragen“
+    speichere_profil(profil, Path("config/profil.yaml"))
+    at = neue_app().run()
+    at.switch_page("seiten/profil.py").run()
+    at.session_state["tab"] = "Konten"
+    at.run()
+    at.switch_page("seiten/cockpit.py").run()
+    at.button(key="startklar_daten").click().run()
+    _ohne_fehler(at)
+    assert at.session_state["tab"] == "Über mich"
