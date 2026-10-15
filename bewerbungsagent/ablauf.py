@@ -346,8 +346,9 @@ def _probelauf(
     roh.update({"zusammenfassung": lauf.zusammenfassung, "schritte": lauf.schritte,
                 "zeitpunkt": _jetzt(), "letzte_url": roh.get("letzte_url") or lauf.url})
     v.probelauf = json.dumps(roh, ensure_ascii=False)
-    if roh.get("browser_startfehler"):
-        # Der Browser kam nicht hoch - das sagt nichts ueber das Formular
+    if roh.get("browser_startfehler") and not roh.get("versehentlich_abgeschickt"):
+        # Der Browser kam nicht hoch - das sagt nichts ueber das Formular.
+        # Ein versehentliches Absenden geht immer vor (siehe unten), sonst droht ein zweites Senden.
         v.hinweis = f"Formular-Test war nicht möglich: {lauf.zusammenfassung}"
         return
     db.speichere_bewerbung(lauf.als_application(v.anschreiben))
@@ -638,7 +639,8 @@ def _sende_formular(
             # Auch nach den Wiederholungen kein Browser - nichts wurde abgeschickt
             return FormularErgebnis(False, startfehler_text(str(e)), startfehler=True)
         raise
-    startfehler = bool((lauf.rohdaten or {}).get("browser_startfehler"))
+    # Nur wenn der Agent nie ueber den Start hinauskam, darf die Freigabe stehen bleiben (sonst Doppelversand)
+    startfehler = bool((lauf.rohdaten or {}).get("browser_startfehler")) and lauf.schritte <= 1
     if not startfehler:
         db.speichere_bewerbung(lauf.als_application(v.anschreiben))
     return FormularErgebnis(lauf.abgeschickt, lauf.zusammenfassung,

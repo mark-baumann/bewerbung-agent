@@ -92,6 +92,26 @@ def profil_laden() -> Profil | None:
         return None
 
 
+def profil_status() -> tuple[Profil | None, str | None]:
+    """(Profil, Fehler): (None, None) = noch nicht (fertig) eingerichtet -> Assistent;
+    (None, Text) = Profil vorhanden, aber kaputt -> Fehler zeigen statt neu einrichten."""
+    try:
+        return lade_profil(), None
+    except FileNotFoundError:
+        return None, None
+    except Exception as e:
+        try:
+            halb = lade_profil(pruefen=False)
+        except Exception as e2:
+            return None, str(e2)
+        return (None, None) if not halb.suche.was else (None, str(e))
+
+
+def profil_fehler(text: str) -> None:
+    st.error(f"Dein Profil konnte nicht geladen werden: {text}", icon=":material/error:")
+    st.page_link(SEITE_EINSTELLUNGEN, label="Zu den Einstellungen", icon=":material/settings:")
+
+
 def zeit(iso: str | None) -> str:
     return zeitplan.beschreibe(zeitplan.als_datetime(iso)) if iso else "–"
 
@@ -173,6 +193,37 @@ def zeige_laufstatus(db: Speicher) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Dialoge: Merker, damit ein Hintergrund-Refresh offene Dialoge nicht schliesst
+# --------------------------------------------------------------------------- #
+
+DIALOG_OFFEN = "dialog_offen"
+DIALOG_SCHLUESSEL = "dialog_schluessel"
+
+
+def dialog_merken(*schluessel: str) -> None:
+    """Im Dialog-Koerper aufrufen: Dialog ist offen; `schluessel` = Eingaben, die beim Schliessen verfallen."""
+    st.session_state[DIALOG_OFFEN] = True
+    if schluessel:
+        st.session_state[DIALOG_SCHLUESSEL] = list(schluessel)
+
+
+def dialog_offen() -> bool:
+    return bool(st.session_state.get(DIALOG_OFFEN))
+
+
+def _dialog_zu() -> None:
+    """on_dismiss: Merker loeschen und nicht gespeicherte Eingaben verwerfen."""
+    st.session_state.pop(DIALOG_OFFEN, None)
+    for schluessel in st.session_state.pop(DIALOG_SCHLUESSEL, None) or []:
+        st.session_state.pop(schluessel, None)
+
+
+def neuer_seitenlauf() -> None:
+    """Zu Beginn jedes vollen Laufs (app.py): ein voller Lauf schliesst alle Dialoge."""
+    st.session_state.pop(DIALOG_OFFEN, None)
+
+
+# --------------------------------------------------------------------------- #
 # Einrichtung („Startklar“)
 # --------------------------------------------------------------------------- #
 
@@ -222,30 +273,34 @@ def einrichtung(profil: Profil) -> list[tuple[bool, bool, str, str, str]]:
     ]
 
 
-@st.dialog("Lebenslauf hochladen", icon=":material/description:")
+@st.dialog("Lebenslauf hochladen", icon=":material/description:", on_dismiss=_dialog_zu)
 def _dialog_lebenslauf() -> None:
     from .ui_einstellungen import lebenslauf_hochladen
 
+    dialog_merken()
     if lebenslauf_hochladen(lade_profil(), schluessel="dialog_lebenslauf") and st.button("Fertig", type="primary"):
         st.rerun()
 
 
-@st.dialog("E-Mail-Konto verbinden", icon=":material/mail:")
+@st.dialog("E-Mail-Konto verbinden", icon=":material/mail:", on_dismiss=_dialog_zu)
 def _dialog_mail() -> None:
     from .ui_einstellungen import mailkonto_verbinden
 
-    mailkonto_verbinden(lade_profil(), schluessel="dialog_mail")
+    dialog_merken()
+    mailkonto_verbinden(lade_profil(), schluessel="dialog_mail", im_dialog=True)
 
 
-@st.dialog("KI verbinden", icon=":material/auto_awesome:", width="medium")
+@st.dialog("KI verbinden", icon=":material/auto_awesome:", width="medium", on_dismiss=_dialog_zu)
 def _dialog_ki() -> None:
     from .ui_einstellungen import ki_einrichten
 
-    ki_einrichten(lade_profil())
+    dialog_merken()
+    ki_einrichten(lade_profil(), im_dialog=True)
 
 
-@st.dialog("Online-Formulare testen", icon=":material/language:")
+@st.dialog("Online-Formulare testen", icon=":material/language:", on_dismiss=_dialog_zu)
 def _dialog_browser() -> None:
+    dialog_merken()
     st.markdown("Für Bewerbungen über Online-Formulare startet auf dem Server ein unsichtbarer Browser. "
                 "Der Test zeigt, ob das klappt.")
     browser_test_anzeige("dialog_browser_test")
@@ -274,7 +329,10 @@ def zeige_einrichtung(profil: Profil, praefix: str = "startklar") -> None:
             icon = ":red[:material/error:]" if pflicht else ":gray[:material/radio_button_unchecked:]"
             links.markdown(f"{icon} **{titel}**  \n:gray[{hinweis}]")
             if aktion == "daten":
-                rechts.page_link(SEITE_EINSTELLUNGEN, label="Eintragen", icon=":material/edit:")
+                # Den gemerkten Tab direkt setzen: ein URL-Wert gleich dem Standard-Tab wuerde ignoriert
+                if rechts.button("Eintragen", key=f"{praefix}_daten", icon=":material/edit:", width="stretch"):
+                    st.session_state["tab"] = "Über mich"
+                    st.switch_page(SEITE_EINSTELLUNGEN)
             elif rechts.button(_AKTION_TEXT[aktion], key=f"{praefix}_{aktion}", width="stretch"):
                 _DIALOGE[aktion]()
 
@@ -370,6 +428,22 @@ def _cb_ja(ref: str, praefix: str) -> None:
                 empfaenger=s.get(_schluessel(praefix, ref, "empf")) if kanal == "email" else None,
                 email_text=s.get(_schluessel(praefix, ref, "mail")) if kanal == "email" else None,
             )
+        except ValueError as e:
+            s[_schluessel(praefix, ref, "fehler")] = str(e)
+            return
+    s.pop(_schluessel(praefix, ref, "fehler"), None)
+    starte_hintergrund("senden", "--ausloeser", "ja", meldung="Bewerbung wird verschickt …")
+
+
+def _cb_freigeben(ref: str, praefix: str) -> None:
+    """Ja auf der Karte: genau das Gespeicherte absenden (nie Eingaben aus einem geschlossenen Dialog)."""
+    profil = lade_profil()
+    s = st.session_state
+    for feld in ("kanal", "text", "empf", "mail"):
+        s.pop(_schluessel(praefix, ref, feld), None)
+    with oeffne_db() as db:
+        try:
+            ablauf.freigeben(db, profil, ref)
         except ValueError as e:
             s[_schluessel(praefix, ref, "fehler")] = str(e)
             return
@@ -600,9 +674,11 @@ def anschreiben_vorschau(text: str, laenge: int = 260) -> str:
     return rumpf if len(rumpf) <= laenge else rumpf[:laenge].rsplit(" ", 1)[0] + " …"
 
 
-@st.dialog("Anschreiben & Versand", width="large", icon=":material/edit:")
+@st.dialog("Anschreiben & Versand", width="large", icon=":material/edit:", on_dismiss=_dialog_zu)
 def _dialog_bearbeiten(ref: str, praefix: str) -> None:
     k = lambda feld: _schluessel(praefix, ref, feld)  # noqa: E731
+    # Schliessen ohne Speichern verwirft die Eingaben (sie duerfen nie unbemerkt mitgesendet werden)
+    dialog_merken(k("kanal"), k("text"), k("empf"), k("mail"))
     with oeffne_db() as db:
         v, job = db.vorgang(ref), db.job(ref)
     if not v or not job:
@@ -635,12 +711,14 @@ def _dialog_bearbeiten(ref: str, praefix: str) -> None:
                                mime="application/pdf", key=k("pdf"), icon=":material/download:", on_click="ignore")
         if st.button("Speichern", key=k("speichern"), icon=":material/save:"):
             _cb_speichern(ref, praefix)
+            _dialog_zu()
             st.rerun()
         if kanal != "manuell" and st.button("Speichern & absenden", key=k("dialog_ja"), type="primary",
                                             icon=":material/send:"):
             _cb_speichern(ref, praefix)
             _cb_ja(ref, praefix)
             if not st.session_state.get(k("fehler")):
+                _dialog_zu()
                 st.rerun()
     if st.session_state.get(k("fehler")):
         st.error(st.session_state[k("fehler")])
@@ -707,7 +785,7 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
                     st.link_button("Zur Bewerbung", job.bewerbungs_url or job.anzeige_url, type="primary",
                                    icon=":material/open_in_new:")
             else:
-                st.button("Ja, absenden", key=k("ja"), type="primary", on_click=_cb_ja, args=(v.ref, praefix),
+                st.button("Ja, absenden", key=k("ja"), type="primary", on_click=_cb_freigeben, args=(v.ref, praefix),
                           icon=":material/send:")
 
 
@@ -794,13 +872,19 @@ def suchbegriffe_karte(vorschlaege: list[dict], praefix: str = "vk") -> None:
 # Hilfe bei Fehlschlaegen
 # --------------------------------------------------------------------------- #
 
-def bewerbungs_email(job: Job, v: Vorgang) -> str | None:
-    """Eine Adresse, an die man sich statt des Formulars per E-Mail bewerben kann."""
+def bewerbungs_email(job: Job, v: Vorgang) -> tuple[str | None, bool]:
+    """(Adresse, sicher): eine Adresse, an die man sich statt des Formulars per E-Mail bewerben kann.
+
+    `sicher` nur, wenn die Bewerbungsseite sie nennt, die Jobboerse sie als Kontakt fuehrt oder in der
+    Anzeige ein Bewerbungs-Stichwort daneben steht - sonst koennte es z. B. die Vertriebsadresse sein.
+    """
     from .bewerben.kanal import finde_bewerbungs_email
 
-    kandidaten = [v.probelauf_daten.get("bewerbungs_email"), finde_bewerbungs_email(job.beschreibung)[0],
-                  job.kontakt_email]
-    return next((k.strip().lower() for k in kandidaten if k and "@" in k), None)
+    for bekannt in (v.probelauf_daten.get("bewerbungs_email"), job.kontakt_email):
+        if bekannt and "@" in bekannt:
+            return bekannt.strip().lower(), True
+    adresse, sicher = finde_bewerbungs_email(job.beschreibung)
+    return (adresse.strip().lower(), sicher) if adresse else (None, False)
 
 
 def _cb_per_email(ref: str, adresse: str) -> None:
@@ -846,9 +930,14 @@ def hilfe_karte(db: Speicher, v: Vorgang, praefix: str = "hk") -> None:
         fehler = st.session_state.get(f"nochmal_fehler_{v.ref}")
         if fehler:
             st.error(fehler)
-        adresse = bewerbungs_email(job, v) if v.kanal == "formular" else None
-        per_mail = bool(adresse and mail.smtp_eingerichtet())
-        if adresse and not per_mail:
+        adresse, sicher = bewerbungs_email(job, v) if v.kanal == "formular" else (None, False)
+        # Vielleicht schon abgeschickt: nichts mit einem Klick erneut senden, erst pruefen lassen
+        unklar = (v.hinweis or "").startswith("Nicht sicher abgeschickt")
+        per_mail = bool(adresse and sicher and mail.smtp_eingerichtet())
+        if adresse and not sicher:
+            st.caption(f"Die Anzeige nennt {adresse} – prüfe, ob das wirklich eine Bewerbungsadresse ist, "
+                       "bevor du dich dort bewirbst.")
+        elif adresse and not per_mail:
             st.caption(f"Die Anzeige nennt {adresse} – verbinde dein E-Mail-Konto (Einstellungen → Konten), "
                        "dann geht die Bewerbung auch ohne Formular raus.")
         if v.kanal == "formular" and v.hinweis and "browser" in v.hinweis.lower():
@@ -869,10 +958,10 @@ def hilfe_karte(db: Speicher, v: Vorgang, praefix: str = "hk") -> None:
                 st.link_button("Selbst bewerben", job.bewerbungs_url or job.anzeige_url,
                                icon=":material/open_in_new:")
             st.button("Nochmal versuchen", key=f"{praefix}_nochmal_{v.ref}", on_click=_cb_nochmal, args=(v.ref,),
-                      icon=":material/replay:", type="secondary" if per_mail else "primary")
+                      icon=":material/replay:", type="secondary" if per_mail or unklar else "primary")
             if per_mail:
                 st.button(f"Per E-Mail an {adresse}", key=f"{praefix}_mail_{v.ref}", on_click=_cb_per_email,
-                          args=(v.ref, adresse), type="primary", icon=":material/mail:")
+                          args=(v.ref, adresse), type="secondary" if unklar else "primary", icon=":material/mail:")
 
 
 # --------------------------------------------------------------------------- #
@@ -884,9 +973,12 @@ def beworben_zeile(db: Speicher, v: Vorgang, praefix: str = "bw") -> None:
     job = db.job(v.ref)
     if job is None:
         return
-    schluessel = f"{praefix}_rm_{v.ref}"
-    if schluessel not in st.session_state:
-        st.session_state[schluessel] = v.rueckmeldung or None
+    schluessel, zuletzt = f"{praefix}_rm_{v.ref}", f"{praefix}_rm_db_{v.ref}"
+    db_wert = v.rueckmeldung or None
+    if schluessel not in st.session_state or st.session_state.get(zuletzt, "–") != db_wert:
+        # Neu, nach einem Seitenwechsel verworfen oder vom Postfach geaendert: Anzeige auf den
+        # gespeicherten Stand bringen (vor dem Widget erlaubt)
+        st.session_state[schluessel] = st.session_state[zuletzt] = db_wert
     with st.container(border=True):
         icon = RUECKMELDUNG_ICON.get(v.rueckmeldung or "", ":material/schedule_send:")
         st.markdown(f"{icon} **{job.titel}**  \n:gray[{job.arbeitgeber} · {kanal_label(v.kanal)} · "
@@ -895,12 +987,13 @@ def beworben_zeile(db: Speicher, v: Vorgang, praefix: str = "bw") -> None:
                  on_change=_cb_rueckmeldung, args=(v.ref, schluessel), label_visibility="collapsed")
 
 
-@st.dialog("Nachweis fürs Amt", icon=":material/description:", width="large")
+@st.dialog("Nachweis fürs Amt", icon=":material/description:", width="large", on_dismiss=_dialog_zu)
 def nachweis_dialog() -> None:
     from datetime import date
 
     from . import dokumente
 
+    dialog_merken()
     st.caption("Liste deiner Bewerbungen als Nachweis der Eigenbemühungen für Agentur für Arbeit oder Jobcenter.")
     heute = date.today()
     zeitraum = st.date_input("Zeitraum", value=(heute.replace(day=1), heute), format="DD.MM.YYYY",

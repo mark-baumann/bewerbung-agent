@@ -39,6 +39,11 @@ LAENDER = {"at": "Österreich", "ch": "Schweiz", "nl": "Niederlande", "lu": "Lux
 ART_TEXT = {"suche": "Stichwortsuche", "feed": "Feed (lokal gefiltert)", "arbeitgeber": "Karriereseiten"}
 
 
+def _neu_laden(im_dialog: bool) -> None:
+    """Im Dialog nur den Dialog neu zeichnen – ein voller Lauf wuerde ihn schliessen."""
+    st.rerun(scope="fragment" if im_dialog else "app")
+
+
 def _testergebnis(schluessel: str) -> None:
     ergebnis = st.session_state.get(f"zugang_test_{schluessel}")
     if ergebnis:
@@ -46,7 +51,7 @@ def _testergebnis(schluessel: str) -> None:
         (st.success if ok else st.error)(text)
 
 
-def _gruppe(gruppe: str, profil: Profil) -> None:
+def _gruppe(gruppe: str, profil: Profil, *, im_dialog: bool = False) -> None:
     felder = zugangsdaten.felder(gruppe)
     gespeichert = zugangsdaten.lade()
     with st.form(f"zugang_{gruppe}"):
@@ -92,11 +97,11 @@ def _gruppe(gruppe: str, profil: Profil) -> None:
                                    help="Danach gelten wieder die Werte aus .env/Umgebung (falls vorhanden)."):
         zugangsdaten.speichere({name: None for name in hier})
         llm_modul.vergiss_modelle()
-        st.rerun()
+        _neu_laden(im_dialog)
     _testergebnis(gruppe)
 
 
-def _ki_modell(profil: Profil, speichern: Callable[[str], None]) -> None:
+def _ki_modell(profil: Profil, speichern: Callable[[str], None], *, im_dialog: bool = False) -> None:
     anbieter = llm_modul.provider(profil.bewertung.modell)
     if anbieter is None:
         st.caption("Trage oben einen Schlüssel für Claude oder ChatGPT oder die Adresse deines Ollama-Servers ein – "
@@ -133,7 +138,7 @@ def _ki_modell(profil: Profil, speichern: Callable[[str], None]) -> None:
             speichern(f"Modell auf {gewaehlt} gesetzt.")
     if st.button("Modellliste neu laden", icon=":material/refresh:"):
         llm_modul.verfuegbare_modelle(anbieter, neu_laden=True)
-        st.rerun()
+        _neu_laden(im_dialog)
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +156,7 @@ def mail_status() -> tuple[bool, str]:
     return True, text
 
 
-def mailkonto_verbinden(profil: Profil, *, schluessel: str = "mailkonto") -> bool:
+def mailkonto_verbinden(profil: Profil, *, schluessel: str = "mailkonto", im_dialog: bool = False) -> bool:
     """Ein-Schritt-Dialog: Adresse + Passwort, Rest automatisch. True, wenn verbunden."""
     from .bewerben import mailkonto
 
@@ -164,7 +169,7 @@ def mailkonto_verbinden(profil: Profil, *, schluessel: str = "mailkonto") -> boo
                 st.caption(meldung)
         if st.button("Anderes Konto verbinden", key=f"{schluessel}_wechseln", icon=":material/swap_horiz:"):
             st.session_state[f"{schluessel}_neu"] = True
-            st.rerun()
+            _neu_laden(im_dialog)
         return True
 
     st.markdown("Gib die Adresse und das Passwort deines Postfachs ein – Server und Einstellungen "
@@ -214,12 +219,12 @@ def _speichern_fuer(profil: Profil) -> Callable[[str], None]:
     return speichern
 
 
-def ki_einrichten(profil: Profil) -> None:
+def ki_einrichten(profil: Profil, *, im_dialog: bool = False) -> None:
     """Schluessel eintragen, testen, Modell waehlen – auch im Dialog nutzbar."""
-    _gruppe("ki", profil)
+    _gruppe("ki", profil, im_dialog=im_dialog)
     if llm_modul.provider(profil.bewertung.modell) is not None:
         st.divider()
-    _ki_modell(profil, _speichern_fuer(profil))
+    _ki_modell(profil, _speichern_fuer(profil), im_dialog=im_dialog)
 
 
 def lebenslauf_hochladen(profil: Profil, *, schluessel: str = "lebenslauf_upload") -> bool:

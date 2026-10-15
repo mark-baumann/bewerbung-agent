@@ -193,3 +193,130 @@ def test_suchbegriff_vorschlaege_gebuendelt(app):
     assert "Datenanalyst" in lade_profil().suche.was and "BI-Entwickler" not in lade_profil().suche.was
     with Speicher() as db:
         assert db.vorschlaege("offen") == []
+
+
+def test_verworfene_dialog_eingaben_werden_nicht_gesendet(app):
+    """Lesen & bearbeiten öffnen, Text/Weg ändern, ohne Speichern schließen: Ja sendet das Gespeicherte."""
+    neue_app, profil, gestartet = app
+    _befuelle(profil)
+    with Speicher() as db:
+        vorher = db.vorgang("j1")
+    at = neue_app().run()
+    at.button(key="cockpit_lesen_j1").click().run()
+    _ohne_fehler(at)
+    # Wie im Browser: die Eingabe im (danach geschlossenen) Dialog reist mit dem Klick auf Ja mit
+    at.text_area(key="cockpit_text_j1").input("NICHT GESPEICHERT")
+    at.button(key="cockpit_ja_j1").click().run()
+    _ohne_fehler(at)
+    with Speicher() as db:
+        v = db.vorgang("j1")
+    assert v.status == "freigegeben" and v.anschreiben == vorher.anschreiben and v.kanal == vorher.kanal
+    assert gestartet[-1][0] == "senden"
+
+
+def test_rueckmeldung_folgt_dem_postfach(app):
+    neue_app, profil, _ = app
+    _befuelle(profil)
+    with Speicher() as db:
+        db.aktualisiere_vorgang("j1", status="abgeschickt", gesendet_am="2026-10-01T08:00:00+00:00",
+                                rueckmeldung="eingangsbestaetigung")
+    at = neue_app().run()
+    assert at.pills(key="heute_rm_j1").value == "eingangsbestaetigung"
+    with Speicher() as db:  # z. B. vom Postfach-Abgleich erkannt
+        ablauf.setze_rueckmeldung(db, "j1", "einladung")
+    at.run()
+    _ohne_fehler(at)
+    assert at.pills(key="heute_rm_j1").value == "einladung"
+
+
+def test_ausweg_mail_nur_bei_sicherer_adresse(app, monkeypatch):
+    neue_app, profil, _ = app
+    _befuelle(profil)
+    monkeypatch.setattr("bewerbungsagent.bewerben.mail.smtp_eingerichtet", lambda *a, **k: True)
+    with Speicher() as db:
+        db.speichere_jobs([Job(ref="j3", titel="Data Engineer", arbeitgeber="Firma Drei", ort="München",
+                               beschreibung=("Kundenservice erreichen Sie unter vertrieb@drei.de. "
+                                            "Bitte nutzen Sie ausschließlich unser Online-Portal."),
+                               externe_url="https://drei.de/job")])
+    at = neue_app().run()
+    _ohne_fehler(at)
+    assert not [b for b in at.button if b.key == "cockpit_mail_j3"]
+    with Speicher() as db:
+        db.speichere_jobs([Job(ref="j3", titel="Data Engineer", arbeitgeber="Firma Drei", ort="München",
+                               beschreibung="Ihre Bewerbung senden Sie bitte an karriere@drei.de.",
+                               externe_url="https://drei.de/job")])
+    at.run()
+    assert [b for b in at.button if b.key == "cockpit_mail_j3"]
+
+
+def test_kaputtes_profil_zeigt_fehler_statt_assistent(app):
+    neue_app, _, _ = app
+    pfad = Path("config/profil.yaml")
+    pfad.write_text(pfad.read_text(encoding="utf-8").replace("person:", "person:\n  telefonnummer: '0123'", 1),
+                    encoding="utf-8")
+    at = neue_app().run()
+    assert not at.exception
+    assert not [t for t in at.title if t.value == "Willkommen!"]
+    assert any("telefonnummer" in e.value for e in at.error)
+
+
+def test_assistent_geht_nach_neu_laden_weiter(tmp_path, monkeypatch):
+    from bewerbungsagent import config
+
+    monkeypatch.chdir(tmp_path)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_BASE_URL", "OLLAMA_API_KEY", "SMTP_HOST",
+                 "BEWERBUNGSAGENT_DB"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "BENUTZER_PFAD", tmp_path / "gibt-es-nicht.yaml")
+    at = AppTest.from_file(str(REPO / "app.py"), default_timeout=30).run()
+    at.text_input(key="assistent_vorname").input("Erika")
+    at.text_input(key="assistent_nachname").input("Muster")
+    at.text_input(key="assistent_email").input("erika@example.org")
+    next(b for b in at.button if b.label == "Weiter").click().run()
+    at.text_area(key="assistent_was").input("Buchhalterin")
+    next(b for b in at.button if b.label == "Weiter").click().run()
+    _ohne_fehler(at)
+    # Neue Sitzung (Seite neu geladen): weiter bei Schritt 3 statt der normalen Startseite
+    neu = AppTest.from_file(str(REPO / "app.py"), default_timeout=30).run()
+    _ohne_fehler(neu)
+    assert neu.title[0].value == "Willkommen!" and any(s.value == "Lebenslauf" for s in neu.subheader)
+
+
+def test_rueckmeldung_bleibt_nach_seitenwechsel(app):
+    neue_app, profil, _ = app
+    _befuelle(profil)
+    with Speicher() as db:
+        db.aktualisiere_vorgang("j1", status="abgeschickt", gesendet_am="2026-10-01T08:00:00+00:00",
+                                rueckmeldung="absage")
+    at = neue_app().run()
+    assert at.pills(key="heute_rm_j1").value == "absage"
+    at.switch_page("seiten/profil.py").run()
+    at.switch_page("seiten/cockpit.py").run()
+    _ohne_fehler(at)
+    assert at.pills(key="heute_rm_j1").value == "absage"
+
+
+def test_eintragen_oeffnet_ueber_mich(app):
+    neue_app, profil, _ = app
+    profil.person.telefon = ""  # Kontaktdaten unvollstaendig -> Startklar zeigt „Eintragen“
+    speichere_profil(profil, Path("config/profil.yaml"))
+    at = neue_app().run()
+    at.switch_page("seiten/profil.py").run()
+    at.session_state["tab"] = "Konten"
+    at.run()
+    at.switch_page("seiten/cockpit.py").run()
+    at.button(key="startklar_daten").click().run()
+    _ohne_fehler(at)
+    assert at.session_state["tab"] == "Über mich"
+
+
+def test_alter_assistenten_stand_blockiert_fertiges_profil_nicht(app):
+    neue_app, profil, _ = app
+    assert profil.automatisierung.aktiv
+    datei = Path("daten/assistent.json")
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    datei.write_text('{"schritt": 2}', encoding="utf-8")
+    at = neue_app().run()
+    _ohne_fehler(at)
+    assert not [t for t in at.title if t.value == "Willkommen!"]
+    assert not datei.exists()

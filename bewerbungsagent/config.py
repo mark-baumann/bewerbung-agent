@@ -27,15 +27,32 @@ def unterlagen_dir() -> Path:
     return daten_dir() / "unterlagen"
 
 
+def sicherungs_pfad(pfad: str | Path) -> Path:
+    """Wo die Sicherung einer Unterlage im Datenordner liegt – eindeutig je Herkunft.
+
+    `unterlagen/a/x.pdf` -> `daten/unterlagen/_alt/a/x.pdf`; alles andere ausserhalb des
+    Datenordners -> `daten/unterlagen/_extern/<hash>_<name>`. Beide Unterordner nutzen Uploads
+    nie (die liegen direkt in `daten/unterlagen/`), so ueberschreibt keine Sicherung eine
+    hochgeladene Datei und gleichnamige Dateien verschiedener Ordner kollidieren nicht.
+    """
+    import hashlib
+
+    p = Path(pfad).expanduser()
+    if not p.is_absolute() and len(p.parts) > 1 and p.parts[0] == "unterlagen":
+        return unterlagen_dir() / "_alt" / Path(*p.parts[1:])
+    kennung = hashlib.sha1(str(p).encode("utf-8")).hexdigest()[:8]
+    return unterlagen_dir() / "_extern" / f"{kennung}_{p.name}"
+
+
 def finde_datei(pfad: str | None) -> Path | None:
-    """Gespeicherten Pfad aufloesen; alte Pfade (unterlagen/x) auch im Datenordner suchen."""
+    """Gespeicherten Pfad aufloesen; fehlt die Datei (z. B. nach einem Update), die Sicherung nehmen."""
     if not pfad:
         return None
     p = Path(pfad).expanduser()
     if p.exists():
         return p
-    for basis in (unterlagen_dir(), Path("unterlagen")):
-        kandidat = basis / p.name
+    # pfadgetreue Sicherung zuerst; danach aeltere, flach nach Namen abgelegte Kopien
+    for kandidat in (sicherungs_pfad(p), unterlagen_dir() / p.name, Path("unterlagen") / p.name):
         if kandidat.exists():
             return kandidat
     return None
@@ -284,43 +301,52 @@ def speichere_profil(profil: Profil, pfad: str | Path | None = None) -> Path:
     return p
 
 
-def unterlagen_sichern(profil: Profil, pfad: str | Path | None = None) -> bool:
-    """Unterlagen ausserhalb des Datenordners dorthin kopieren und das Profil umstellen.
+def unterlagen_sichern(profil: Profil) -> int:
+    """Unterlagen ausserhalb des Datenordners dorthin sichern (Kopie, das Profil bleibt unveraendert).
 
-    So gehen hochgeladene Dateien bei einem Container-Update nicht mehr verloren.
-    Liefert True, wenn etwas geaendert wurde.
+    Solange das Original existiert, wird es benutzt (spaetere Aenderungen zaehlen); erst wenn es
+    fehlt (z. B. nach einem Container-Update), greift `finde_datei` auf die Sicherung zurueck.
+    Liefert die Anzahl neu geschriebener Sicherungen.
     """
+    import filecmp
     import shutil
 
-    ziel_dir = unterlagen_dir()
-    geaendert = False
-
-    def sichere(eintrag: str) -> str:
-        nonlocal geaendert
-        quelle = finde_datei(eintrag)
-        if quelle is None:
-            return eintrag
+    daten = unterlagen_dir().resolve()
+    anzahl = 0
+    for eintrag in [profil.unterlagen.lebenslauf, *profil.unterlagen.zeugnisse]:
+        if not eintrag:
+            continue
+        quelle = Path(eintrag).expanduser()
         try:
-            if quelle.resolve().is_relative_to(ziel_dir.resolve()):
-                neu = quelle
-            else:
-                ziel_dir.mkdir(parents=True, exist_ok=True)
-                neu = ziel_dir / quelle.name
-                if not neu.exists() or neu.stat().st_size != quelle.stat().st_size:
-                    shutil.copy2(quelle, neu)
+            if not quelle.is_file() or quelle.resolve().is_relative_to(daten):
+                continue
+            ziel = sicherungs_pfad(eintrag)
+            if ziel.exists() and filecmp.cmp(quelle, ziel, shallow=False):
+                continue
+            ziel.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(quelle, ziel)
+            anzahl += 1
         except OSError:
-            return eintrag
-        if str(neu) != eintrag:
-            geaendert = True
-        return str(neu)
+            continue
+    return anzahl
 
-    u = profil.unterlagen
-    if u.lebenslauf:
-        u.lebenslauf = sichere(u.lebenslauf)
-    u.zeugnisse = [sichere(z) for z in u.zeugnisse]
-    if geaendert:
-        speichere_profil(profil, ermittle_profil_pfad(pfad))
-    return geaendert
+
+def profil_sichern() -> bool:
+    """config/profil.yaml unveraendert (Byte-Kopie, Kommentare bleiben) in den Datenordner sichern."""
+    import filecmp
+    import shutil
+
+    ziel = daten_profil_pfad()
+    try:
+        if not STANDARD_PFAD.is_file() or STANDARD_PFAD.resolve() == ziel.resolve():
+            return False
+        if ziel.exists() and filecmp.cmp(STANDARD_PFAD, ziel, shallow=False):
+            return False
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(STANDARD_PFAD, ziel)
+    except OSError:
+        return False
+    return True
 
 
 def lade_env(pfad: str | Path = ".env") -> int:
