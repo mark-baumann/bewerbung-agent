@@ -24,8 +24,11 @@ s = st.session_state
 if s.pop("sfs_zu_heute", False):
     st.switch_page(ui.SEITE_HEUTE)
 
-# Vorbelegt aus dem Profil – Jobtitel und Ort kommen aus dem Lebenslauf (Seite „Lebenslauf“)
-if "sfs_begriffe" not in s:
+# Vorbelegt aus dem Profil – Jobtitel und Ort kommen aus dem Lebenslauf (Seite „Lebenslauf“). Aendert sich das
+# Profil (neu ausgelesen oder unter Einstellungen gespeichert), gelten die neuen Werte sofort.
+_quelle = (tuple(profil.suche.was), profil.suche.wo, int(profil.suche.umkreis))
+if "sfs_begriffe" not in s or s.get("sfs_quelle") != _quelle:
+    s["sfs_quelle"] = _quelle
     p = profil.suche
     s["sfs_begriffe"] = list(p.was)
     s["sfs_wo"] = p.wo or ""

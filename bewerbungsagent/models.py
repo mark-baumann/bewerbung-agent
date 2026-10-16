@@ -166,6 +166,7 @@ class Vorgang:
     message_id: str | None = None            # SMTP-Message-ID (Antworten zuordnen)
     rueckmeldung_quelle: str | None = None   # manuell | postfach
     auto_senden_ab: str | None = None        # Autopilot: geht ab diesem Zeitpunkt ohne Ja raus
+    zurueckgestellt_seit: str | None = None  # wartet seit dann auf Browser/KI (nach 48 h: selbst bewerben)
 
     @property
     def pruefung_daten(self) -> dict[str, Any]:

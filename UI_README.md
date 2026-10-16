@@ -41,7 +41,9 @@ UI, Hintergrund-Worker und Cron und haben Vorrang vor `.env` bzw. Docker-Umgebun
 **Klappt ein Online-Formular nicht**, weicht der Agent selbst aus: Gibt es eine sichere
 Bewerbungsadresse und ist das E-Mail-Konto verbunden, geht die Bewerbung per E-Mail raus (sie hatte
 ja schon dein Ja). Sonst kommt sie als Karte „Selbst bewerben“ zurück. War der Agent schon im
-Formular, fragt die Karte nach einer Eingangsbestätigung – nichts wird doppelt geschickt. Antwortet
+Formular, fragt die Karte nach einer Eingangsbestätigung – nichts wird doppelt geschickt; kam nichts an,
+startet „Mehr → Nicht angekommen – automatisch neu bewerben“ einen neuen Versuch (das ist dein Ja). Geht eine
+E-Mail nicht raus (z. B. Passwort geändert), kommt sie als Karte mit dem Grund zurück; „Ja“ versucht es erneut. Antwortet
 die KI nicht (z. B. Konto ohne Guthaben) oder startet der Browser nicht, ist nichts passiert: die
 Bewerbung bleibt freigegeben, ein neuer Versuch folgt nach 30 Minuten, nach 48 Stunden wird daraus
 eine Karte „Selbst bewerben“.
@@ -55,10 +57,27 @@ startet die Anschreiben im Hintergrund und springt nach **Heute**.
 
 ### Lebenslauf
 Die gespeicherte Datei (Name, Größe, Datum, Herunterladen, „Anderen Lebenslauf hochladen“; PDF, Word
-oder Text, gespeichert im Datenordner). Darunter **„Das lese ich aus deinem Lebenslauf“**: Kurzprofil,
-Jobtitel, Ort und Fähigkeiten – automatisch übernommen für Suche, Bewertung und Anschreiben, einmal je
-neuem Inhalt (mit KI; ohne KI nur die Kontaktdaten). „Neu auslesen“ auf Wunsch. Ganz unten Zeugnisse
-und weitere Unterlagen.
+oder Text, gespeichert im Datenordner). Darunter **„Das lese ich aus deinem Lebenslauf“** – daraus entstehen
+die **Suchkriterien**:
+- Jobtitel aus allen Stationen und Fähigkeiten.
+- Suchort: die nächste größere Stadt im Pendelbereich, z. B. Giebing → München mit 30 km; ohne KI der
+  Wohnort mit 50 km.
+- Fähigkeiten und Themen für die Passung.
+- Kurzprofil und Werdegang für das Anschreiben.
+
+So wird ausgelesen und übernommen:
+- Mit KI (bei Ollama bevorzugt `gpt-oss:120b`) einmal je neuem Inhalt; ohne KI nach Abschnitten (Über mich,
+  Fähigkeiten, Erfahrung).
+- Antwortet die KI nicht, steht der Grund da (z. B. „kein Guthaben“), und es folgt später ein neuer Versuch.
+- Übernommen wird, ohne deine Änderungen zu überschreiben: eigene Jobtitel und Fähigkeiten bleiben dahinter
+  erhalten, ein von dir geänderter Ort bleibt (außer bei „Neu auslesen“).
+- Danach werden offene Stellen neu bewertet.
+
+Knöpfe:
+- **Jetzt damit suchen** startet die Suche.
+- **Probe-Anschreiben** zeigt ein Anschreiben für die passendste offene Stelle (nur zum Ansehen).
+
+Ganz unten Zeugnisse und weitere Unterlagen.
 
 ### Einstellungen
 - **Über mich:** Kontakt, Angaben für Online-Formulare und **Nachweis fürs Amt** (Zeitraum wählen,

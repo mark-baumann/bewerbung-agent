@@ -157,8 +157,19 @@ def starte_hintergrund(*argumente: str, meldung: str) -> None:
     st.toast(meldung, icon=":material/hourglass_top:")
 
 
-def laeuft_etwas(db: Speicher) -> bool:
-    return bool(db.laufende_laeufe() or db.vorgaenge(("vorbereitung", "freigegeben", "wird_gesendet")))
+def auffrischen_alle(db: Speicher) -> int | None:
+    """Sekunden bis zum naechsten Blick auf den Stand: oft bei echter Arbeit, selten bei wartenden Freigaben."""
+    if db.laufende_laeufe() or db.vorgaenge(("vorbereitung", "wird_gesendet")):
+        return 5
+    return 30 if db.vorgaenge("freigegeben") else None
+
+
+STAND_STATUS = ("vorbereitung", "wartet", "freigegeben", "wird_gesendet", "abgeschickt", "selbst_beworben")
+
+
+def stand(db: Speicher) -> tuple[int, ...]:
+    """Anzahl der Vorgaenge je Status – aendert sie sich, baut „Heute“ neu auf."""
+    return tuple(len(db.vorgaenge(status)) for status in STAND_STATUS)
 
 
 def lauf_zusammenfassung(lauf: dict) -> str:
@@ -189,7 +200,7 @@ def zeige_laufstatus(db: Speicher) -> bool:
         teile.append(f"{n} Bewerbung{'en' if n > 1 else ''} in Vorbereitung")
     if teile:
         st.caption(":material/autorenew: " + " · ".join(dict.fromkeys(teile)))
-    return bool(teile) or laeuft_etwas(db)
+    return bool(teile)
 
 
 # --------------------------------------------------------------------------- #
@@ -379,6 +390,21 @@ def _cb_selbst(ref: str) -> None:
     st.toast("Als „selbst beworben“ eingetragen.", icon=":material/task_alt:")
 
 
+def _cb_neu_bewerben(ref: str, praefix: str) -> None:
+    """Karte „vielleicht schon raus“: Du hast geprüft, dass nichts ankam – mit deinem Ja automatisch neu."""
+    profil = lade_profil()
+    with oeffne_db() as db:
+        v = db.vorgang(ref)
+        kanal = "email" if v and v.empfaenger else "formular"
+        try:
+            ablauf.freigeben(db, profil, ref, kanal=kanal)
+        except ValueError as e:
+            st.session_state[_schluessel(praefix, ref, "fehler")] = str(e)
+            return
+    st.session_state.pop(_schluessel(praefix, ref, "fehler"), None)
+    starte_hintergrund("senden", "--ausloeser", "ja", meldung="Bewerbung wird neu verschickt …")
+
+
 def _cb_neu_vorbereiten(ref: str) -> None:
     with oeffne_db() as db:
         ablauf.zuruecksetzen(db, ref)
@@ -417,7 +443,8 @@ def _qualitaet_badge(v: Vorgang) -> None:
     bericht = v.pruefung_daten
     if v.anschreiben_quelle == "vorlage":
         st.badge("Anschreiben aus Vorlage", icon=":material/edit_note:", color="orange",
-                 help="Ohne KI erstellt – bitte lesen und anpassen.")
+                 help=(f"Ohne KI erstellt, weil {bericht['ki_fehler']}" if bericht.get("ki_fehler")
+                       else "Ohne KI erstellt") + " – bitte lesen und anpassen.")
     elif v.qualitaet is not None:
         st.badge(f"Anschreiben {v.qualitaet:.0f}/100", icon=":material/verified:", color=score_farbe(v.qualitaet),
                  help=QUALITAET_HILFE + (" Bereits einmal überarbeitet." if bericht.get("ueberarbeitet") else ""))
@@ -624,14 +651,17 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
             st.caption(":material/check: Passt bei " + ", ".join(score.treffer[:5])
                        + (f" · :material/warning: {', '.join(score.rot[:2])}" if score.rot else ""))
 
-        if v.hinweis == ablauf.HINWEIS_VIELLEICHT:
+        if v.hinweis in ablauf.HINWEISE_VIELLEICHT:
             st.info(v.hinweis, icon=":material/help:")
+        elif v.hinweis and "ging nicht raus" in v.hinweis:
+            st.info(v.hinweis, icon=":material/mail:")
         elif v.hinweis:
             warnung = v.kanal != "manuell" and any(w in v.hinweis.lower() for w in ("fehlgeschlagen", "unvollständig"))
             (st.warning if warnung else st.caption)(v.hinweis)
         _autopilot_anzeige(v, praefix, autopilot_an)
         _pruefung_anzeige(v)
-        _fehlende_angaben(profil, v, praefix)
+        if v.kanal != "manuell":  # „Formular neu testen“ nie auf Karten zum Selbstbewerben (vielleicht schon raus)
+            _fehlende_angaben(profil, v, praefix)
 
         if v.anschreiben:
             st.markdown(f":gray[„{anschreiben_vorschau(v.anschreiben)}“]")
@@ -654,7 +684,12 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
                               icon=":material/refresh:", width="stretch")
                     st.button("Habe mich selbst beworben", key=k("selbst"), on_click=_cb_selbst, args=(v.ref,),
                               icon=":material/task_alt:", width="stretch")
-                elif v.anschreiben_pdf and Path(v.anschreiben_pdf).exists():
+                if manuell and v.hinweis in ablauf.HINWEISE_VIELLEICHT:
+                    st.caption("Du hast geprüft, dass nichts angekommen ist?")
+                    st.button("Nicht angekommen – automatisch neu bewerben", key=k("neu_bewerben"),
+                              on_click=_cb_neu_bewerben, args=(v.ref, praefix), icon=":material/send:",
+                              width="stretch")
+                if manuell and v.anschreiben_pdf and Path(v.anschreiben_pdf).exists():
                     st.download_button("Anschreiben als PDF", Path(v.anschreiben_pdf).read_bytes(),
                                        file_name=Path(v.anschreiben_pdf).name, mime="application/pdf",
                                        key=k("karte_pdf"), icon=":material/download:", width="stretch",
@@ -838,7 +873,7 @@ def nachweis_dialog() -> None:
         st.caption("Bitte Anfang und Ende wählen.")
         return
     von, bis = zeitraum
-    profil = lade_profil()
+    profil = lade_profil(pruefen=False)
     with oeffne_db() as db:
         zeilen = dokumente.nachweis_zeilen(db, von, bis)
     st.markdown(f"**{len(zeilen)} Bewerbung(en)** vom {von:%d.%m.%Y} bis {bis:%d.%m.%Y}")

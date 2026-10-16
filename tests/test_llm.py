@@ -395,3 +395,39 @@ def test_festschreiben_ohne_modellliste_aendert_nichts(tmp_path, monkeypatch):
     profil.bewertung.modell = "glm-5.3-flash"
     assert llm.modell_festschreiben(profil, tmp_path / "profil.yaml") is None
     assert lade_profil(tmp_path / "profil.yaml").bewertung.modell != "gpt-oss:120b"
+
+
+def test_hersteller_praefix_ist_kein_freibrief_fuer_bezahlmodelle(monkeypatch):
+    liste = ["openai/gpt-4o-mini", "google/gemma-3-27b-it", "meta-llama/llama-3.3-70b-instruct"]
+    assert llm._fremdes_bezahlmodell("ollama", "openai/gpt-4o-mini")
+    assert llm.waehle_ersatz("ollama", "openai/gpt-oss-120b", liste) == "meta-llama/llama-3.3-70b-instruct"
+
+
+@pytest.mark.parametrize("fehler, grund", [
+    ("Error code: 429 - {'type': 'insufficient_quota', 'code': 'credit_balance_exhausted'}", "kein Guthaben"),
+    ("Error code: 429 - rate limit exceeded", "überlastet"),
+    ("Error code: 401 - invalid_api_key", "Schlüssel"),
+    ("The read operation timed out", "nicht rechtzeitig"),
+    ("All connection attempts failed", "nicht erreichbar"),
+    ("The model glm-5.3 does not exist", "Modell"),
+])
+def test_ki_grund_ist_verstaendlich(fehler, grund):
+    assert grund in llm.ki_grund(fehler)
+
+
+def test_ollama_gpt_oss_bekommt_denkaufwand_und_leere_antwort_ist_fehler(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    gesendet = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        gesendet.append(json.loads(request.content))
+        inhalt = "" if len(gesendet) == 1 else '{"ok": true}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": inhalt}}]})
+
+    client = llm.OllamaClient(transport=httpx.MockTransport(transport))
+    with pytest.raises(llm.LLMNichtVerfuegbar):
+        client.chat(modell="gpt-oss:120b", system="S", messages=[], max_tokens=50, effort="low")
+    assert client.chat(modell="gpt-oss:120b", system="S", messages=[], max_tokens=50, effort="low") == '{"ok": true}'
+    assert gesendet[0]["reasoning_effort"] == "low"
+    client.chat(modell="glm-5.2", system="S", messages=[], max_tokens=50, effort="low")
+    assert "reasoning_effort" not in gesendet[-1]  # nur fuer Modelle, die es kennen

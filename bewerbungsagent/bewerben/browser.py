@@ -261,18 +261,9 @@ _KI_FEHLER = re.compile(
 
 def ki_fehler_text(fehler: str) -> str:
     """Verstaendliche Ursache, wenn die KI nicht geantwortet hat."""
-    f = fehler.lower()
-    if any(w in f for w in ("insufficient_quota", "credit", "quota")):
-        grund = "das KI-Konto hat kein Guthaben mehr"
-    elif any(w in f for w in ("invalid_api_key", "incorrect api key", "unauthorized", "authentication", "401")):
-        grund = "der KI-Schlüssel wird abgelehnt"
-    elif any(w in f for w in ("rate", "429", "too many")):
-        grund = "die KI ist gerade überlastet"
-    elif _MODELL_FEHLT.search(fehler):
-        grund = "das KI-Modell gibt es bei deinem Zugang nicht"
-    else:
-        grund = "die KI hat nicht geantwortet"
-    return f"Nichts ausgefüllt oder abgeschickt – {grund}. Ich versuche es automatisch wieder."
+    from ..scoring.llm import ki_grund
+
+    return f"Nichts ausgefüllt oder abgeschickt – {ki_grund(fehler)}. Ich versuche es automatisch wieder."
 
 
 def _ergebnis_modell():
@@ -327,7 +318,18 @@ BROWSER_START_BACKOFF_S = 10.0     # Wartezeit zwischen den Versuchen
 
 
 def _hat_gearbeitet(history: Any) -> bool:
-    """True, wenn das KI-Modell in mindestens einem Schritt geantwortet hat."""
+    """True, wenn das KI-Modell in mindestens einem Schritt geantwortet hat.
+
+    Schritt 0 zaehlt nicht: browser-use legt fuer die automatische Startnavigation (`initial_actions`)
+    eine kuenstliche Modell-Antwort an ("Initial navigation"), auch wenn die KI nie geantwortet hat.
+    """
+    eintraege = getattr(history, "history", None)
+    if isinstance(eintraege, list):
+        return any(
+            getattr(h, "model_output", None) is not None
+            and getattr(getattr(h, "metadata", None), "step_number", None) != 0
+            for h in eintraege
+        )
     try:
         return bool(history.model_outputs())
     except Exception:

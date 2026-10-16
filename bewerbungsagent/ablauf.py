@@ -287,6 +287,15 @@ def bewerte_neue(
     return scores
 
 
+def stichwort_bewertungen_auffrischen(db: Speicher, profil: Profil) -> int:
+    """Nach neuem Lebenslauf (andere Faehigkeiten/Jobtitel): offene Stellen, die nur per Stichwort bewertet
+    sind, neu bewerten – KI-Bewertungen bleiben, sie kennen den Lebenslauf schon."""
+    refs = [job.ref for job, score in db.kandidaten(min_score=0, limit=1000) if score.bewerter == "heuristik"]
+    if refs:
+        bewerte_neue(db, profil, refs=refs, alle=True, mit_llm=False)
+    return len(refs)
+
+
 def nachbewerten(db: Speicher, profil: Profil, *, budget: int, fehler: list[str] | None = None) -> list[Score]:
     """Stellen, die bisher nur per Stichworten bewertet wurden, mit KI neu bewerten."""
     if budget <= 0 or not llm_modul.client_verfuegbar():
@@ -503,6 +512,7 @@ def freigeben(
 
     v.status = "freigegeben"
     v.freigegeben_am = _jetzt()
+    v.zurueckgestellt_seit = None
     fehlt = versandweg_fehlt(v.kanal, profil)
     v.hinweis = f"Geht raus, sobald das erledigt ist: {fehlt}" if fehlt else None
     v.auto_senden_ab = None
@@ -665,12 +675,23 @@ HINWEIS_SELBST = ("Das Formular ließ sich nicht automatisch ausfüllen – bitt
 LEBENSLAUF_FEHLT = "Die Lebenslauf-Datei fehlt – bitte unter „Lebenslauf“ erneut hochladen."
 HINWEIS_VIELLEICHT = ("Ich war schon im Formular, bin mir aber nicht sicher, ob es abgeschickt wurde. Kam eine "
                       "Bestätigung? Dann einfach „Ja, erledigt“ – sonst bitte selbst bewerben.")
+HINWEIS_VIELLEICHT_MAIL = ("Der E-Mail-Versand wurde unterbrochen – vielleicht ist sie schon raus. Liegt bei dir eine "
+                           "Kopie im Postfach? Dann einfach „Ja, erledigt“ – sonst bitte selbst bewerben.")
+HINWEISE_VIELLEICHT = (HINWEIS_VIELLEICHT, HINWEIS_VIELLEICHT_MAIL)
+# So begannen fruehere Hinweise, wenn die Bewerbung vielleicht schon raus war
+_VIELLEICHT_FRUEHER = ("Nicht sicher abgeschickt", "Versand abgebrochen")
+# Fruehere Hinweise, bei denen sicher nichts auf der Bewerbungsseite passiert ist
+_NICHTS_PASSIERT = re.compile(
+    r"^(Keine Bewerbungs-URL hinterlegt|Kein Lebenslauf hinterlegt|(Der )?Browser-Agent \(browser-use\) ist nicht "
+    r"installiert|Nichts ausgefüllt oder abgeschickt|Stelle nicht mehr in der Datenbank)"
+)
 
 
 def _auf_email_umstellen(db: Speicher, profil: Profil, job: Job | None, v: Vorgang) -> bool:
     """Formular geht nicht: mit sicherer Bewerbungsadresse und verbundenem Konto per E-Mail bewerben.
 
-    Die Bewerbung hatte schon das Ja des Nutzers; nur der Weg aendert sich.
+    Die Bewerbung hatte schon das Ja des Nutzers; nur der Weg aendert sich. Nur aufrufen, wenn auf der
+    Bewerbungsseite nichts passiert ist (sonst koennte sie doppelt ankommen).
     """
     if job is None or v.kanal != "formular" or mail.smtp_konfig(profil) is None:
         return False
@@ -686,33 +707,56 @@ def _selbst_bewerben_lassen(db: Speicher, v: Vorgang, *, vielleicht_raus: bool =
     """Statt einer Fehlermeldung: die Stelle kommt als normale Ja/Nein-Karte „Selbst bewerben“ zurueck."""
     if text:
         log.info("Bewerbung %s geht an den Nutzer zurueck: %s", v.ref, text[:300])
+    hinweis = HINWEIS_SELBST
+    if vielleicht_raus:
+        hinweis = HINWEIS_VIELLEICHT_MAIL if v.kanal == "email" else HINWEIS_VIELLEICHT
     db.aktualisiere_vorgang(v.ref, status="wartet", kanal="manuell", auto_senden_ab=None,
-                            hinweis=HINWEIS_VIELLEICHT if vielleicht_raus else HINWEIS_SELBST)
+                            zurueckgestellt_seit=None, hinweis=hinweis)
+
+
+def _email_zurueck(db: Speicher, v: Vorgang, text: str) -> None:
+    """E-Mail ging nicht raus (z. B. Server weg, Passwort falsch): als Karte zurueck, „Ja“ versucht es erneut."""
+    log.info("E-Mail-Bewerbung %s nicht gesendet: %s", v.ref, text[:300])
+    grund = re.sub(r"\s+", " ", text).strip()[:200] or "unbekannter Fehler"
+    db.aktualisiere_vorgang(
+        v.ref, status="wartet", auto_senden_ab=None, zurueckgestellt_seit=None,
+        hinweis=(f"Die E-Mail an {v.empfaenger or '?'} ging nicht raus ({grund}). Bitte unter Einstellungen → Konten "
+                 "dein E-Mail-Konto prüfen – mit „Ja“ versuche ich es noch einmal."),
+    )
+
+
+def _zurueckstellen_seit(v: Vorgang) -> dict[str, str]:
+    """Felder fuer das erste Warten auf Browser/KI (die 48 Stunden zaehlen ab dann, nicht ab dem Ja)."""
+    return {} if v.zurueckgestellt_seit else {"zurueckgestellt_seit": _jetzt()}
 
 
 def _wartet_zu_lange(v: Vorgang) -> bool:
-    seit = zeitplan.als_datetime(v.freigegeben_am)
+    seit = zeitplan.als_datetime(v.zurueckgestellt_seit)
     return bool(seit) and datetime.now(timezone.utc) - seit > timedelta(hours=WARTEN_STUNDEN)
 
 
 def fehlgeschlagene_umleiten(db: Speicher, profil: Profil) -> int:
-    """Alte Vorgaenge im Status „fehlgeschlagen“ (fruehere Versionen) in den neuen Ablauf bringen."""
-    from .bewerben.browser import _KI_FEHLER
+    """Alte Vorgaenge im Status „fehlgeschlagen“ (fruehere Versionen) in den neuen Ablauf bringen.
+
+    Nie doppelt senden: Wer weiss, ob die Bewerbung schon raus ist, fragt nach („Ja, erledigt“?). Per
+    E-Mail weiter geht es nur, wenn der fruehere Hinweis zeigt, dass auf der Bewerbungsseite nichts
+    passiert ist. Fehler beim E-Mail-Versand kommen als Karte zurueck, deren „Ja“ es erneut versucht.
+    """
+    from .bewerben.browser import ist_startfehler
 
     anzahl = 0
     for v in db.vorgaenge("fehlgeschlagen"):
-        hinweis = v.hinweis or ""
-        ki_fehler = bool(_KI_FEHLER.search(hinweis))  # z. B. 429 / insufficient_quota: nichts ist passiert
-        vielleicht = (hinweis.startswith(("Nicht sicher abgeschickt", "Versand abgebrochen")) and not ki_fehler)
-        job = db.job(v.ref)
-        if not vielleicht and _auf_email_umstellen(db, profil, job, v):
-            pass
-        elif ki_fehler and v.kanal == "formular":
-            # Mit funktionierender KI erneut versuchen (das Ja gilt weiter)
-            db.aktualisiere_vorgang(v.ref, status="freigegeben", freigegeben_am=_jetzt(),
-                                    hinweis="Geht raus, sobald die KI wieder antwortet.")
+        hinweis = (v.hinweis or "").strip()
+        if hinweis.startswith(_VIELLEICHT_FRUEHER):
+            _selbst_bewerben_lassen(db, v, vielleicht_raus=True)
+        elif v.kanal == "email":
+            _email_zurueck(db, v, hinweis)
+        elif v.kanal == "formular" and (_NICHTS_PASSIERT.match(hinweis) or ist_startfehler(hinweis)):
+            if not _auf_email_umstellen(db, profil, db.job(v.ref), v):
+                _selbst_bewerben_lassen(db, v)
         else:
-            _selbst_bewerben_lassen(db, v, vielleicht_raus=vielleicht)
+            # Unbekannt, wie weit das Formular kam (z. B. Absturz mitten im Lauf): lieber nachfragen
+            _selbst_bewerben_lassen(db, v, vielleicht_raus=v.kanal == "formular")
         anzahl += 1
     return anzahl
 
@@ -818,10 +862,12 @@ def sende_freigegebene(
             if fehlt and v.kanal == "formular" and _auf_email_umstellen(db, profil, db.job(v.ref), v):
                 bearbeitet.discard(v.ref)  # gleich per E-Mail
                 continue
-            if fehlt and v.kanal == "formular" and _wartet_zu_lange(v):
-                _selbst_bewerben_lassen(db, v, text=fehlt)
-                zaehler["fehlgeschlagen"] += 1
-                continue
+            if fehlt and v.kanal == "formular":
+                if _wartet_zu_lange(v):
+                    _selbst_bewerben_lassen(db, v, text=fehlt)
+                    zaehler["fehlgeschlagen"] += 1
+                    continue
+                db.aktualisiere_vorgang(v.ref, **_zurueckstellen_seit(v))
         if fehlt:
             db.aktualisiere_vorgang(v.ref, hinweis=f"Geht raus, sobald das erledigt ist: {fehlt}")
             zaehler["zurueckgestellt"] += 1
@@ -850,7 +896,7 @@ def sende_freigegebene(
             log.exception("Versand %s fehlgeschlagen", v.ref)
             # Unbekannt, wie weit ein Formular kam: vorsichtshalber wie „gearbeitet“ behandeln
             ok, text = False, str(e)[:500]
-            f = FormularErgebnis(False, text, gearbeitet=v.kanal == "formular")
+            f = FormularErgebnis(False, text, gearbeitet=v.kanal == "formular" and job is not None)
         if ok:
             db.aktualisiere_vorgang(v.ref, status="abgeschickt", gesendet_am=_jetzt(), hinweis=text[:1000])
             zaehler["abgeschickt"] += 1
@@ -864,11 +910,14 @@ def sende_freigegebene(
             if _auf_email_umstellen(db, profil, job, v):
                 bearbeitet.discard(v.ref)
                 continue
-            db.aktualisiere_vorgang(v.ref, status="freigegeben",
+            db.aktualisiere_vorgang(v.ref, status="freigegeben", **_zurueckstellen_seit(v),
                                     hinweis=f"Geht raus, sobald es wieder geht: {text}"[:1000])
             zaehler["zurueckgestellt"] += 1
         elif v.kanal == "formular" and not f.gearbeitet and _auf_email_umstellen(db, profil, job, v):
             bearbeitet.discard(v.ref)  # Formular ging nicht, nichts abgeschickt: per E-Mail
+        elif v.kanal == "email":
+            _email_zurueck(db, v, text)
+            zaehler["fehlgeschlagen"] += 1
         else:
             # Kein Fehlerbildschirm: die Stelle kommt als Ja/Nein-Karte „Selbst bewerben“ zurueck
             _selbst_bewerben_lassen(db, v, vielleicht_raus=v.kanal == "formular" and f.gearbeitet, text=text)

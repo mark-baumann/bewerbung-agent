@@ -5,8 +5,9 @@ from pathlib import Path
 
 import streamlit as st
 
-from bewerbungsagent import dokumente, lebenslauf, ui, ui_einstellungen, zeitplan
+from bewerbungsagent import ablauf, anschreiben, dokumente, lebenslauf, ui, ui_einstellungen, zeitplan
 from bewerbungsagent.config import ermittle_profil_pfad, finde_datei, lade_profil, speichere_profil, unterlagen_dir
+from bewerbungsagent.scoring import llm as llm_modul
 
 st.title("Lebenslauf")
 
@@ -80,6 +81,9 @@ if datei is not None:
     with st.spinner("Ich lese deinen Lebenslauf …"):
         ableitung, uebernommen = lebenslauf.aktualisieren(profil, profil_pfad, erzwingen=neu_auslesen)
     if uebernommen:
+        if {"Fähigkeiten", "Jobtitel", "Themen"} & set(uebernommen):
+            with ui.oeffne_db() as db:  # Passung offener Stellen zum neuen Lebenslauf
+                ablauf.stichwort_bewertungen_auffrischen(db, profil)
         st.toast("Aus dem Lebenslauf übernommen: " + ", ".join(uebernommen), icon=":material/auto_awesome:")
 
     with st.container(border=True):
@@ -95,22 +99,73 @@ if datei is not None:
             if profil.suche.was:
                 zeilen.append(f"**Jobtitel:** {' · '.join(profil.suche.was)}")
             zeilen.append(f"**Wo:** {profil.suche.wo or 'ganz Deutschland'}"
-                          + (f" (+{profil.suche.umkreis} km)" if profil.suche.wo else ""))
+                          + (f" (+{profil.suche.umkreis} km)" if profil.suche.wo else "")
+                          + (f" · Wohnort {ableitung.ort}" if ableitung.ort and ableitung.ort != profil.suche.wo else ""))
             if profil.bewertung.skills:
                 zeilen.append(f"**Was du kannst:** {', '.join(profil.bewertung.skills)}")
+            if ableitung.themen:  # nur, wenn sie wirklich aus dem Lebenslauf kommen
+                zeilen.append(f"**Themen:** {', '.join(ableitung.themen)}")
+            if ableitung.stationen:
+                zeilen.append("**Werdegang:** " + " · ".join(
+                    f"{x['rolle']}" + (f" ({x['arbeitgeber']})" if x.get("arbeitgeber") else "")
+                    for x in ableitung.stationen[:4]))
             st.markdown("  \n".join(zeilen))
-            if ableitung.quelle != "ki":
-                st.caption("Ohne KI lese ich nur deine Kontaktdaten. Sobald die KI verbunden ist "
-                           "(Einstellungen → Konten), lese ich auch Jobtitel und Fähigkeiten.")
-            else:
-                st.caption("Gilt für Suche, Bewertung und Anschreiben. Jobtitel und Ort kannst du unter "
-                           "„Suchen“ jederzeit ändern.")
+            if ableitung.quelle == "ki":
+                st.caption("Mit KI gelesen. Gilt für Suche, Bewertung und Anschreiben – Jobtitel und Ort kannst du "
+                           "unter „Suchen“ jederzeit ändern.")
+            elif ableitung.fehler:
+                st.info(f"Die KI hat gerade nicht geantwortet – {ableitung.fehler}. Ich habe deinen Lebenslauf ohne KI "
+                        "gelesen und versuche es später automatisch wieder (oder jetzt mit „Neu auslesen“).",
+                        icon=":material/info:")
+            elif not llm_modul.client_verfuegbar():
+                st.caption("Ohne KI-Zugang lese ich die Abschnitte (Über mich, Fähigkeiten, Erfahrung) selbst. Mit KI "
+                           "(Einstellungen → Konten) werden Jobtitel und Kurzprofil genauer.")
         with st.container(horizontal=True, vertical_alignment="center"):
+            if ableitung is not None and profil.suche.was:
+                with ui.oeffne_db() as db:
+                    laeuft = bool(db.laufende_laeufe(("automatik",)))
+                st.button("Jetzt damit suchen", type="primary", icon=":material/travel_explore:", disabled=laeuft,
+                          key="lebenslauf_suchen", on_click=ui.starte_hintergrund,
+                          args=("automatik", "--ausloeser", "knopf"),
+                          kwargs={"meldung": "Ich suche mit den Kriterien aus deinem Lebenslauf – die besten "
+                                             "Stellen lege ich dir unter „Heute“ vor."})
             st.page_link(ui.SEITE_SUCHEN, label="Jobtitel & Ort ändern", icon=":material/search:")
             if ableitung is not None and st.button("Neu auslesen", icon=":material/refresh:", type="tertiary",
                                                     key="lebenslauf_neu_knopf"):
                 st.session_state["lebenslauf_neu"] = True
                 st.rerun()
+            if ableitung is not None and st.button("Probe-Anschreiben", icon=":material/edit_note:",
+                                                    type="tertiary", key="lebenslauf_probe_knopf",
+                                                    help="Schreibt mit deinem Lebenslauf ein Anschreiben für die "
+                                                         "passendste offene Stelle – nur zum Ansehen, nichts geht raus."):
+                with ui.oeffne_db() as db:  # die passendste Stelle, fuer die es noch keine Karte gibt
+                    beste = db.kandidaten(min_score=0, limit=1,
+                                          ausschluss_arbeitgeber=profil.bewertung.ausschluss_arbeitgeber)
+                if not beste:
+                    st.session_state["lebenslauf_probe"] = None
+                else:
+                    job, score = beste[0]
+                    with st.spinner(f"Ich schreibe ein Probe-Anschreiben für „{job.titel}“ …"):
+                        ergebnis = anschreiben.erzeuge_geprueft(job, profil, score)
+                    st.session_state["lebenslauf_probe"] = {
+                        "titel": job.titel, "arbeitgeber": job.arbeitgeber, "text": ergebnis.text,
+                        "quelle": ergebnis.quelle, "grund": ergebnis.bericht.get("ki_fehler", ""),
+                        "unbelegt": ergebnis.bericht.get("unbelegt") or [],
+                    }
+        if "lebenslauf_probe" in st.session_state:
+            probe = st.session_state["lebenslauf_probe"]
+            if probe is None:
+                st.caption("Noch keine bewertete Stelle – such erst unter „Suchen“, dann zeige ich hier eine Probe.")
+            else:
+                with st.container(border=True):
+                    st.markdown(f"**Probe für „{probe['titel']}“** – {probe['arbeitgeber']}")
+                    st.caption("Mit KI aus deinem Lebenslauf geschrieben." if probe["quelle"] == "llm" else
+                               "Aus der Vorlage mit Angaben aus deinem Lebenslauf"
+                               + (f" – die KI hat nicht geholfen, weil {probe['grund']}." if probe["grund"] else "."))
+                    st.text(probe["text"])
+                    if probe["unbelegt"]:
+                        st.warning("Nicht durch deinen Lebenslauf belegt: " + "; ".join(probe["unbelegt"][:4]),
+                                   icon=":material/fact_check:")
         text = dokumente.lebenslauf_text(profil)
         if text:
             with st.expander(f"Text aus der Datei ({len(text)} Zeichen)"):

@@ -450,10 +450,13 @@ def _formular_freigegeben(db, profil, ref="1", **kw):
     return v
 
 
+SICHER = "Ihre Bewerbung senden Sie bitte an Bewerbung@Firma-1.de."
+
+
 def test_formular_scheitert_mit_sicherer_adresse_geht_per_email(umgebung, monkeypatch):
     profil, db, _ = umgebung
     smtp_env(monkeypatch)
-    _formular_freigegeben(db, profil, kontakt_email="Bewerbung@Firma-1.de")
+    _formular_freigegeben(db, profil, beschreibung=SICHER)
     browser, smtp = FakeBrowser(abgeschickt=False, gearbeitet=False, schritte=2), FakeSmtp()
     ergebnis = ablauf.sende_freigegebene(db, profil, mail_sender=smtp, browser_fabrik=lambda p: browser)
     v = db.vorgang("1")
@@ -464,7 +467,7 @@ def test_formular_scheitert_mit_sicherer_adresse_geht_per_email(umgebung, monkey
 def test_formular_nach_arbeit_auf_der_seite_nie_zusaetzlich_per_email(umgebung, monkeypatch):
     profil, db, _ = umgebung
     smtp_env(monkeypatch)
-    _formular_freigegeben(db, profil, kontakt_email="bewerbung@firma-1.de")
+    _formular_freigegeben(db, profil, beschreibung=SICHER)
     smtp = FakeSmtp()
     ablauf.sende_freigegebene(db, profil, mail_sender=smtp,
                               browser_fabrik=lambda p: FakeBrowser(abgeschickt=False, gearbeitet=True))
@@ -476,7 +479,8 @@ def test_formular_nach_arbeit_auf_der_seite_nie_zusaetzlich_per_email(umgebung, 
 def test_formular_ohne_adresse_kommt_als_karte_selbst_bewerben(umgebung, monkeypatch):
     profil, db, _ = umgebung
     smtp_env(monkeypatch)
-    _formular_freigegeben(db, profil)
+    # Die Kontaktadresse der Jobboerse (z. B. Ansprechperson fuer Fragen) ist keine sichere Bewerbungsadresse
+    _formular_freigegeben(db, profil, kontakt_email="frage@amt.de")
     ablauf.sende_freigegebene(db, profil, mail_sender=FakeSmtp(),
                               browser_fabrik=lambda p: FakeBrowser(abgeschickt=False, gearbeitet=False))
     v = db.vorgang("1")
@@ -503,7 +507,7 @@ def test_ki_ausfall_haelt_die_freigabe_und_pausiert(umgebung):
 def test_ki_ausfall_mit_sicherer_adresse_geht_sofort_per_email(umgebung, monkeypatch):
     profil, db, _ = umgebung
     smtp_env(monkeypatch)
-    _formular_freigegeben(db, profil, kontakt_email="bewerbung@firma-1.de")
+    _formular_freigegeben(db, profil, beschreibung=SICHER)
     browser, smtp = FakeBrowser(abgeschickt=False, gearbeitet=False, rohdaten={"ki_fehler": True}), FakeSmtp()
     ablauf.sende_freigegebene(db, profil, mail_sender=smtp, browser_fabrik=lambda p: browser)
     assert db.vorgang("1").status == "abgeschickt" and len(smtp.gesendet) == 1
@@ -513,29 +517,84 @@ def test_wartet_zu_lange_auf_die_ki_wird_karte(umgebung):
     profil, db, _ = umgebung
     _formular_freigegeben(db, profil)
     alt = (datetime.now(timezone.utc) - timedelta(hours=ablauf.WARTEN_STUNDEN + 1)).isoformat(timespec="seconds")
-    db.aktualisiere_vorgang("1", freigegeben_am=alt)
+    db.aktualisiere_vorgang("1", freigegeben_am=alt)  # lange freigegeben (z. B. Tageslimit) zaehlt nicht
     ablauf._ki_pause_merken("Die KI antwortet nicht.")
     browser = FakeBrowser()
+    ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: browser)
+    v = db.vorgang("1")
+    assert v.status == "freigegeben" and v.zurueckgestellt_seit and not browser.aufrufe
+    db.aktualisiere_vorgang("1", zurueckgestellt_seit=alt)  # seit 49 Stunden wartet sie auf die KI
     ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: browser)
     v = db.vorgang("1")
     assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_SELBST) and not browser.aufrufe
 
 
-def test_alte_fehlerkarten_werden_umgeleitet(umgebung, monkeypatch):
+def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, monkeypatch):
     profil, db, _ = umgebung
     smtp_env(monkeypatch)
-    db.speichere_jobs([job("ki"), job("vielleicht", kontakt_email="hr@firma.de"),
-                       job("mail", kontakt_email="hr@firma.de"), job("ohne")])
+    sicher = "Ihre Bewerbung senden Sie bitte an hr@firma.de."
+    db.speichere_jobs([job("ki", beschreibung=sicher), job("absturz", beschreibung=sicher),
+                       job("ohne_url", beschreibung=sicher), job("ohne"), job("mail")])
     quota = ("Nicht sicher abgeschickt – bitte prüfen, ob eine Bestätigung kam, bevor du erneut sendest. Kein "
              "Ergebnis vom Agenten. Fehler: Error code: 429 - {'type': 'insufficient_quota'}")
-    for ref, hinweis in (("ki", quota), ("vielleicht", "Nicht sicher abgeschickt – bitte prüfen. Captcha"),
-                         ("mail", "Seite nicht erreichbar"), ("ohne", "Seite nicht erreichbar")):
-        db.setze_vorgang(Vorgang(ref=ref, status="fehlgeschlagen", kanal="formular", anschreiben="Text",
+    for ref, kanal, hinweis in (
+        ("ki", "formular", quota),                                    # kann trotzdem raus sein
+        ("absturz", "formular", "CDP connection closed: Target page has been closed"),  # Absturz mitten im Lauf
+        ("ohne_url", "formular", "Keine Bewerbungs-URL hinterlegt."),  # sicher nichts passiert
+        ("ohne", "formular", "Kein Lebenslauf hinterlegt – bitte hochladen. Bewerbung nicht gestartet."),
+        ("mail", "email", "(535, b'Username and Password not accepted')"),
+    ):
+        db.setze_vorgang(Vorgang(ref=ref, status="fehlgeschlagen", kanal=kanal, anschreiben="Text",
+                                 empfaenger="jobs@firma.de" if kanal == "email" else None,
                                  bewerbungs_url=f"https://karriere.firma-{ref}.de/job", hinweis=hinweis))
-    assert ablauf.fehlgeschlagene_umleiten(db, profil) == 4
+    assert ablauf.fehlgeschlagene_umleiten(db, profil) == 5
     assert not db.vorgaenge("fehlgeschlagen")
-    assert db.vorgang("ki").status == "freigegeben" and db.vorgang("ki").kanal == "formular"
-    vielleicht = db.vorgang("vielleicht")  # nie per E-Mail nachschieben, wenn es schon raus sein koennte
-    assert (vielleicht.status, vielleicht.hinweis) == ("wartet", ablauf.HINWEIS_VIELLEICHT)
-    assert (db.vorgang("mail").status, db.vorgang("mail").kanal) == ("freigegeben", "email")
-    assert (db.vorgang("ohne").status, db.vorgang("ohne").kanal) == ("wartet", "manuell")
+    for ref in ("ki", "absturz"):  # nie per E-Mail oder erneut per Formular, sondern nachfragen
+        v = db.vorgang(ref)
+        assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT), ref
+    assert (db.vorgang("ohne_url").status, db.vorgang("ohne_url").kanal) == ("freigegeben", "email")
+    assert (db.vorgang("ohne").status, db.vorgang("ohne").hinweis) == ("wartet", ablauf.HINWEIS_SELBST)
+    mail_karte = db.vorgang("mail")  # E-Mail-Fehler: Karte mit Weg E-Mail, „Ja“ versucht es erneut
+    assert (mail_karte.status, mail_karte.kanal) == ("wartet", "email") and "ging nicht raus" in mail_karte.hinweis
+
+
+def test_email_fehler_kommt_als_email_karte_zurueck(umgebung, monkeypatch):
+    profil, db, _ = umgebung
+    smtp_env(monkeypatch)
+    db.speichere_jobs([job("1", beschreibung="Bewerbung an jobs@firma.de")])
+    ablauf.vorbereiten(db, profil, "1", mit_llm=False, link_aufloesen=False)
+    ablauf.freigeben(db, profil, "1")
+
+    def kaputt(nachricht, konfig):
+        raise OSError("SMTP server temporarily unavailable (421)")
+
+    ergebnis = ablauf.sende_freigegebene(db, profil, mail_sender=kaputt)
+    v = db.vorgang("1")
+    assert (v.status, v.kanal, v.empfaenger) == ("wartet", "email", "jobs@firma.de") and ergebnis["fehlgeschlagen"] == 1
+    assert "ging nicht raus" in v.hinweis and "421" in v.hinweis and "Formular" not in v.hinweis
+    # Mit „Ja“ geht es erneut raus
+    ablauf.freigeben(db, profil, "1")
+    assert ablauf.sende_freigegebene(db, profil, mail_sender=FakeSmtp())["abgeschickt"] == 1
+
+
+def test_unterbrochener_email_versand_fragt_nach_einer_kopie(umgebung):
+    _, db, _ = umgebung
+    db.speichere_jobs([job("1")])
+    db.setze_vorgang(Vorgang(ref="1", status="wird_gesendet", kanal="email", empfaenger="jobs@firma.de"))
+    alt = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
+    db.con.execute("UPDATE vorgaenge SET aktualisiert_am = ? WHERE ref = '1'", (alt,))
+    db.con.commit()
+    ablauf.aufraeumen(db)
+    v = db.vorgang("1")
+    assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT_MAIL)
+
+
+def test_stichwort_bewertungen_folgen_dem_lebenslauf(umgebung):
+    profil, db, _ = umgebung
+    db.speichere_jobs([job("1", beschreibung="Wir suchen SAP und Controlling.")])
+    db.speichere_score(Score(ref="1", gesamt=10, passung=10, sentiment=50, bewerter="heuristik"))
+    db.speichere_jobs([job("2", beschreibung="Wir suchen SAP.")])
+    db.speichere_score(Score(ref="2", gesamt=77, passung=77, sentiment=50, bewerter="llm:gpt-oss:120b"))
+    profil.bewertung.skills = ["SAP", "Controlling"]
+    assert ablauf.stichwort_bewertungen_auffrischen(db, profil) == 1
+    assert db.score("1").passung > 10 and db.score("2").gesamt == 77  # KI-Bewertung bleibt
