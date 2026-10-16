@@ -196,6 +196,34 @@ def provider(modell: str | None = None) -> str | None:
     return None
 
 
+_MODELL_FEHLT_TEXT = re.compile(r"model_not_found|model .{0,80}(does not exist|not found)", re.I)
+
+
+def ki_grund(fehler: str | BaseException) -> str:
+    """Verstaendliche Ursache, warum die KI nicht geantwortet hat (fuer Hinweise in der Oberflaeche)."""
+    text = str(fehler)
+    k = text.lower()
+    if any(w in k for w in ("insufficient_quota", "credit", "quota")):
+        return "das KI-Konto hat kein Guthaben mehr"
+    if any(w in k for w in ("invalid_api_key", "incorrect api key", "unauthorized", "authentication", "error code: 401",
+                            "error code: 403", " 401 ", " 403 ")):
+        return "der KI-Schlüssel wird abgelehnt"
+    if any(w in k for w in ("rate limit", "rate_limit", "ratelimit", "429", "too many requests")):
+        return "die KI ist gerade überlastet"
+    if isinstance(fehler, ModellNichtGefunden) or _MODELL_FEHLT_TEXT.search(text):
+        return "das KI-Modell gibt es bei deinem Zugang nicht"
+    if any(w in k for w in ("timed out", "timeout", "zeitüberschreitung")):
+        return "die KI hat nicht rechtzeitig geantwortet"
+    if any(w in k for w in ("connection attempts failed", "connection refused", "name or service not known",
+                            "nodename nor servname", "network is unreachable", "connecterror")):
+        return "der KI-Server ist nicht erreichbar"
+    if any(w in k for w in ("kein llm-api-key", "kein ki-zugang")):
+        return "es ist kein KI-Zugang eingerichtet"
+    if any(w in k for w in ("leere antwort", "keine verwertbare", "json")):
+        return "die KI hat keine verwertbare Antwort geliefert"
+    return "die KI hat nicht geantwortet"
+
+
 def client_verfuegbar() -> bool:
     return provider() is not None
 
@@ -227,6 +255,7 @@ class OllamaClient:
         messages: list[dict[str, str]],
         max_tokens: int,
         json_schema: dict | None = None,
+        effort: str | None = None,
     ) -> str:
         effektives_modell = modell or self.modell
         if ist_claude_modell(effektives_modell):
@@ -249,6 +278,9 @@ class OllamaClient:
             "max_tokens": max_tokens,
             "temperature": 0.2,
         }
+        if effort in ("low", "medium", "high") and "gpt-oss" in effektives_modell.lower():
+            # gpt-oss denkt vor der Antwort; das zaehlt zu max_tokens. Wenig Denken = schneller, kein leerer Text
+            payload["reasoning_effort"] = effort
         antwort = self._client.post(
             "/v1/chat/completions",
             json=payload,
@@ -256,14 +288,19 @@ class OllamaClient:
         )
         if antwort.status_code >= 400 and _modell_fehlt(antwort.status_code, antwort.text):
             raise ModellNichtGefunden(effektives_modell, antwort.text)
-        antwort.raise_for_status()
+        if antwort.status_code >= 400:  # mit Antworttext, damit der Grund (z. B. insufficient_quota) sichtbar bleibt
+            raise LLMNichtVerfuegbar(f"Error code: {antwort.status_code} - {antwort.text[:400]}")
         daten = antwort.json()
         if daten.get("error"):
             raise LLMNichtVerfuegbar(f"Ollama-Fehler: {daten['error']}")
         try:
-            return daten["choices"][0]["message"]["content"]
+            inhalt = daten["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
             raise LLMNichtVerfuegbar("Leere Antwort vom Ollama-Modell") from e
+        if not (inhalt or "").strip():
+            # z. B. ein Denkmodell, das sein ganzes max_tokens mit Nachdenken verbraucht hat
+            raise LLMNichtVerfuegbar("Leere Antwort vom Ollama-Modell (zu wenig Platz für die Antwort?)")
+        return inhalt
 
 
 class OpenAIClient:
@@ -303,7 +340,8 @@ class OpenAIClient:
         )
         if response.status_code >= 400 and _modell_fehlt(response.status_code, response.text):
             raise ModellNichtGefunden(payload["model"], response.text)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise LLMNichtVerfuegbar(f"Error code: {response.status_code} - {response.text[:400]}")
         try:
             return response.json()["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
@@ -409,8 +447,13 @@ def vergiss_modelle() -> None:
     _modell_cache.clear()
 
 
+def _ohne_hersteller(modell: str) -> str:
+    """„openai/gpt-4o-mini“ (Gateway-Schreibweise) -> „gpt-4o-mini“."""
+    return modell.strip().rsplit("/", 1)[-1]
+
+
 def _familie(modell: str) -> str:
-    return re.split(r"[-:._/ ]", modell.lower(), maxsplit=1)[0]
+    return re.split(r"[-:._ ]", _ohne_hersteller(modell).lower(), maxsplit=1)[0]
 
 
 def _norm(modell: str) -> str:
@@ -431,7 +474,8 @@ def _fremdes_bezahlmodell(anbieter: str, modell: str) -> bool:
 
     Die nie als stillen Ersatz nehmen: sie laufen oft ueber ein fremdes Konto (ohne Guthaben).
     """
-    return anbieter == "ollama" and (ist_openai_modell(modell) or ist_claude_modell(modell))
+    name = _ohne_hersteller(modell)
+    return anbieter == "ollama" and (ist_openai_modell(name) or ist_claude_modell(name))
 
 
 def _finde(wunsch: str, liste: list[str]) -> str | None:
@@ -606,6 +650,7 @@ def _chat_einmal(
         )
     return OllamaClient().chat(
         modell=ziel, system=system, messages=nachrichten, max_tokens=max_tokens, json_schema=json_schema,
+        effort=effort,
     )
 
 

@@ -1,4 +1,4 @@
-"""Lebenslauf als Quelle: Auslesen (KI/Heuristik), einmal je Inhalt, Uebernahme ins Profil."""
+"""Lebenslauf als Quelle: Auslesen (KI/Heuristik), einmal je Inhalt, Uebernahme ins Profil, Anschreiben."""
 
 from __future__ import annotations
 
@@ -9,28 +9,59 @@ from pathlib import Path
 
 import pytest
 
-from bewerbungsagent import dokumente, lebenslauf
+from bewerbungsagent import anschreiben, dokumente, lebenslauf
 from bewerbungsagent.config import lade_profil, speichere_profil
+from bewerbungsagent.models import Job, Score
 from bewerbungsagent.scoring import llm
 
 REPO = Path(__file__).resolve().parent.parent
 
-TEXT = """Lebenslauf
-Mark Beispiel
-Leopoldstraße 12a
-80802 München
-Telefon: +49 151 2345 6789
-E-Mail: Mark.Beispiel@example.de
-Berufserfahrung
-2019 – heute Softwareentwickler Python, Firma GmbH"""
+# Aufbau wie ein zweispaltiger PDF-Lebenslauf (Abschnitte, Name am Ende) – erfundene Daten
+TEXT = """Über mich
+Mit umfassender Erfahrung in der
+Digitalisierung von Geschäftsprozessen
+sowie in der Softwareentwicklung bringe ich
+fundierte Praxiskenntnisse mit.
+Fähigkeiten
+SQL
+Python
+Projektmanagement
+IT-Projektmanagement
+Produktmanagement
+Ausbildung
+Fachschule Musterstadt
+2020 - 2023
+Fachabitur IT
+Persönliche Infos
+Musterweg 13
+85256 Giebing
+Deutschland
+max.beispiel@example.org
+05/08/2000
+Erfahrung
+Augustinum 04/2026 - 09/2026
+Digitalisierung von Geschäftsprozessen
+Muster Software GmbH 03/2023 - 03/2026
+Produktverantwortlicher
+Micro Demo 08/2022 - 03/2023
+Programmierer
+Max
+Beispiel
+Lebenslauf"""
 
 KI_ANTWORT = {
-    "kurzprofil": "Softwareentwickler mit 6 Jahren Python, Django und PostgreSQL.",
-    "jobtitel": ["Softwareentwickler Python (m/w/d)", "Python Developer", "Backend-Entwickler", "python developer"],
-    "ort": "80802 München",
-    "faehigkeiten": ["Python", "Django", "PostgreSQL", "Docker"],
-    "kontakt": {"vorname": "Mark", "nachname": "Beispiel", "email": "mark.beispiel@example.de",
-                "telefon": "+49 151 2345 6789", "strasse": "Leopoldstraße 12a", "plz": "80802", "ort": "München"},
+    "kurzprofil": "Produktverantwortlicher mit Erfahrung in Digitalisierung, Python und SQL.",
+    "jobtitel": ["Produktmanager (m/w/d)", "IT-Projektmanager", "Prozessmanager Digitalisierung",
+                 "Softwareentwickler Python", "it-projektmanager"],
+    "ort": "85256 Giebing",
+    "suchort": "München",
+    "faehigkeiten": ["Python", "SQL", "Projektmanagement", "Produktmanagement"],
+    "stationen": [{"rolle": "Digitalisierung von Geschäftsprozessen", "arbeitgeber": "Augustinum",
+                   "zeitraum": "04/2026 - 09/2026"},
+                  {"rolle": "Produktverantwortlicher", "arbeitgeber": "Muster Software GmbH",
+                   "zeitraum": "03/2023 - 03/2026"}],
+    "kontakt": {"vorname": "Max", "nachname": "Beispiel", "email": "max.beispiel@example.org",
+                "telefon": "05/08/2000", "strasse": "Musterweg 13", "plz": "85256", "ort": "Giebing"},
 }
 
 
@@ -48,7 +79,8 @@ def umgebung(tmp_path, monkeypatch):
     datei.write_text(TEXT, encoding="utf-8")
     profil.unterlagen.lebenslauf = str(datei)
     profil.person.telefon, profil.person.strasse = "", ""  # sollen aus dem Lebenslauf kommen
-    profil.suche.wo = "Köln"
+    profil.suche.was, profil.suche.wo, profil.suche.umkreis = ["Softwareentwickler Python"], "Köln", 25
+    profil.bewertung.skills = []
     speichere_profil(profil, pfad)
     return profil, pfad, datei
 
@@ -61,72 +93,123 @@ def _ki(monkeypatch, antwort=KI_ANTWORT):
         aufrufe.append(kw)
         if isinstance(antwort, Exception):
             raise antwort
-        return json.dumps(antwort)
+        return antwort if isinstance(antwort, str) else json.dumps(antwort)
 
     monkeypatch.setattr(llm, "chat", chat)
     return aufrufe
 
 
-def test_heuristik_liest_kontaktdaten():
+# --------------------------------------------------------------------------- #
+# Heuristik
+# --------------------------------------------------------------------------- #
+
+def test_heuristik_liest_abschnitte_statt_nur_kontaktdaten():
     a = lebenslauf.heuristik(TEXT)
-    assert a.kontakt == {"email": "mark.beispiel@example.de", "telefon": "+49 151 2345 6789", "plz": "80802",
-                         "ort": "München", "strasse": "Leopoldstraße 12a", "vorname": "Mark", "nachname": "Beispiel"}
-    assert a.ort == "München" and a.jobtitel == [] and a.quelle == "heuristik"
+    assert a.kurzprofil.startswith("Mit umfassender Erfahrung in der Digitalisierung")
+    assert a.faehigkeiten == ["SQL", "Python", "Projektmanagement", "IT-Projektmanagement", "Produktmanagement"]
+    assert a.jobtitel == ["Produktverantwortlicher", "Projektmanager", "IT-Projektmanager", "Produktmanager",
+                          "Programmierer"]
+    assert [s["arbeitgeber"] for s in a.stationen] == ["Augustinum", "Muster Software GmbH", "Micro Demo"]
+    assert a.kontakt == {"email": "max.beispiel@example.org", "plz": "85256", "ort": "Giebing",
+                         "strasse": "Musterweg 13", "vorname": "Max", "nachname": "Beispiel"}
+    assert "telefon" not in a.kontakt  # das Geburtsdatum ist keine Telefonnummer
 
 
-def test_ki_auswertung_wird_uebernommen_und_nur_einmal_ausgelesen(umgebung, monkeypatch):
+@pytest.mark.parametrize("zeile, erwartet", [
+    ("Tel.: 0151 2345 6789", {"telefon": "0151 2345 6789"}),
+    ("Mobil +49 171 1234567", {"telefon": "+49 171 1234567"}),
+    ("01/2015 - 03/2020", {}),
+    ("Umsatzverantwortung 50000 Euro", {}),
+    ("Mechanical Engineering 2010", {}),
+    ("Leopoldstraße 12a, 80802 München", {"plz": "80802", "ort": "München", "strasse": "Leopoldstraße 12a"}),
+])
+def test_kontaktmuster_ohne_fehlalarme(zeile, erwartet):
+    assert lebenslauf.heuristik(zeile).kontakt == erwartet
+
+
+def test_ueberschriften_sind_kein_name():
+    a = lebenslauf.heuristik("ANNA SCHMIDT\nBeruflicher Werdegang\nFähigkeiten\nPython\nExcel")
+    assert "vorname" not in a.kontakt
+
+
+# --------------------------------------------------------------------------- #
+# Uebernehmen
+# --------------------------------------------------------------------------- #
+
+def test_ki_auswertung_wird_uebernommen_mit_suchort_und_nur_einmal_ausgelesen(umgebung, monkeypatch):
     profil, pfad, _ = umgebung
     aufrufe = _ki(monkeypatch)
     vorher = (profil.person.vorname, profil.person.email)
     a, uebernommen = lebenslauf.aktualisieren(profil, pfad)
-    assert a.quelle == "ki" and len(aufrufe) == 1
-    assert uebernommen == ["Kurzprofil", "Jobtitel", "Kontaktdaten", "Ort", "Fähigkeiten"]
+    assert a.quelle == "ki" and len(aufrufe) == 1 and aufrufe[0]["max_tokens"] >= 8000
+    assert {"Kurzprofil", "Jobtitel", "Fähigkeiten", "Ort", "Kontaktdaten"} <= set(uebernommen)
     gespeichert = lade_profil(pfad)
-    assert gespeichert.suche.was == ["Softwareentwickler Python", "Python Developer", "Backend-Entwickler"]
-    assert gespeichert.suche.wo == "München" and gespeichert.bewertung.skills == ["Python", "Django", "PostgreSQL",
-                                                                                   "Docker"]
-    assert gespeichert.kurzprofil.startswith("Softwareentwickler mit 6 Jahren")
-    # Kontaktdaten nur ergaenzt, vorhandene bleiben
-    assert (gespeichert.person.vorname, gespeichert.person.email) == vorher
-    assert gespeichert.person.telefon == "+49 151 2345 6789" and gespeichert.person.strasse == "Leopoldstraße 12a"
+    # Titel aus dem Lebenslauf zuerst, der eigene Titel bleibt dahinter
+    assert gespeichert.suche.was == ["Produktmanager", "IT-Projektmanager", "Prozessmanager Digitalisierung",
+                                     "Softwareentwickler Python"]
+    assert (gespeichert.suche.wo, gespeichert.suche.umkreis) == ("München", lebenslauf.UMKREIS_SUCHORT)
+    assert gespeichert.bewertung.skills == ["Python", "SQL", "Projektmanagement", "Produktmanagement"]
+    assert gespeichert.kurzprofil.startswith("Produktverantwortlicher")
+    assert (gespeichert.person.vorname, gespeichert.person.email) == vorher  # vorhandene bleiben
+    assert gespeichert.person.strasse == "Musterweg 13" and gespeichert.person.telefon == ""  # kein Datum
+    assert a.ort == "Giebing" and a.stationen[1]["rolle"] == "Produktverantwortlicher"
 
-    # Gleicher Inhalt: keine neue Anfrage, nichts ueberschrieben (auch wenn der Nutzer die Suche geaendert hat)
-    gespeichert.suche.was = ["Eigener Titel"]
-    a2, uebernommen2 = lebenslauf.aktualisieren(gespeichert, pfad)
-    assert len(aufrufe) == 1 and uebernommen2 == [] and gespeichert.suche.was == ["Eigener Titel"]
-    # „Neu auslesen“
-    lebenslauf.aktualisieren(gespeichert, pfad, erzwingen=True)
-    assert len(aufrufe) == 2 and gespeichert.suche.was[0] == "Softwareentwickler Python"
+    # Gleicher Inhalt: keine neue Anfrage
+    assert lebenslauf.aktualisieren(gespeichert, pfad)[1] == [] and len(aufrufe) == 1
 
 
-def test_neuer_inhalt_wird_neu_ausgelesen(umgebung, monkeypatch):
+def test_erneutes_auslesen_laesst_aenderungen_des_nutzers_stehen(umgebung, monkeypatch):
     profil, pfad, datei = umgebung
-    aufrufe = _ki(monkeypatch)
+    _ki(monkeypatch)
     lebenslauf.aktualisieren(profil, pfad)
-    datei.write_text(TEXT + "\n2025 Weiterbildung Data Science", encoding="utf-8")
-    lebenslauf.aktualisieren(profil, pfad)
-    assert len(aufrufe) == 2
+    # Der Nutzer aendert Ort und Jobtitel unter „Suchen“, dann kommt ein neuer Lebenslauf
+    profil.suche.wo = "Augsburg"
+    profil.suche.was = [*profil.suche.was, "Scrum Master"]
+    speichere_profil(profil, pfad)
+    datei.write_text(TEXT + "\nZertifikate\nScrum", encoding="utf-8")
+    _, uebernommen = lebenslauf.aktualisieren(profil, pfad)
+    assert profil.suche.wo == "Augsburg" and "Ort" not in uebernommen
+    assert profil.suche.was[-1] == "Scrum Master" and profil.suche.was[0] == "Produktmanager"
+    # „Neu auslesen“ darf ueberschreiben
+    lebenslauf.aktualisieren(profil, pfad, erzwingen=True)
+    assert profil.suche.wo == "München"
 
 
-def test_ohne_ki_nur_kontaktdaten(umgebung):
+def test_ohne_ki_wohnort_mit_grossem_umkreis_und_titel_aus_den_abschnitten(umgebung):
     profil, pfad, _ = umgebung
-    was, skills = list(profil.suche.was), list(profil.bewertung.skills)
     a, uebernommen = lebenslauf.aktualisieren(profil, pfad)
-    assert a.quelle == "heuristik" and "Jobtitel" not in uebernommen
-    assert profil.suche.was == was and profil.bewertung.skills == skills
-    assert profil.person.telefon == "+49 151 2345 6789" and profil.suche.wo == "München"
+    assert a.quelle == "heuristik" and a.fehler == ""  # kein KI-Zugang eingerichtet
+    assert profil.suche.was[:2] == ["Produktverantwortlicher", "Projektmanager"]
+    assert (profil.suche.wo, profil.suche.umkreis) == ("Giebing", lebenslauf.UMKREIS_WOHNORT)
+    assert "Python" in profil.bewertung.skills and profil.kurzprofil.startswith("Mit umfassender")
 
 
-def test_ki_fehler_faellt_auf_heuristik_zurueck_und_behaelt_alte_ki_auswertung(umgebung, monkeypatch):
+def test_ki_fehler_steht_mit_grund_da(umgebung, monkeypatch):
+    profil, pfad, _ = umgebung
+    _ki(monkeypatch, llm.LLMNichtVerfuegbar("Error code: 429 - insufficient_quota credit_balance_exhausted"))
+    a, _ = lebenslauf.aktualisieren(profil, pfad)
+    assert a.quelle == "heuristik" and a.fehler == "das KI-Konto hat kein Guthaben mehr"
+    assert profil.suche.was[0] == "Produktverantwortlicher"  # trotzdem nicht „schwach“
+
+
+@pytest.mark.parametrize("antwort", ["", "Gerne! Leider kann ich das nicht.", {"kurzprofil": "", "jobtitel": []}])
+def test_leere_ki_antwort_ist_kein_ki_ergebnis(umgebung, monkeypatch, antwort):
+    profil, pfad, _ = umgebung
+    _ki(monkeypatch, antwort)
+    a, _ = lebenslauf.aktualisieren(profil, pfad)
+    assert a.quelle == "heuristik" and a.fehler
+
+
+def test_ki_fehler_behaelt_fruehere_ki_auswertung(umgebung, monkeypatch):
     profil, pfad, _ = umgebung
     _ki(monkeypatch)
     lebenslauf.aktualisieren(profil, pfad)
-    _ki(monkeypatch, llm.LLMNichtVerfuegbar("Error code: 429 insufficient_quota"))
+    _ki(monkeypatch, llm.LLMNichtVerfuegbar("Error code: 429 - insufficient_quota"))
     a, uebernommen = lebenslauf.aktualisieren(profil, pfad, erzwingen=True)
-    assert a.quelle == "ki" and uebernommen == [] and profil.suche.was[0] == "Softwareentwickler Python"
+    assert a.quelle == "ki" and uebernommen == [] and profil.suche.wo == "München"
 
 
-def test_nur_ohne_ki_gelesen_wird_spaeter_mit_ki_wiederholt(umgebung, monkeypatch):
+def test_ohne_ki_gelesen_wird_spaeter_einmal_mit_ki_wiederholt(umgebung, monkeypatch):
     profil, pfad, _ = umgebung
     lebenslauf.aktualisieren(profil, pfad)  # ohne KI-Zugang
     aufrufe = _ki(monkeypatch)
@@ -136,7 +219,23 @@ def test_nur_ohne_ki_gelesen_wird_spaeter_mit_ki_wiederholt(umgebung, monkeypatc
     alt.zeit = (datetime.now(timezone.utc) - timedelta(hours=lebenslauf.NEU_VERSUCHEN_STUNDEN + 1)).isoformat()
     lebenslauf._speichern(alt)
     a, _ = lebenslauf.aktualisieren(profil, pfad)
-    assert len(aufrufe) == 1 and a.quelle == "ki" and profil.suche.was[0] == "Softwareentwickler Python"
+    assert len(aufrufe) == 1 and a.quelle == "ki" and profil.suche.wo == "München"
+
+
+def test_alte_auswertung_wird_nach_update_neu_gelesen_und_falsches_telefon_repariert(umgebung, monkeypatch):
+    profil, pfad, _ = umgebung
+    # So sah es auf dem Pi aus: nur Kontaktdaten, Geburtsdatum als Telefon, Ort Giebing (Version 1)
+    profil.person.telefon, profil.suche.wo = "05/08/2000", "Giebing"
+    speichere_profil(profil, pfad)
+    alt = lebenslauf.Ableitung(ort="Giebing", kontakt={"telefon": "05/08/2000"}, quelle="heuristik",
+                               pruefsumme=lebenslauf.pruefsumme(dokumente.lebenslauf_text(profil)),
+                               zeit=datetime.now(timezone.utc).isoformat())
+    lebenslauf._speichern(alt)
+    aufrufe = _ki(monkeypatch)
+    a, uebernommen = lebenslauf.aktualisieren(profil, pfad)
+    assert len(aufrufe) == 1 and a.version == lebenslauf.VERSION
+    assert profil.person.telefon == "" and "Telefon korrigiert" in uebernommen
+    assert profil.suche.wo == "München" and profil.suche.was[0] == "Produktmanager"
 
 
 def test_ohne_lesbaren_text_keine_auswertung(umgebung):
@@ -153,3 +252,59 @@ def test_word_lebenslauf_ist_lesbar(umgebung):
                                         "<w:p><w:r><w:t>80802 M&#252;nchen</w:t></w:r></w:p></w:body></w:document>")
     profil.unterlagen.lebenslauf = str(docx)
     assert dokumente.lebenslauf_text(profil) == "Mark Beispiel\n80802 München"
+
+
+# --------------------------------------------------------------------------- #
+# Fuer das Anschreiben
+# --------------------------------------------------------------------------- #
+
+def test_vorlage_nutzt_werdegang_und_passende_faehigkeiten(umgebung):
+    profil, pfad, _ = umgebung
+    lebenslauf.aktualisieren(profil, pfad)  # ohne KI
+    job = Job(ref="1", titel="Produktmanager", arbeitgeber="Demo AG", beschreibung="Python, SQL, Jira")
+    score = Score(ref="1", gesamt=80, passung=80, sentiment=50, treffer=["Python", "SQL", "Jira"])
+    ergebnis = anschreiben.erzeuge_geprueft(job, profil, score, mit_llm=False)
+    assert ergebnis.quelle == "vorlage"
+    assert ("Zuletzt war ich bei Augustinum im Bereich Digitalisierung von Geschäftsprozessen tätig, davor als "
+            "Produktverantwortlicher bei Muster Software GmbH.") in ergebnis.text
+    assert "Python, SQL." in ergebnis.text and "Jira" not in ergebnis.text  # nur, was im Lebenslauf steht
+
+
+def test_vorlage_nennt_den_ki_grund(umgebung, monkeypatch):
+    profil, _, _ = umgebung
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+
+    def kaputt(*a, **k):
+        raise llm.LLMNichtVerfuegbar("Error code: 429 - insufficient_quota")
+
+    monkeypatch.setattr(anschreiben, "chat", kaputt)
+    ergebnis = anschreiben.erzeuge_geprueft(Job(ref="1", titel="T", arbeitgeber="A"), profil, None)
+    assert ergebnis.quelle == "vorlage" and ergebnis.bericht["ki_fehler"] == "das KI-Konto hat kein Guthaben mehr"
+
+
+def test_laufende_station_heisst_derzeit():
+    a = lebenslauf.Ableitung(stationen=[{"rolle": "Entwickler", "arbeitgeber": "Demo AG", "zeitraum": "2024 - heute"},
+                                        {"rolle": "Werkstudent", "arbeitgeber": "Uni X", "zeitraum": "2020 - 2023"}])
+    assert lebenslauf.stationssatz(a) == ("Derzeit bin ich als Entwickler bei Demo AG tätig, davor war ich als "
+                                          "Werkstudent bei Uni X.")
+
+
+def test_themen_werden_wunschthemen_der_bewertung(umgebung, monkeypatch):
+    profil, pfad, _ = umgebung
+    profil.bewertung.wunsch = ["Open Source"]
+    speichere_profil(profil, pfad)
+    _ki(monkeypatch, {**KI_ANTWORT, "themen": ["Digitalisierung", "Prozessautomatisierung"]})
+    _, uebernommen = lebenslauf.aktualisieren(profil, pfad)
+    assert "Themen" in uebernommen
+    assert lade_profil(pfad).bewertung.wunsch == ["Digitalisierung", "Prozessautomatisierung", "Open Source"]
+
+
+def test_ki_fehlertext_vom_server_bleibt_erhalten(monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    antwort = {"error": {"message": "You have no credits remaining.", "type": "insufficient_quota"}}
+    client = llm.OllamaClient(transport=httpx.MockTransport(lambda r: httpx.Response(429, json=antwort)))
+    with pytest.raises(llm.LLMNichtVerfuegbar) as fehler:
+        client.chat(modell="gpt-oss:120b", system="S", messages=[], max_tokens=50)
+    assert llm.ki_grund(fehler.value) == "das KI-Konto hat kein Guthaben mehr"

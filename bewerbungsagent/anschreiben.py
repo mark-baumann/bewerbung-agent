@@ -15,7 +15,7 @@ from typing import Any
 from .config import Profil
 from .dossier import Dossier, anrede_fuer
 from .models import Job, Score
-from .scoring.llm import chat, client_verfuegbar, lebenslauf_block
+from .scoring.llm import chat, client_verfuegbar, ki_grund, lebenslauf_block
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ VORLAGE = """{anrede}
 
 Ihre Ausschreibung „{titel}“ bei {arbeitgeber} hat mein Interesse geweckt, deshalb bewerbe ich mich um diese Stelle.
 
-{profilsatz}
+{werdegang}{profilsatz}
 
 {trefferblock}
 
@@ -51,6 +51,18 @@ Ich bin {verfuegbar} verfügbar und freue mich auf ein persönliches Gespräch.
 Mit freundlichen Grüßen
 {name}
 """
+
+
+def _werdegang() -> str:
+    """Satz zur letzten Station aus dem ausgelesenen Lebenslauf (nur Fakten von dort)."""
+    from . import lebenslauf
+
+    try:
+        satz = lebenslauf.stationssatz()
+    except Exception as e:  # die Vorlage darf nie scheitern
+        log.info("Werdegang nicht lesbar: %s", e)
+        return ""
+    return f"{satz} " if satz else ""
 
 
 def _vorlage(job: Job, profil: Profil, score: Score | None, dossier: Dossier | None = None) -> str:
@@ -67,6 +79,7 @@ def _vorlage(job: Job, profil: Profil, score: Score | None, dossier: Dossier | N
         anrede=anrede_fuer(dossier.ansprechpartner if dossier else None, "de"),
         titel=job.titel,
         arbeitgeber=job.arbeitgeber or "Ihrem Unternehmen",
+        werdegang=_werdegang(),
         profilsatz=profil.kurzprofil.strip() or "Mein Profil entnehmen Sie bitte dem beigefügten Lebenslauf.",
         trefferblock=trefferblock,
         verfuegbar=profil.angaben.verfuegbar_ab or "ab sofort",
@@ -111,16 +124,12 @@ def _system(profil: Profil, dossier: Dossier | None) -> str:
     )
 
 
-def erzeuge(
-    job: Job,
-    profil: Profil,
-    score: Score | None = None,
-    mit_llm: bool = True,
-    dossier: Dossier | None = None,
-) -> str:
-    """Erzeugt das Anschreiben. Faellt bei Problemen auf die Vorlage zurueck."""
+def _erzeuge(
+    job: Job, profil: Profil, score: Score | None, mit_llm: bool, dossier: Dossier | None,
+) -> tuple[str, str, str]:
+    """(Text, Quelle llm|vorlage, warum die KI nicht geholfen hat – leer, wenn sie es nicht sollte)."""
     if not mit_llm or not client_verfuegbar():
-        return _vorlage(job, profil, score, dossier)
+        return _vorlage(job, profil, score, dossier), "vorlage", ""
     try:
         text = chat(
             profil.bewertung.modell,
@@ -129,10 +138,24 @@ def erzeuge(
             max_tokens=16000,
             effort="medium",
         ).strip()
-        return text or _vorlage(job, profil, score, dossier)
     except Exception as e:
-        log.warning("Anschreiben per LLM fehlgeschlagen (%s) - nutze Vorlage.", e)
-        return _vorlage(job, profil, score, dossier)
+        grund = ki_grund(e)
+        log.warning("Anschreiben per LLM fehlgeschlagen (%s: %s) - nutze Vorlage.", grund, str(e)[:300])
+        return _vorlage(job, profil, score, dossier), "vorlage", grund
+    if not text:
+        return _vorlage(job, profil, score, dossier), "vorlage", "die KI hat keine verwertbare Antwort geliefert"
+    return text, "llm", ""
+
+
+def erzeuge(
+    job: Job,
+    profil: Profil,
+    score: Score | None = None,
+    mit_llm: bool = True,
+    dossier: Dossier | None = None,
+) -> str:
+    """Erzeugt das Anschreiben. Faellt bei Problemen auf die Vorlage zurueck."""
+    return _erzeuge(job, profil, score, mit_llm, dossier)[0]
 
 
 @dataclass
@@ -155,8 +178,7 @@ def erzeuge_geprueft(
     from . import pruefung
 
     ki = mit_llm and client_verfuegbar()
-    text = erzeuge(job, profil, score, mit_llm=ki, dossier=dossier)
-    quelle = "llm" if ki and text != _vorlage(job, profil, score, dossier) else "vorlage"
+    text, quelle, ki_fehler = _erzeuge(job, profil, score, ki, dossier)
     bericht = pruefung.pruefe(text, job, profil, dossier, mit_llm=quelle == "llm")
     if quelle == "llm" and (bericht.unbelegt or bericht.maengel or bericht.qualitaet < 80):
         try:
@@ -169,4 +191,7 @@ def erzeuge_geprueft(
         except Exception as e:
             log.info("Überarbeitung fehlgeschlagen (%s) – erste Fassung bleibt.", e)
     qualitaet = bericht.qualitaet if quelle == "llm" else min(bericht.qualitaet, 50.0)
-    return Ergebnis(text=text, quelle=quelle, qualitaet=qualitaet, bericht=bericht.als_dict())
+    daten = bericht.als_dict()
+    if ki_fehler:
+        daten["ki_fehler"] = ki_fehler  # z. B. „das KI-Konto hat kein Guthaben mehr“ (zeigt die Karte)
+    return Ergebnis(text=text, quelle=quelle, qualitaet=qualitaet, bericht=daten)

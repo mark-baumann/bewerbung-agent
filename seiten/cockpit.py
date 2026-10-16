@@ -32,16 +32,16 @@ with ui.oeffne_db() as db:
             st.markdown(":material/description: **Ohne Lebenslauf kann ich mich nicht bewerben.**")
             st.page_link(ui.SEITE_LEBENSLAUF, label="Hochladen", icon=":material/upload:")
 
-    @st.fragment(run_every=5 if ui.laeuft_etwas(db) else None)
+    st.session_state["heute_stand"] = ui.stand(db)  # Stand dieses Seitenaufbaus
+
+    @st.fragment(run_every=ui.auffrischen_alle(db))
     def laufstatus():
         with ui.oeffne_db() as frisch:
-            if not ui.zeige_laufstatus(frisch):
-                # Fertig: Seite neu aufbauen – aber nie, solange ein Dialog offen ist (er wuerde sich schliessen)
-                if st.session_state.get("heute_lief") and not ui.dialog_offen():
-                    st.session_state["heute_lief"] = False
-                    st.rerun()
-            else:
-                st.session_state["heute_lief"] = True
+            ui.zeige_laufstatus(frisch)
+            neu = ui.stand(frisch)
+        # Etwas vorbereitet oder verschickt? Dann die ganze Seite neu – nie, solange ein Dialog offen ist
+        if neu != st.session_state.get("heute_stand") and not ui.dialog_offen():
+            st.rerun()
 
     laufstatus()
 

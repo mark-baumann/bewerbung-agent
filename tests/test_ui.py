@@ -253,12 +253,13 @@ def test_alte_fehlerkarten_werden_auf_heute_umgeleitet(app, monkeypatch):
                 beschreibung="Ihre Bewerbung senden Sie bitte an karriere@fuenf.de.", externe_url="https://fuenf.de/job"),
         ])
         db.setze_vorgang(Vorgang(ref="j5", status="fehlgeschlagen", kanal="formular", anschreiben="Text",
-                                 hinweis="Seite nicht erreichbar"))
+                                 hinweis="Keine Bewerbungs-URL hinterlegt."))
     at = neue_app().run()
     _ohne_fehler(at)
     with Speicher() as db:
         j3, j5 = db.vorgang("j3"), db.vorgang("j5")
-    assert (j3.status, j3.kanal) == ("wartet", "manuell")
+    # j3 („Captcha“): unklar, ob schon raus – nachfragen statt erneut senden
+    assert (j3.status, j3.kanal, j3.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT)
     assert (j5.status, j5.kanal, j5.empfaenger) == ("freigegeben", "email", "karriere@fuenf.de")
     assert any("Data Analyst" in m.value and "geht gleich raus" in m.value for m in at.markdown)
     # „Ja, erledigt“ auf der Karte „Selbst bewerben“
@@ -342,7 +343,7 @@ def test_lebenslauf_seite_zeigt_datei_und_uebernimmt_was_sie_liest(app, monkeypa
     assert any("lebenslauf.txt" in m.value for m in at.markdown)
     assert any("Buchhalterin · Finanzbuchhalterin" in m.value for m in at.markdown)
     gespeichert = lade_profil()
-    assert gespeichert.suche.was == ["Buchhalterin", "Finanzbuchhalterin"] and gespeichert.suche.wo == "Köln"
+    assert gespeichert.suche.was[:2] == ["Buchhalterin", "Finanzbuchhalterin"] and gespeichert.suche.wo == "Köln"
     assert gespeichert.kurzprofil == "Buchhalterin seit 2015, DATEV."
 
 
@@ -379,3 +380,48 @@ def test_suchen_zeigt_weniger_passende_statt_nichts(app):
     assert any("Weniger passende" in h.value for h in at.subheader)
     assert at.checkbox(key="sfs_sel_j6")
     assert [e for e in at.expander if e.label == "Mehr Filter"]  # dort steht auch die Mindest-Passung
+
+
+def test_vielleicht_karte_kann_nach_pruefung_automatisch_neu_bewerben(app):
+    neue_app, profil, gestartet = app
+    _befuelle(profil)  # j3: alte Fehlerkarte „Captcha“ -> Karte „vielleicht schon raus“
+    at = neue_app().run()
+    _ohne_fehler(at)
+    assert any(ablauf.HINWEIS_VIELLEICHT in i.value for i in at.info)
+    assert not [b for b in at.button if b.key == "cockpit_angaben_j3"]  # kein „Formular neu testen“
+    at.button(key="cockpit_neu_bewerben_j3").click().run()
+    _ohne_fehler(at)
+    with Speicher() as db:
+        v = db.vorgang("j3")
+    assert (v.status, v.kanal) == ("freigegeben", "formular") and gestartet[-1][0] == "senden"
+
+
+def test_lebenslauf_seite_zeigt_den_ki_grund_und_eine_probe(app, monkeypatch):
+    from bewerbungsagent.scoring import llm
+
+    neue_app, profil, _ = app
+    _befuelle(profil)
+    with Speicher() as db:  # eine offene Stelle ohne Karte – dafuer schreibt die Probe
+        db.speichere_jobs([Job(ref="j7", titel="Finanzbuchhalterin", arbeitgeber="Sieben AG", ort="Köln",
+                               beschreibung="DATEV, Excel", externe_url="https://sieben.de/job")])
+        db.speichere_score(Score(ref="j7", gesamt=66, passung=66, sentiment=50, treffer=["DATEV"]))
+    Path("unterlagen/lebenslauf.txt").write_text(
+        "Über mich\nBuchhalterin mit DATEV-Erfahrung.\nFähigkeiten\nDATEV\nPython\nErfahrung\n"
+        "Demo GmbH 01/2019 - 12/2023\nBuchhalterin\n50667 Köln", encoding="utf-8")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+
+    def kaputt(*a, **k):
+        raise llm.LLMNichtVerfuegbar("Error code: 429 - insufficient_quota")
+
+    monkeypatch.setattr(llm, "chat", kaputt)
+    monkeypatch.setattr("bewerbungsagent.anschreiben.chat", kaputt)
+    at = neue_app().run()
+    at.switch_page("seiten/lebenslauf.py").run()
+    _ohne_fehler(at)
+    assert any("kein Guthaben" in i.value for i in at.info)  # statt „ohne KI“
+    assert any("Buchhalterin" in m.value and "Jobtitel" in m.value for m in at.markdown)
+    at.button(key="lebenslauf_probe_knopf").click().run()
+    _ohne_fehler(at)
+    probe = at.session_state["lebenslauf_probe"]
+    assert probe["titel"] == "Finanzbuchhalterin" and probe["quelle"] == "vorlage" and "kein Guthaben" in probe["grund"]
+    assert "Zuletzt war ich als Buchhalterin bei Demo GmbH tätig." in probe["text"]

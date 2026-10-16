@@ -525,3 +525,53 @@ def test_ki_fehler_nach_arbeit_startet_nie_neu(umgebung, monkeypatch):
     b, modelle = _agent_mit_modell(monkeypatch, profil, halb)
     lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
     assert b.aufrufe == 1 and lauf.gearbeitet and not (lauf.rohdaten or {}).get("ki_fehler")
+
+
+def _echter_verlauf(*schritte):
+    """Echter browser-use-Verlauf: Schritt 0 = automatische Startnavigation (kuenstliche Modell-Antwort)."""
+    import time
+
+    pytest.importorskip("browser_use")
+    from browser_use.agent.views import ActionResult, AgentHistory, AgentHistoryList, AgentOutput, StepMetadata
+    from browser_use.browser.views import BrowserStateHistory
+
+    def eintrag(nr, ausgabe, fehler=None):
+        return AgentHistory(
+            model_output=ausgabe, result=[ActionResult(error=fehler)],
+            state=BrowserStateHistory(url="https://karriere.firma.de/1", title="t", tabs=[], interacted_element=[None]),
+            metadata=StepMetadata(step_number=nr, step_start_time=time.time(), step_end_time=time.time()),
+        )
+
+    start = AgentOutput(evaluation_previous_goal="Start", memory=None, next_goal="Initial navigation", action=[])
+    antwort = AgentOutput(evaluation_previous_goal="ok", memory=None, next_goal="Feld ausfüllen", action=[])
+    return AgentHistoryList(history=[eintrag(0, start)] + [
+        eintrag(i, antwort if gearbeitet else None, fehler) for i, (gearbeitet, fehler) in enumerate(schritte, 1)])
+
+
+def test_startnavigation_zaehlt_nicht_als_arbeit_der_ki(umgebung, monkeypatch):
+    """Mit echtem browser-use: Schritt 0 hat eine kuenstliche Modell-Antwort – das ist kein „gearbeitet“."""
+    import asyncio
+
+    profil, db, _ = umgebung
+    nur_429 = _echter_verlauf(*[(False, QUOTA)] * 3)
+    assert not browser._hat_gearbeitet(nur_429) and nur_429.model_outputs()  # Schritt 0 allein zaehlt nicht
+    b = _echter_browser(monkeypatch, profil, nur_429)
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert lauf.rohdaten["ki_fehler"] and lauf.gearbeitet is False and "kein Guthaben" in lauf.zusammenfassung
+
+    _freigegeben(db, profil)
+    b = _echter_browser(monkeypatch, profil, _echter_verlauf(*[(False, QUOTA)] * 3))
+    ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b)
+    v = db.vorgang("1")  # nichts passiert: Freigabe bleibt, keine Karte „vielleicht schon raus“
+    assert v.status == "freigegeben" and v.zurueckgestellt_seit and ablauf.ki_pausiert()
+
+
+def test_echte_antworten_der_ki_zaehlen_als_arbeit(umgebung, monkeypatch):
+    import asyncio
+
+    profil, _, _ = umgebung
+    verlauf = _echter_verlauf((True, None), (True, None), (False, QUOTA))
+    assert browser._hat_gearbeitet(verlauf)
+    b = _echter_browser(monkeypatch, profil, verlauf)
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert lauf.gearbeitet and not (lauf.rohdaten or {}).get("ki_fehler") and b.aufrufe == 1
