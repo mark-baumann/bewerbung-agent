@@ -400,6 +400,11 @@ def cmd_tick(args: argparse.Namespace) -> int:
         unterlagen_sichern(profil)
     except Exception as e:  # Sicherung darf den Tick nie aufhalten
         console.print(f"[yellow]Sicherung der Unterlagen fehlgeschlagen: {e}[/]")
+    try:  # fehlt das KI-Modell beim Anbieter: den Ersatz einmal fest ins Profil schreiben (keine Warnung mehr)
+        if ziel := llm_modul.modell_festschreiben(profil, args.profil):
+            console.print(f"KI-Modell fest auf {ziel} gestellt.")
+    except Exception as e:
+        console.print(f"[yellow]KI-Modell nicht geprüft: {e}[/]")
     with Speicher(args.db) as db:
         ergebnis = ablauf.tick(db, profil)
     # Nur protokollieren, wenn etwas passiert ist (cron.log klein halten)

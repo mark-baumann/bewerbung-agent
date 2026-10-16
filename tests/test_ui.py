@@ -15,7 +15,7 @@ from bewerbungsagent.db import Speicher  # noqa: E402
 from bewerbungsagent.models import Job, Score, Vorgang  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-SEITEN = ["seiten/schritt_fuer_schritt.py", "seiten/profil.py"]
+SEITEN = ["seiten/schritt_fuer_schritt.py", "seiten/lebenslauf.py", "seiten/profil.py"]
 
 
 @pytest.fixture
@@ -78,7 +78,11 @@ def test_alle_seiten_mit_daten(app):
     _befuelle(profil)
     at = neue_app().run()
     _ohne_fehler(at)
-    assert any("Deine Entscheidung (2)" in h.value for h in at.subheader)
+    # Die alte Fehlerkarte (j3) ist jetzt eine Ja/Nein-Karte „Selbst bewerben“ – keine Hilfe-/Startklar-Bereiche
+    assert any("Deine Entscheidung (3)" in h.value for h in at.subheader)
+    assert not [h for h in at.subheader if "Hilfe" in h.value]
+    assert not [m for m in at.markdown if "Startklar" in m.value or "Automatik" in m.value]
+    assert at.button(key="cockpit_selbst_j3").label == "Ja, erledigt"
     for seite in SEITEN:
         at.switch_page(seite).run()
         _ohne_fehler(at)
@@ -113,9 +117,9 @@ def test_schritt_fuer_schritt_auswahl_startet_vorbereitung(app):
         db.speichere_score(Score(ref="j4", gesamt=90, passung=90, sentiment=50))
     at = neue_app().run()
     at.switch_page("seiten/schritt_fuer_schritt.py").run()
-    at.session_state["sfs_schritt"] = 2
-    at.session_state["sfs_umfang"] = "alle"
-    at.run()
+    _ohne_fehler(at)
+    # Eine Seite: Suchformular und Treffer zugleich, keine Schritte
+    assert at.button(key="sfs_suchen") and not [b for b in at.button if (b.key or "").startswith("sfs_nav_")]
     _ohne_fehler(at)
     at.checkbox(key="sfs_sel_j4").check().run()
     weiter = next(b for b in at.button if b.label.startswith("Weiter: 1"))
@@ -148,9 +152,10 @@ def test_assistent_fuehrt_durch_die_einrichtung(tmp_path, monkeypatch):
     _ohne_fehler(at)
     assert lade_profil(pruefen=False).person.vorname == "Erika"
 
+    assert any(s.value == "Lebenslauf" for s in at.subheader)  # Schritt 2
+    at.button(key="assistent_w3").click().run()  # Lebenslauf spaeter
     at.text_area(key="assistent_was").input("Buchhalterin\nSachbearbeiterin")
     next(b for b in at.button if b.label == "Weiter").click().run()
-    at.button(key="assistent_w3").click().run()  # Lebenslauf spaeter
     at.button(key="assistent_w4").click().run()  # E-Mail-Konto ueberspringen
     _ohne_fehler(at)
     at.button(key="assistent_fertig").click().run()
@@ -160,7 +165,7 @@ def test_assistent_fuehrt_durch_die_einrichtung(tmp_path, monkeypatch):
     assert profil.suche.was == ["Buchhalterin", "Sachbearbeiterin"] and profil.suche.wo == "Köln"
     assert profil.automatisierung.aktiv and profil.automatisierung.modus == "automatisch"
     assert gestartet[-1][0] == "automatik"
-    assert any("Startklar" in m.value for m in at.markdown)  # Lebenslauf fehlt noch
+    assert any("Ohne Lebenslauf" in m.value for m in at.markdown)  # das Einzige, was noch fehlt
 
 
 def test_rueckmeldung_auf_heute(app):
@@ -174,7 +179,10 @@ def test_rueckmeldung_auf_heute(app):
     _ohne_fehler(at)
     with Speicher() as db:
         assert db.vorgang("j1").rueckmeldung == "einladung"
-    at.button(key="heute_nachweis").click().run()
+    assert any("Einladung zum Gespräch" in m.value for m in at.markdown)  # hervorgehoben
+    # Der Nachweis fürs Amt wohnt jetzt unter Einstellungen → Über mich
+    at.switch_page("seiten/profil.py").run()
+    at.button(key="einstellungen_nachweis").click().run()
     _ohne_fehler(at)
 
 
@@ -229,24 +237,35 @@ def test_rueckmeldung_folgt_dem_postfach(app):
     assert at.pills(key="heute_rm_j1").value == "einladung"
 
 
-def test_ausweg_mail_nur_bei_sicherer_adresse(app, monkeypatch):
+def test_alte_fehlerkarten_werden_auf_heute_umgeleitet(app, monkeypatch):
     neue_app, profil, _ = app
     _befuelle(profil)
-    monkeypatch.setattr("bewerbungsagent.bewerben.mail.smtp_eingerichtet", lambda *a, **k: True)
+    for name, wert in (("SMTP_HOST", "smtp.example.de"), ("SMTP_BENUTZER", "ich@example.de"),
+                       ("SMTP_PASSWORT", "geheim")):
+        monkeypatch.setenv(name, wert)
     with Speicher() as db:
-        db.speichere_jobs([Job(ref="j3", titel="Data Engineer", arbeitgeber="Firma Drei", ort="München",
-                               beschreibung=("Kundenservice erreichen Sie unter vertrieb@drei.de. "
-                                            "Bitte nutzen Sie ausschließlich unser Online-Portal."),
-                               externe_url="https://drei.de/job")])
+        # j3: nur eine Service-Adresse -> nie per E-Mail, sondern Karte „Selbst bewerben“
+        db.speichere_jobs([
+            Job(ref="j3", titel="Data Engineer", arbeitgeber="Firma Drei", ort="München",
+                beschreibung=("Kundenservice erreichen Sie unter vertrieb@drei.de. "
+                              "Bitte nutzen Sie ausschließlich unser Online-Portal."), externe_url="https://drei.de/job"),
+            Job(ref="j5", titel="Data Analyst", arbeitgeber="Firma Fünf", ort="München",
+                beschreibung="Ihre Bewerbung senden Sie bitte an karriere@fuenf.de.", externe_url="https://fuenf.de/job"),
+        ])
+        db.setze_vorgang(Vorgang(ref="j5", status="fehlgeschlagen", kanal="formular", anschreiben="Text",
+                                 hinweis="Seite nicht erreichbar"))
     at = neue_app().run()
     _ohne_fehler(at)
-    assert not [b for b in at.button if b.key == "cockpit_mail_j3"]
     with Speicher() as db:
-        db.speichere_jobs([Job(ref="j3", titel="Data Engineer", arbeitgeber="Firma Drei", ort="München",
-                               beschreibung="Ihre Bewerbung senden Sie bitte an karriere@drei.de.",
-                               externe_url="https://drei.de/job")])
-    at.run()
-    assert [b for b in at.button if b.key == "cockpit_mail_j3"]
+        j3, j5 = db.vorgang("j3"), db.vorgang("j5")
+    assert (j3.status, j3.kanal) == ("wartet", "manuell")
+    assert (j5.status, j5.kanal, j5.empfaenger) == ("freigegeben", "email", "karriere@fuenf.de")
+    assert any("Data Analyst" in m.value and "geht gleich raus" in m.value for m in at.markdown)
+    # „Ja, erledigt“ auf der Karte „Selbst bewerben“
+    at.button(key="cockpit_selbst_j3").click().run()
+    _ohne_fehler(at)
+    with Speicher() as db:
+        assert db.vorgang("j3").status == "selbst_beworben"
 
 
 def test_kaputtes_profil_zeigt_fehler_statt_assistent(app):
@@ -273,10 +292,8 @@ def test_assistent_geht_nach_neu_laden_weiter(tmp_path, monkeypatch):
     at.text_input(key="assistent_nachname").input("Muster")
     at.text_input(key="assistent_email").input("erika@example.org")
     next(b for b in at.button if b.label == "Weiter").click().run()
-    at.text_area(key="assistent_was").input("Buchhalterin")
-    next(b for b in at.button if b.label == "Weiter").click().run()
     _ohne_fehler(at)
-    # Neue Sitzung (Seite neu geladen): weiter bei Schritt 3 statt der normalen Startseite
+    # Neue Sitzung (z. B. am Handy nach dem Datei-Dialog neu geladen): weiter bei Schritt 2 statt der Startseite
     neu = AppTest.from_file(str(REPO / "app.py"), default_timeout=30).run()
     _ohne_fehler(neu)
     assert neu.title[0].value == "Willkommen!" and any(s.value == "Lebenslauf" for s in neu.subheader)
@@ -296,18 +313,47 @@ def test_rueckmeldung_bleibt_nach_seitenwechsel(app):
     assert at.pills(key="heute_rm_j1").value == "absage"
 
 
-def test_eintragen_oeffnet_ueber_mich(app):
+def test_ohne_lebenslauf_zeigt_heute_nur_den_weg_dorthin(app):
     neue_app, profil, _ = app
-    profil.person.telefon = ""  # Kontaktdaten unvollstaendig -> Startklar zeigt „Eintragen“
-    speichere_profil(profil, Path("config/profil.yaml"))
+    Path("unterlagen/lebenslauf.txt").unlink()
+    at = neue_app().run()
+    _ohne_fehler(at)
+    assert any("Ohne Lebenslauf" in m.value for m in at.markdown)
+    at.switch_page("seiten/lebenslauf.py").run()
+    _ohne_fehler(at)
+    assert any("fehlt" in w.value for w in at.warning)
+
+
+def test_lebenslauf_seite_zeigt_datei_und_uebernimmt_was_sie_liest(app, monkeypatch):
+    import json
+
+    from bewerbungsagent.scoring import llm
+
+    neue_app, profil, _ = app
+    Path("unterlagen/lebenslauf.txt").write_text("Erika Muster\n50667 Köln\nBuchhalterin seit 2015, DATEV",
+                                                 encoding="utf-8")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    antwort = {"kurzprofil": "Buchhalterin seit 2015, DATEV.", "jobtitel": ["Buchhalterin", "Finanzbuchhalterin"],
+               "ort": "Köln", "faehigkeiten": ["DATEV", "Buchhaltung"], "kontakt": {}}
+    monkeypatch.setattr(llm, "chat", lambda modell, **kw: json.dumps(antwort))
+    at = neue_app().run()
+    at.switch_page("seiten/lebenslauf.py").run()
+    _ohne_fehler(at)
+    assert any("lebenslauf.txt" in m.value for m in at.markdown)
+    assert any("Buchhalterin · Finanzbuchhalterin" in m.value for m in at.markdown)
+    gespeichert = lade_profil()
+    assert gespeichert.suche.was == ["Buchhalterin", "Finanzbuchhalterin"] and gespeichert.suche.wo == "Köln"
+    assert gespeichert.kurzprofil == "Buchhalterin seit 2015, DATEV."
+
+
+def test_ueber_mich_ohne_kurzprofil_gehalt_und_stil(app):
+    neue_app, _, _ = app
     at = neue_app().run()
     at.switch_page("seiten/profil.py").run()
-    at.session_state["tab"] = "Konten"
-    at.run()
-    at.switch_page("seiten/cockpit.py").run()
-    at.button(key="startklar_daten").click().run()
     _ohne_fehler(at)
-    assert at.session_state["tab"] == "Über mich"
+    beschriftungen = [w.label for w in (*at.text_input, *at.text_area)]
+    assert not [b for b in beschriftungen if "Gehalt" in b or "Kurz über dich" in b or b == "Stil"]
+    assert at.button(key="einstellungen_nachweis")
 
 
 def test_alter_assistenten_stand_blockiert_fertiges_profil_nicht(app):
@@ -320,3 +366,16 @@ def test_alter_assistenten_stand_blockiert_fertiges_profil_nicht(app):
     _ohne_fehler(at)
     assert not [t for t in at.title if t.value == "Willkommen!"]
     assert not datei.exists()
+
+
+def test_suchen_zeigt_weniger_passende_statt_nichts(app):
+    neue_app, profil, _ = app
+    with Speicher() as db:
+        db.speichere_jobs([Job(ref="j6", titel="Quereinstieg", arbeitgeber="Sechs AG", externe_url="https://sechs.de")])
+        db.speichere_score(Score(ref="j6", gesamt=30, passung=30, sentiment=50))
+    at = neue_app().run()
+    at.switch_page("seiten/schritt_fuer_schritt.py").run()
+    _ohne_fehler(at)
+    assert any("Weniger passende" in h.value for h in at.subheader)
+    assert at.checkbox(key="sfs_sel_j6")
+    assert [e for e in at.expander if e.label == "Mehr Filter"]  # dort steht auch die Mindest-Passung

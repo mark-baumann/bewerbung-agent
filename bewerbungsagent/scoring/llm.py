@@ -27,13 +27,14 @@ log = logging.getLogger(__name__)
 
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
 # Nur ein Wunsch: ob es das Modell beim Server gibt, prueft `pruefe_modell`.
-OLLAMA_DEFAULT_MODEL = "glm-5.3-flash"
+OLLAMA_DEFAULT_MODEL = "gpt-oss:120b"
 # Wenn das gewuenschte Modell fehlt, wird - falls vorhanden - eines davon genommen.
 BEVORZUGTE_MODELLE = {
     "anthropic": ("claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-haiku-5-5"),
     "openai": ("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"),
+    # Der Nutzer arbeitet mit dem grossen offenen Modell (gpt-oss 120b) - das zuerst
     "ollama": (
-        "glm-5.3", "glm-5.2", "deepseek-v4.1-flash", "kimi-k3", "gpt-oss:120b",
+        "gpt-oss:120b", "glm-5.3", "glm-5.2", "deepseek-v4.1-flash", "kimi-k3",
         "qwen3", "llama3.3", "gemma4:31b", "gpt-oss:20b",
     ),
 }
@@ -171,8 +172,8 @@ def provider(modell: str | None = None) -> str | None:
     """Waehlt den LLM-Anbieter: 'anthropic', 'openai' oder 'ollama'.
 
     Bei gesetztem Key gewinnt das zum Modell passende Backend (Claude-Modelle
-    laufen ueber Anthropic, alles andere ueber Ollama). Sonst wird der Key
-    genutzt, der gesetzt ist.
+    laufen ueber Anthropic, GPT-Modelle ueber OpenAI, alles andere ueber Ollama).
+    Sonst: Anthropic, dann Ollama, dann OpenAI.
     """
     anthropic_ok = anthropic_verfuegbar()
     openai_ok = openai_verfuegbar()
@@ -186,10 +187,12 @@ def provider(modell: str | None = None) -> str | None:
             return "ollama"
     if anthropic_ok:
         return "anthropic"
-    if openai_ok:
-        return "openai"
+    # Eigener/offener Ollama-Zugang vor einem OpenAI-Konto, wenn das Modell nicht ausdruecklich
+    # ein OpenAI-Modell ist (sonst landet z. B. das Standardmodell bei einem Konto ohne Guthaben)
     if ollama_ok:
         return "ollama"
+    if openai_ok:
+        return "openai"
     return None
 
 
@@ -410,6 +413,27 @@ def _familie(modell: str) -> str:
     return re.split(r"[-:._/ ]", modell.lower(), maxsplit=1)[0]
 
 
+def _norm(modell: str) -> str:
+    """Vergleichsform: „openai/gpt-oss-120b“, „gpt-oss:120b-cloud“ und „gpt-oss:120b“ sind gleich."""
+    n = modell.strip().lower().rsplit("/", 1)[-1]
+    n = re.sub(r"[-:_. ]", "", n)
+    return re.sub(r"(latest|cloud)$", "", n)
+
+
+def _groesse(modell: str) -> float:
+    """Parametergroesse aus dem Namen (z. B. 120b -> 120), 0 wenn unbekannt."""
+    treffer = re.findall(r"(\d+(?:\.\d+)?)\s*b(?![a-z])", modell.lower())
+    return max((float(z) for z in treffer), default=0.0)
+
+
+def _fremdes_bezahlmodell(anbieter: str, modell: str) -> bool:
+    """Ueber einen Ollama-/Gateway-Zugang angebotene Bezahlmodelle anderer Anbieter (z. B. gpt-4o-mini).
+
+    Die nie als stillen Ersatz nehmen: sie laufen oft ueber ein fremdes Konto (ohne Guthaben).
+    """
+    return anbieter == "ollama" and (ist_openai_modell(modell) or ist_claude_modell(modell))
+
+
 def _finde(wunsch: str, liste: list[str]) -> str | None:
     w = wunsch.strip().lower()
     for m in liste:
@@ -422,24 +446,46 @@ def _finde(wunsch: str, liste: list[str]) -> str | None:
             return m
         if w.endswith(":latest") and name == w.removesuffix(":latest"):
             return m
+    gesucht = _norm(wunsch)
+    for m in liste:
+        if gesucht and _norm(m) == gesucht:
+            return m
     return None
 
 
+_UMGEBUNG_MODELL = {"ollama": ("OLLAMA_MODEL", "LLM_MODEL"), "openai": ("OPENAI_MODEL", "LLM_MODEL"),
+                    "anthropic": ("ANTHROPIC_MODEL",)}
+
+
 def waehle_ersatz(anbieter: str, wunsch: str, liste: list[str]) -> str | None:
-    """Bestes verfuegbares Ausweichmodell: bevorzugt dieselbe Modellfamilie."""
+    """Bestes verfuegbares Ausweichmodell.
+
+    Reihenfolge: das in der Umgebung eingestellte Modell (z. B. OLLAMA_MODEL) → bei Ollama gpt-oss:120b →
+    bevorzugte Modelle derselben Familie → dieselbe Familie → bevorzugte Modelle → das groesste
+    verfuegbare Modell. Bezahlmodelle fremder Anbieter (gpt-4o-mini ueber einen Gateway) nur als
+    allerletzte Moeglichkeit.
+    """
     if not liste:
         return None
-    bevorzugt = [b for b in BEVORZUGTE_MODELLE.get(anbieter, ()) if _finde(b, liste)]
+    eigene = [m for m in liste if not _fremdes_bezahlmodell(anbieter, m)] or liste
+    for name in _UMGEBUNG_MODELL.get(anbieter, ()):
+        aus_umgebung = _env(name)
+        treffer = _finde(aus_umgebung, eigene) if aus_umgebung else None
+        if treffer and treffer.lower() != wunsch.strip().lower():
+            return treffer
+    if anbieter == "ollama" and (gross := _finde(BEVORZUGTE_MODELLE["ollama"][0], eigene)):
+        return gross  # der Nutzer arbeitet mit gpt-oss 120b: wenn es da ist, immer das
+    bevorzugt = [b for b in BEVORZUGTE_MODELLE.get(anbieter, ()) if _finde(b, eigene)]
     familie = _familie(wunsch)
     for b in bevorzugt:
         if _familie(b) == familie:
-            return _finde(b, liste)
-    gleiche = sorted((m for m in liste if _familie(m) == familie), reverse=True)
+            return _finde(b, eigene)
+    gleiche = sorted((m for m in eigene if _familie(m) == familie), key=lambda m: (_groesse(m), m), reverse=True)
     if gleiche:
         return gleiche[0]
     if bevorzugt:
-        return _finde(bevorzugt[0], liste)
-    return liste[0]
+        return _finde(bevorzugt[0], eigene)
+    return max(eigene, key=lambda m: (_groesse(m), -eigene.index(m)))
 
 
 def pruefe_modell(anbieter: str, modell: str | None, *, ausser: tuple[str, ...] = ()) -> tuple[str, str | None]:
@@ -467,6 +513,24 @@ def pruefe_modell(anbieter: str, modell: str | None, *, ausser: tuple[str, ...] 
         log.warning(hinweis)
     modell_hinweise[anbieter] = hinweis
     return ersatz, hinweis
+
+
+def modell_festschreiben(profil: Any, pfad: Any = None) -> str | None:
+    """Fehlt das Profil-Modell beim Anbieter, den gewaehlten Ersatz einmal ins Profil schreiben.
+
+    Danach entsteht kein Hinweis mehr. Nur wenn der Ersatz beim selben Anbieter laeuft (sonst
+    koennte ein Modellname den Anbieter wechseln, z. B. zu einem OpenAI-Konto ohne Guthaben).
+    """
+    from ..config import ermittle_profil_pfad, speichere_profil
+
+    anbieter, ziel, hinweis = modell_fuer(profil.bewertung.modell)
+    if not (anbieter and ziel and hinweis) or ziel == profil.bewertung.modell or provider(ziel) != anbieter:
+        return None
+    profil.bewertung.modell = ziel
+    speichere_profil(profil, pfad or ermittle_profil_pfad())
+    modell_hinweise.pop(anbieter, None)
+    log.warning("KI-Modell fest auf %s gestellt (das bisherige gab es nicht).", ziel)
+    return ziel
 
 
 def modell_fuer(modell: str | None) -> tuple[str | None, str | None, str | None]:

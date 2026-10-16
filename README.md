@@ -64,8 +64,8 @@ Zeitplan (Cron) oder Knopf
   ChatGPT oder Ollama) mit deinem Lebenslauf als Kontext
 - **📬 Rückmeldungen & Nachweis:** Antworten auf „Heute“ antippen, Nachfass-Mails als
   Vorschlag, Export der Eigenbemühungen als PDF/CSV für Agentur für Arbeit oder Jobcenter
-- **🛡️ Sicherheitsnetze:** Ohne Autopilot geht nichts ohne dein Ja raus, Tageslimit, kein
-  automatisches Wiederholen fehlgeschlagener Sendungen, keine erfundenen Angaben,
+- **🛡️ Sicherheitsnetze:** Ohne Autopilot geht nichts ohne dein Ja raus, Tageslimit, nie doppelt
+  senden (war der Agent schon im Formular, fragt er nach statt zu wiederholen), keine erfundenen Angaben,
   keine Jobbörsen, deren Bedingungen automatische Abfragen verbieten (StepStone, Indeed,
   LinkedIn, XING)
 
@@ -84,7 +84,8 @@ playwright install chromium
 ## ⚙️ Einrichten
 
 Am einfachsten über die Web-UI: Beim ersten Start führt ein Assistent durch Daten,
-Jobtitel, Lebenslauf und E-Mail-Konto. Alles Weitere unter **Einstellungen** (Über mich ·
+Lebenslauf, Jobtitel und E-Mail-Konto – aus dem Lebenslauf liest der Agent Kurzprofil, Jobtitel,
+Ort und Fähigkeiten selbst (Seite **Lebenslauf**). Alles Weitere unter **Einstellungen** (Über mich ·
 Suche · Automatik · Konten) – dort auch KI-Schlüssel eintragen und mit einem Klick testen.
 Die Zugänge liegen in `daten/zugangsdaten.json` (nur für dich lesbar, nie im Git) und
 haben Vorrang vor der `.env`. Alternativ per Datei:
@@ -116,8 +117,9 @@ OLLAMA_MODEL=                        # optional; sonst Auswahl in der UI
 Claude-Modelle (`claude-*`) laufen über Anthropic, GPT-/o-Modelle über die
 OpenAI-API und die übrigen Modelle über Ollama. Der Agent fragt beim Anbieter ab,
 welche Modelle es wirklich gibt (`bewerbungsagent modelle`): Fehlt das gewählte
-Modell (*model not found*), weicht er auf ein verfügbares aus und sagt es dir in
-der Oberfläche. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
+Modell (*model not found*), nimmt er ein verfügbares – bei Ollama zuerst `OLLAMA_MODEL`, dann
+`gpt-oss:120b`, sonst das größte, nie ein Bezahlmodell eines anderen Anbieters – und schreibt es fest
+ins Profil. Ohne Key fällt die Bewertung auf die Heuristik und das Anschreiben auf
 die Vorlage zurück.
 
 ### 📧 Bewerbungen per E-Mail
@@ -191,11 +193,12 @@ streamlit run app.py        # oder ./start-ui.sh
 
 Öffne `http://localhost:8501`:
 
-1. **Heute** – beim ersten Start der Einrichtungs-Assistent; danach wartet hier jeden Morgen
-   die Auswahl: **Ja** schickt ab, **Nein** blendet aus. Darunter: Hilfe bei Fehlschlägen,
-   Ideen des Agenten, deine Bewerbungen mit Rückmeldung und der **Nachweis fürs Amt**
-2. **Suchen** – selbst suchen (mit Vorschlägen) und Stellen auswählen
-3. **Einstellungen** – Über mich · Suche · Automatik · Konten
+1. **Heute** – beim ersten Start der Einrichtungs-Assistent; danach nur Ja/Nein: **Ja** schickt ab,
+   **Nein** blendet aus, dazu Ideen des Agenten und deine Bewerbungen mit Rückmeldung. Klappt ein
+   Formular nicht, weicht der Agent selbst aus (per E-Mail oder als Karte „Selbst bewerben“)
+2. **Suchen** – auf einer Seite suchen (Jobtitel aus dem Lebenslauf) und Treffer ankreuzen
+3. **Lebenslauf** – Datei, was der Agent daraus liest (wird automatisch übernommen), Zeugnisse
+4. **Einstellungen** – Über mich (mit **Nachweis fürs Amt**) · Suche · Automatik · Konten
 
 Siehe [UI_README.md](UI_README.md) für Details.
 

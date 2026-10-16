@@ -59,6 +59,20 @@ def _entschleiern(text: str) -> str:
     return text
 
 
+def sichere_bewerbungs_email(job: Job, probelauf: dict | None = None) -> tuple[str | None, bool]:
+    """(Adresse, sicher): wohin man sich statt per Formular per E-Mail bewerben kann.
+
+    `sicher` nur, wenn die Bewerbungsseite sie im Probelauf nannte, die Jobboerse sie als Kontakt fuehrt
+    oder in der Anzeige ein Bewerbungs-Stichwort daneben steht – sonst koennte es z. B. die
+    Vertriebsadresse sein.
+    """
+    for bekannt in ((probelauf or {}).get("bewerbungs_email"), job.kontakt_email):
+        if bekannt and "@" in bekannt:
+            return bekannt.strip().lower(), True
+    adresse, sicher = finde_bewerbungs_email(job.beschreibung)
+    return (adresse.strip().lower(), sicher) if adresse else (None, False)
+
+
 def finde_bewerbungs_email(text: str | None) -> tuple[str | None, bool]:
     """(Adresse, sicher). `sicher` heisst: in der Naehe steht ein Bewerbungs-Stichwort."""
     if not text:

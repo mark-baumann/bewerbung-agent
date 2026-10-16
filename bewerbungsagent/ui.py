@@ -1,4 +1,4 @@
-"""Gemeinsame Streamlit-Bausteine fuer Heute, Suchen und Einstellungen.
+"""Gemeinsame Streamlit-Bausteine fuer Heute, Suchen, Lebenslauf und Einstellungen.
 
 Aktionen (Ja, Nein, selbst beworben ...) laufen als `on_click`-Callbacks mit
 eigener Datenbankverbindung, damit sie unabhaengig vom Seitenaufbau sind.
@@ -22,11 +22,11 @@ from .bewerben import mail
 from .config import Profil, lade_profil
 from .db import STANDARD_DB, Speicher
 from .models import Job, Score, Vorgang
-from .scoring import llm as llm_modul
 from .sources import QUELLEN, bekannte
 
 SEITE_HEUTE = "seiten/cockpit.py"
 SEITE_SUCHEN = "seiten/schritt_fuer_schritt.py"
+SEITE_LEBENSLAUF = "seiten/lebenslauf.py"
 SEITE_EINSTELLUNGEN = "seiten/profil.py"
 
 STATUS_TEXT = {
@@ -138,9 +138,13 @@ def zeitplan_text(cron: str) -> str:
 
 def navleiste() -> None:
     """Immer sichtbare Leiste oben – auch am Handy, wo die Seitenleiste versteckt waere."""
+    # Am Handy passen alle vier Ziele nur ohne Symbole in eine Zeile
+    st.html("<style>@media (max-width: 480px) {.st-key-navleiste {gap: 0.25rem !important;}"
+            ".st-key-navleiste a > span:has([data-testid='stIconMaterial']) {display: none;}}</style>")
     with st.container(horizontal=True, vertical_alignment="center", gap="small", key="navleiste"):
         st.page_link(SEITE_HEUTE, label="Heute", icon=":material/today:")
         st.page_link(SEITE_SUCHEN, label="Suchen", icon=":material/search:")
+        st.page_link(SEITE_LEBENSLAUF, label="Lebenslauf", icon=":material/description:")
         st.page_link(SEITE_EINSTELLUNGEN, label="Einstellungen", icon=":material/settings:")
 
 
@@ -179,17 +183,13 @@ def lauf_zusammenfassung(lauf: dict) -> str:
 
 
 def zeige_laufstatus(db: Speicher) -> bool:
-    """Zeigt laufende Hintergrundarbeiten; True, wenn etwas laeuft."""
-    laufend = db.laufende_laeufe()
-    for lauf in laufend:
-        st.info(f"{LAUF_TEXT.get(lauf['art'], lauf['art'])} (seit {zeit(lauf['gestartet_am'])})",
-                icon=":material/autorenew:")
-    for v in db.vorgaenge(("vorbereitung", "freigegeben", "wird_gesendet")):
-        job = db.job(v.ref)
-        if job:
-            st.caption(f":material/pending: {job.titel} – {job.arbeitgeber}: {STATUS_TEXT[v.status]}"
-                       + (f" · {v.hinweis}" if v.hinweis and v.status != "vorbereitung" else ""))
-    return bool(laufend) or laeuft_etwas(db)
+    """Eine dezente Zeile, solange im Hintergrund etwas passiert; True, wenn etwas laeuft."""
+    teile = [LAUF_TEXT.get(lauf["art"], lauf["art"]) for lauf in db.laufende_laeufe()]
+    if n := len(db.vorgaenge("vorbereitung")):
+        teile.append(f"{n} Bewerbung{'en' if n > 1 else ''} in Vorbereitung")
+    if teile:
+        st.caption(":material/autorenew: " + " · ".join(dict.fromkeys(teile)))
+    return bool(teile) or laeuft_etwas(db)
 
 
 # --------------------------------------------------------------------------- #
@@ -224,121 +224,7 @@ def neuer_seitenlauf() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Einrichtung („Startklar“)
-# --------------------------------------------------------------------------- #
-
-def ki_status(profil: Profil) -> tuple[bool, str]:
-    """(ok, Text) zum KI-Zugang inkl. Prüfung, ob es das gewählte Modell gibt."""
-    anbieter, ziel, hinweis = llm_modul.modell_fuer(profil.bewertung.modell)
-    if anbieter is None:
-        return False, "Ohne KI bewerte ich per Stichworten und schreibe Anschreiben aus einer Vorlage."
-    if hinweis:
-        return False, hinweis
-    if llm_modul.modell_fehler.get(anbieter):
-        return False, f"Der KI-Dienst antwortet nicht ({llm_modul.modell_fehler[anbieter]})."
-    return True, f"{anbieter} · {ziel}"
-
-
-def browser_status() -> tuple[bool, str]:
-    if not ablauf.browser_verfuegbar():
-        return False, "Der Browser-Baustein fehlt auf dem Server – Online-Formulare gehen dann nicht."
-    from .bewerben import browser
-
-    letzter = browser.letzter_selbsttest()
-    if not letzter:
-        return False, "Noch nicht getestet, ob der Browser auf dem Server startet."
-    if not letzter.get("ok"):
-        return False, str(letzter.get("meldung") or "Der Browser startet nicht.")
-    return True, str(letzter.get("meldung") or "Browser startet.")
-
-
-def einrichtung(profil: Profil) -> list[tuple[bool, bool, str, str, str]]:
-    """(ok, pflicht, Titel, Hinweis, Aktion) je Baustein; Aktion: daten|lebenslauf|mail|ki|browser."""
-    from .ui_einstellungen import mail_status
-
-    p = profil.person
-    ki_ok, ki_text = ki_status(profil)
-    mail_ok, _ = mail_status()
-    browser_ok, browser_text = browser_status()
-    return [
-        (bool(p.name and p.email and p.telefon and p.ort), True, "Deine Kontaktdaten",
-         "Name, E-Mail, Telefon und Ort fehlen noch.", "daten"),
-        (profil.lebenslauf_pfad() is not None, True, "Lebenslauf",
-         "Die Lebenslauf-Datei fehlt (z. B. nach einem Update) – bitte erneut hochladen."
-         if profil.unterlagen.lebenslauf else "Lade deinen Lebenslauf hoch (am besten als PDF).", "lebenslauf"),
-        (mail_ok, False, "E-Mail-Konto", "Verbinde dein Postfach – dann gehen Bewerbungen auch per E-Mail raus "
-         "und Antworten werden erkannt.", "mail"),
-        (ki_ok, False, "KI für Anschreiben", ki_text, "ki"),
-        (browser_ok, False, "Online-Formulare", browser_text, "browser"),
-    ]
-
-
-@st.dialog("Lebenslauf hochladen", icon=":material/description:", on_dismiss=_dialog_zu)
-def _dialog_lebenslauf() -> None:
-    from .ui_einstellungen import lebenslauf_hochladen
-
-    dialog_merken()
-    if lebenslauf_hochladen(lade_profil(), schluessel="dialog_lebenslauf") and st.button("Fertig", type="primary"):
-        st.rerun()
-
-
-@st.dialog("E-Mail-Konto verbinden", icon=":material/mail:", on_dismiss=_dialog_zu)
-def _dialog_mail() -> None:
-    from .ui_einstellungen import mailkonto_verbinden
-
-    dialog_merken()
-    mailkonto_verbinden(lade_profil(), schluessel="dialog_mail", im_dialog=True)
-
-
-@st.dialog("KI verbinden", icon=":material/auto_awesome:", width="medium", on_dismiss=_dialog_zu)
-def _dialog_ki() -> None:
-    from .ui_einstellungen import ki_einrichten
-
-    dialog_merken()
-    ki_einrichten(lade_profil(), im_dialog=True)
-
-
-@st.dialog("Online-Formulare testen", icon=":material/language:", on_dismiss=_dialog_zu)
-def _dialog_browser() -> None:
-    dialog_merken()
-    st.markdown("Für Bewerbungen über Online-Formulare startet auf dem Server ein unsichtbarer Browser. "
-                "Der Test zeigt, ob das klappt.")
-    browser_test_anzeige("dialog_browser_test")
-
-
-_DIALOGE = {"lebenslauf": _dialog_lebenslauf, "mail": _dialog_mail, "ki": _dialog_ki, "browser": _dialog_browser}
-_AKTION_TEXT = {"lebenslauf": "Hochladen", "mail": "Verbinden", "ki": "Einrichten", "browser": "Testen"}
-
-
-def zeige_einrichtung(profil: Profil, praefix: str = "startklar") -> None:
-    """„Startklar: x von 5“ – fehlende Bausteine mit direktem Knopf (öffnet einen Dialog)."""
-    punkte = einrichtung(profil)
-    fertig = sum(1 for ok, *_ in punkte if ok)
-    if fertig == len(punkte):
-        return
-    pflicht_fehlt = any(pflicht and not ok for ok, pflicht, *_ in punkte)
-    with st.container(border=True):
-        st.markdown(f"**:material/rocket_launch: Startklar: {fertig} von {len(punkte)}**")
-        st.progress(fertig / len(punkte))
-        if pflicht_fehlt:
-            st.caption("Ohne die rot markierten Punkte kann ich mich nicht für dich bewerben.")
-        for ok, pflicht, titel, hinweis, aktion in punkte:
-            if ok:
-                continue
-            links, rechts = st.columns([4, 1.4], vertical_alignment="center")
-            icon = ":red[:material/error:]" if pflicht else ":gray[:material/radio_button_unchecked:]"
-            links.markdown(f"{icon} **{titel}**  \n:gray[{hinweis}]")
-            if aktion == "daten":
-                # Den gemerkten Tab direkt setzen: ein URL-Wert gleich dem Standard-Tab wuerde ignoriert
-                if rechts.button("Eintragen", key=f"{praefix}_daten", icon=":material/edit:", width="stretch"):
-                    st.session_state["tab"] = "Über mich"
-                    st.switch_page(SEITE_EINSTELLUNGEN)
-            elif rechts.button(_AKTION_TEXT[aktion], key=f"{praefix}_{aktion}", width="stretch"):
-                _DIALOGE[aktion]()
-
-
-# --------------------------------------------------------------------------- #
-# Stellen-Darstellung
+# Stellen
 # --------------------------------------------------------------------------- #
 
 def job_zeile(job: Job) -> str:
@@ -498,17 +384,6 @@ def _cb_neu_vorbereiten(ref: str) -> None:
         ablauf.zuruecksetzen(db, ref)
         db.setze_vorgang(Vorgang(ref=ref, status="vorbereitung"))
     starte_hintergrund("vorbereiten", ref, "--ausloeser", "knopf", meldung="Wird neu vorbereitet …")
-
-
-def _cb_nochmal(ref: str) -> None:
-    profil = lade_profil()
-    with oeffne_db() as db:
-        try:
-            ablauf.freigeben(db, profil, ref)
-        except ValueError as e:
-            st.session_state[f"nochmal_fehler_{ref}"] = str(e)
-            return
-    starte_hintergrund("senden", "--ausloeser", "ja", meldung="Neuer Versuch läuft …")
 
 
 def _cb_rueckmeldung(ref: str, schluessel: str) -> None:
@@ -699,6 +574,9 @@ def _dialog_bearbeiten(ref: str, praefix: str) -> None:
     elif kanal == "formular":
         st.caption(f"Bewerbungsseite: {v.bewerbungs_url or job.bewerbungs_url or '–'}")
     st.text_area("Anschreiben", value=v.anschreiben or "", key=k("text"), height=380)
+    if kanal == "manuell" and v.anschreiben:
+        with st.expander("Zum Kopieren", icon=":material/content_copy:"):
+            st.code(v.anschreiben, language=None, wrap_lines=True)
     bericht = v.pruefung_daten
     rest = [*bericht.get("maengel", []), *(f"Nicht angesprochen: {m}" for m in bericht.get("fehlende_muss", [])[:3]),
             *bericht.get("hinweise", [])]
@@ -746,9 +624,10 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
             st.caption(":material/check: Passt bei " + ", ".join(score.treffer[:5])
                        + (f" · :material/warning: {', '.join(score.rot[:2])}" if score.rot else ""))
 
-        if v.hinweis:
-            warnung = v.kanal == "manuell" or any(w in v.hinweis.lower() for w in ("fehlgeschlagen", "unvollständig",
-                                                                                   "nicht möglich"))
+        if v.hinweis == ablauf.HINWEIS_VIELLEICHT:
+            st.info(v.hinweis, icon=":material/help:")
+        elif v.hinweis:
+            warnung = v.kanal != "manuell" and any(w in v.hinweis.lower() for w in ("fehlgeschlagen", "unvollständig"))
             (st.warning if warnung else st.caption)(v.hinweis)
         _autopilot_anzeige(v, praefix, autopilot_an)
         _pruefung_anzeige(v)
@@ -773,17 +652,25 @@ def freigabe_karte(db: Speicher, profil: Profil, v: Vorgang, praefix: str = "fk"
                                "deine Änderungen am Text gehen dabei verloren.")
                     st.button("Neu schreiben lassen", key=k("neu"), on_click=_cb_neu_vorbereiten, args=(v.ref,),
                               icon=":material/refresh:", width="stretch")
-                st.button("Habe mich selbst beworben", key=k("selbst"), on_click=_cb_selbst, args=(v.ref,),
-                          icon=":material/task_alt:", width="stretch")
+                    st.button("Habe mich selbst beworben", key=k("selbst"), on_click=_cb_selbst, args=(v.ref,),
+                              icon=":material/task_alt:", width="stretch")
+                elif v.anschreiben_pdf and Path(v.anschreiben_pdf).exists():
+                    st.download_button("Anschreiben als PDF", Path(v.anschreiben_pdf).read_bytes(),
+                                       file_name=Path(v.anschreiben_pdf).name, mime="application/pdf",
+                                       key=k("karte_pdf"), icon=":material/download:", width="stretch",
+                                       on_click="ignore")
             with st.popover("Nein", icon=":material/close:"):
                 st.pills("Warum nicht? (hilft mir beim Lernen)", NEIN_GRUENDE, selection_mode="multi", key=k("grund"))
                 st.checkbox(f"„{job.arbeitgeber}“ nie wieder vorschlagen", key=k("sperren"))
                 st.button("Ablehnen", key=k("nein"), on_click=_cb_nein, args=(v.ref, praefix), type="primary",
                           width="stretch")
             if manuell:
-                if job.bewerbungs_url or job.anzeige_url:
-                    st.link_button("Zur Bewerbung", job.bewerbungs_url or job.anzeige_url, type="primary",
+                # Selbst bewerben: hingehen, bewerben, dann „Ja, erledigt“ (zaehlt fuer Wochenziel und Nachweis)
+                if v.bewerbungs_url or job.bewerbungs_url or job.anzeige_url:
+                    st.link_button("Zur Bewerbung", v.bewerbungs_url or job.bewerbungs_url or job.anzeige_url,
                                    icon=":material/open_in_new:")
+                st.button("Ja, erledigt", key=k("selbst"), type="primary", on_click=_cb_selbst, args=(v.ref,),
+                          icon=":material/task_alt:", help="Du hast dich selbst beworben.")
             else:
                 st.button("Ja, absenden", key=k("ja"), type="primary", on_click=_cb_freigeben, args=(v.ref, praefix),
                           icon=":material/send:")
@@ -869,33 +756,14 @@ def suchbegriffe_karte(vorschlaege: list[dict], praefix: str = "vk") -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Hilfe bei Fehlschlaegen
+# Bewerbungsadresse und Browser-Test
 # --------------------------------------------------------------------------- #
 
 def bewerbungs_email(job: Job, v: Vorgang) -> tuple[str | None, bool]:
-    """(Adresse, sicher): eine Adresse, an die man sich statt des Formulars per E-Mail bewerben kann.
+    """(Adresse, sicher) – siehe `kanal.sichere_bewerbungs_email`."""
+    from .bewerben.kanal import sichere_bewerbungs_email
 
-    `sicher` nur, wenn die Bewerbungsseite sie nennt, die Jobboerse sie als Kontakt fuehrt oder in der
-    Anzeige ein Bewerbungs-Stichwort daneben steht - sonst koennte es z. B. die Vertriebsadresse sein.
-    """
-    from .bewerben.kanal import finde_bewerbungs_email
-
-    for bekannt in (v.probelauf_daten.get("bewerbungs_email"), job.kontakt_email):
-        if bekannt and "@" in bekannt:
-            return bekannt.strip().lower(), True
-    adresse, sicher = finde_bewerbungs_email(job.beschreibung)
-    return (adresse.strip().lower(), sicher) if adresse else (None, False)
-
-
-def _cb_per_email(ref: str, adresse: str) -> None:
-    profil = lade_profil()
-    with oeffne_db() as db:
-        try:
-            ablauf.freigeben(db, profil, ref, kanal="email", empfaenger=adresse)
-        except ValueError as e:
-            st.session_state[f"nochmal_fehler_{ref}"] = str(e)
-            return
-    starte_hintergrund("senden", "--ausloeser", "ja", meldung=f"Bewerbung geht per E-Mail an {adresse} …")
+    return sichere_bewerbungs_email(job, v.probelauf_daten)
 
 
 def _cb_browser_test() -> None:
@@ -918,58 +786,12 @@ def browser_test_anzeige(schluessel: str = "browser_test") -> None:
     st.button("Browser testen", key=schluessel, on_click=_cb_browser_test, icon=":material/play_circle:")
 
 
-def hilfe_karte(db: Speicher, v: Vorgang, praefix: str = "hk") -> None:
-    """Fehlgeschlagene Bewerbung: Ursache zeigen und den einfachsten Ausweg anbieten."""
-    job = db.job(v.ref)
-    if job is None:
-        return
-    with st.container(border=True):
-        st.markdown(f"**{job.titel}**")
-        st.caption(f"{job.arbeitgeber} · {kanal_label(v.kanal)}")
-        st.warning(v.hinweis or "Versand fehlgeschlagen.", icon=":material/warning:")
-        fehler = st.session_state.get(f"nochmal_fehler_{v.ref}")
-        if fehler:
-            st.error(fehler)
-        adresse, sicher = bewerbungs_email(job, v) if v.kanal == "formular" else (None, False)
-        # Vielleicht schon abgeschickt: nichts mit einem Klick erneut senden, erst pruefen lassen
-        unklar = (v.hinweis or "").startswith("Nicht sicher abgeschickt")
-        per_mail = bool(adresse and sicher and mail.smtp_eingerichtet())
-        if adresse and not sicher:
-            st.caption(f"Die Anzeige nennt {adresse} – prüfe, ob das wirklich eine Bewerbungsadresse ist, "
-                       "bevor du dich dort bewirbst.")
-        elif adresse and not per_mail:
-            st.caption(f"Die Anzeige nennt {adresse} – verbinde dein E-Mail-Konto (Einstellungen → Konten), "
-                       "dann geht die Bewerbung auch ohne Formular raus.")
-        if v.kanal == "formular" and v.hinweis and "browser" in v.hinweis.lower():
-            browser_test_anzeige(f"{praefix}_btest_{v.ref}")
-        if v.anschreiben:
-            with st.expander("Anschreiben zum Kopieren", icon=":material/content_copy:"):
-                st.code(v.anschreiben, language=None, wrap_lines=True)
-        with st.container(horizontal=True, horizontal_alignment="right", vertical_alignment="center"):
-            with st.popover("Mehr", icon=":material/more_horiz:"):
-                if v.anschreiben_pdf and Path(v.anschreiben_pdf).exists():
-                    st.download_button("Anschreiben als PDF", Path(v.anschreiben_pdf).read_bytes(),
-                                       file_name=Path(v.anschreiben_pdf).name, mime="application/pdf",
-                                       key=f"{praefix}_pdf_{v.ref}", icon=":material/download:", width="stretch",
-                                       on_click="ignore")
-                st.button("Habe mich selbst beworben", key=f"{praefix}_selbst_{v.ref}", on_click=_cb_selbst,
-                          args=(v.ref,), icon=":material/task_alt:", width="stretch")
-            if job.bewerbungs_url or job.anzeige_url:
-                st.link_button("Selbst bewerben", job.bewerbungs_url or job.anzeige_url,
-                               icon=":material/open_in_new:")
-            st.button("Nochmal versuchen", key=f"{praefix}_nochmal_{v.ref}", on_click=_cb_nochmal, args=(v.ref,),
-                      icon=":material/replay:", type="secondary" if per_mail or unklar else "primary")
-            if per_mail:
-                st.button(f"Per E-Mail an {adresse}", key=f"{praefix}_mail_{v.ref}", on_click=_cb_per_email,
-                          args=(v.ref, adresse), type="secondary" if unklar else "primary", icon=":material/mail:")
-
-
 # --------------------------------------------------------------------------- #
 # Bewerbungen: Rueckmeldung und Nachweis
 # --------------------------------------------------------------------------- #
 
 def beworben_zeile(db: Speicher, v: Vorgang, praefix: str = "bw") -> None:
-    """Eine verschickte Bewerbung mit Rueckmeldung zum Antippen."""
+    """Eine verschickte Bewerbung mit Rueckmeldung zum Antippen; Einladungen hervorgehoben."""
     job = db.job(v.ref)
     if job is None:
         return
@@ -981,10 +803,24 @@ def beworben_zeile(db: Speicher, v: Vorgang, praefix: str = "bw") -> None:
         st.session_state[schluessel] = st.session_state[zuletzt] = db_wert
     with st.container(border=True):
         icon = RUECKMELDUNG_ICON.get(v.rueckmeldung or "", ":material/schedule_send:")
-        st.markdown(f"{icon} **{job.titel}**  \n:gray[{job.arbeitgeber} · {kanal_label(v.kanal)} · "
-                    f"{zeit(v.gesendet_am)}]")
+        if v.rueckmeldung in ("einladung", "zusage"):
+            st.markdown(f":green-badge[{icon} {RUECKMELDUNG_TEXT[v.rueckmeldung]}]")
+        weg = "selbst beworben" if v.status == "selbst_beworben" else kanal_label(v.kanal)
+        st.markdown(f"{icon} **{job.titel}**  \n:gray[{job.arbeitgeber} · {weg} · {zeit(v.gesendet_am)}]")
         st.pills("Rückmeldung", list(RUECKMELDUNG_KURZ), key=schluessel, format_func=RUECKMELDUNG_KURZ.get,
                  on_change=_cb_rueckmeldung, args=(v.ref, schluessel), label_visibility="collapsed")
+
+
+def unterwegs_zeile(db: Speicher, v: Vorgang) -> None:
+    """Bewerbung mit Ja, die gerade (oder sobald es geht) verschickt wird."""
+    job = db.job(v.ref)
+    if job is None:
+        return
+    with st.container(border=True):
+        st.markdown(f":material/schedule_send: **{job.titel}**  \n:gray[{job.arbeitgeber} · {kanal_label(v.kanal)} · "
+                    f"{STATUS_TEXT.get(v.status, v.status)}]")
+        if v.hinweis and v.status == "freigegeben":
+            st.caption(v.hinweis)
 
 
 @st.dialog("Nachweis fürs Amt", icon=":material/description:", width="large", on_dismiss=_dialog_zu)

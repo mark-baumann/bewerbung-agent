@@ -340,3 +340,58 @@ def test_browser_llm_nutzt_geprueftes_modell(monkeypatch):
     _modelle(monkeypatch, OLLAMA_LISTE)
     assert browser._browser_llm("glm-5.3-flash").model == "glm-5.2"
     assert browser._browser_llm("glm-5.3-flash", ausser=("glm-5.2",)).model == "kimi-k3"
+
+
+GATEWAY_LISTE = ["gpt-4o-mini", "glm-5.2", "gpt-oss:20b", "gpt-oss:120b", "kimi-k3"]
+
+
+def test_ersatz_ist_das_120b_modell_nie_gpt_4o_mini(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    _modelle(monkeypatch, GATEWAY_LISTE)
+    # Auch wenn gpt-4o-mini vorne steht und die Familie glm passen wuerde: das grosse Modell gewinnt
+    assert llm.pruefe_modell("ollama", "glm-5.3-flash")[0] == "gpt-oss:120b"
+    assert llm.pruefe_modell("ollama", "glm-5.3-flash", ausser=("gpt-oss:120b",))[0] == "glm-5.2"
+
+
+def test_ersatz_nimmt_zuerst_ollama_model_aus_der_umgebung(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    monkeypatch.setenv("OLLAMA_MODEL", "kimi-k3")
+    _modelle(monkeypatch, GATEWAY_LISTE)
+    assert llm.waehle_ersatz("ollama", "claude-opus-5", GATEWAY_LISTE) == "kimi-k3"
+
+
+def test_ersatz_sonst_das_groesste_modell_und_nie_fremde_bezahlmodelle(monkeypatch):
+    liste = ["gpt-4o-mini", "claude-sonnet-5", "mistral-small:24b", "phi4:14b", "nemotron-70b"]
+    assert llm.waehle_ersatz("ollama", "gibts-nicht", liste) == "nemotron-70b"
+    assert llm.waehle_ersatz("ollama", "gibts-nicht", ["gpt-4o-mini", "eigenes-modell"]) == "eigenes-modell"
+
+
+def test_modellname_wird_tolerant_verglichen(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    _modelle(monkeypatch, ["openai/gpt-oss-120b", "glm-5.2"])
+    assert llm.pruefe_modell("ollama", "gpt-oss:120b") == ("openai/gpt-oss-120b", None)
+
+
+def test_ollama_vor_openai_wenn_beides_eingerichtet(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert llm.provider() == "ollama"
+
+
+def test_ersatz_wird_im_profil_festgeschrieben(tmp_path, monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    _modelle(monkeypatch, GATEWAY_LISTE)
+    profil = _profil(tmp_path)
+    profil.bewertung.modell = "glm-5.3-flash"
+    assert llm.modell_festschreiben(profil, tmp_path / "profil.yaml") == "gpt-oss:120b"
+    assert lade_profil(tmp_path / "profil.yaml").bewertung.modell == "gpt-oss:120b"
+    assert "ollama" not in llm.modell_hinweise  # keine Warnung mehr
+    assert llm.modell_festschreiben(profil, tmp_path / "profil.yaml") is None  # nur einmal
+
+
+def test_festschreiben_ohne_modellliste_aendert_nichts(tmp_path, monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    profil = _profil(tmp_path)
+    profil.bewertung.modell = "glm-5.3-flash"
+    assert llm.modell_festschreiben(profil, tmp_path / "profil.yaml") is None
+    assert lade_profil(tmp_path / "profil.yaml").bewertung.modell != "gpt-oss:120b"

@@ -1,11 +1,9 @@
-"""Einstellungen: Über mich, Suche, Automatik, Konten."""
-
-from pathlib import Path
+"""Einstellungen: Über mich, Suche, Automatik, Konten (Lebenslauf: eigene Seite)."""
 
 import streamlit as st
 
-from bewerbungsagent import dokumente, ui, ui_einstellungen, zeitplan
-from bewerbungsagent.config import MODI, ermittle_profil_pfad, lade_profil, speichere_profil, unterlagen_dir
+from bewerbungsagent import ui, ui_einstellungen, zeitplan
+from bewerbungsagent.config import MODI, ermittle_profil_pfad, lade_profil, speichere_profil
 
 st.title("Einstellungen")
 
@@ -36,7 +34,7 @@ tab_ich, tab_suche, tab_automatik, tab_konten = st.tabs(
 )
 
 # --------------------------------------------------------------------------- #
-# Über mich: Kontakt, Formular-Angaben, Unterlagen
+# Über mich: Kontakt, Formular-Angaben, Nachweis (Lebenslauf & Unterlagen: eigene Seite)
 # --------------------------------------------------------------------------- #
 
 with tab_ich:
@@ -58,31 +56,24 @@ with tab_ich:
             land = e2.text_input("Land", value=p.land)
             linkedin = e1.text_input("LinkedIn", value=p.linkedin)
             github = e2.text_input("GitHub / Website", value=p.github or p.website)
-        kurzprofil = st.text_area(
-            "Kurz über dich – je konkreter, desto besser passen Bewertung und Anschreiben",
-            value=profil.kurzprofil, height=110,
-            placeholder="z. B. 8 Jahre Buchhaltung im Mittelstand, DATEV und SAP, sucht Teilzeit in Köln",
-        )
 
         st.markdown("##### :material/edit_note: Angaben für Online-Formulare")
         st.caption("Formulare fragen das oft als Pflichtfeld ab. Fehlt etwas, frage ich auf der Karte nach.")
         f1, f2 = st.columns(2)
         anreden = ["", "Herr", "Frau", "divers"]
         anrede = f1.selectbox("Anrede", anreden, index=anreden.index(a.anrede) if a.anrede in anreden else 0)
-        gehaltsvorstellung = f2.text_input("Gehaltsvorstellung", value=a.gehaltsvorstellung,
-                                           placeholder="z. B. 45.000 EUR brutto/Jahr")
-        verfuegbar_ab = f1.text_input("Verfügbar ab", value=a.verfuegbar_ab)
-        kuendigungsfrist = f2.text_input("Kündigungsfrist", value=a.kuendigungsfrist)
+        verfuegbar_ab = f2.text_input("Verfügbar ab", value=a.verfuegbar_ab)
+        kuendigungsfrist = f1.text_input("Kündigungsfrist", value=a.kuendigungsfrist)
+        abschluss = f2.text_input("Höchster Abschluss", value=a.abschluss, placeholder="z. B. Bürokauffrau")
         with st.expander("Weitere Formular-Angaben"):
             g1, g2 = st.columns(2)
             titel = g1.text_input("Akademischer Titel", value=a.titel, placeholder="z. B. Dr.")
-            abschluss = g2.text_input("Höchster Abschluss", value=a.abschluss, placeholder="z. B. Bürokauffrau")
-            arbeitserlaubnis = g1.text_input("Arbeitserlaubnis", value=a.arbeitserlaubnis)
-            nationalitaet = g2.text_input("Staatsangehörigkeit", value=a.nationalitaet)
-            fuehrerschein = g1.text_input("Führerschein", value=a.fuehrerschein)
-            sprachen = g2.text_input("Sprachkenntnisse", value=a.sprachen)
-            erfahrung = g1.text_input("Berufserfahrung (Jahre)", value=a.berufserfahrung_jahre)
-            umzug = g2.text_input("Umzugsbereitschaft", value=a.umzugsbereitschaft, placeholder="z. B. nein")
+            arbeitserlaubnis = g2.text_input("Arbeitserlaubnis", value=a.arbeitserlaubnis)
+            nationalitaet = g1.text_input("Staatsangehörigkeit", value=a.nationalitaet)
+            fuehrerschein = g2.text_input("Führerschein", value=a.fuehrerschein)
+            sprachen = g1.text_input("Sprachkenntnisse", value=a.sprachen)
+            erfahrung = g2.text_input("Berufserfahrung (Jahre)", value=a.berufserfahrung_jahre)
+            umzug = g1.text_input("Umzugsbereitschaft", value=a.umzugsbereitschaft, placeholder="z. B. nein")
             weitere_text = st.text_area(
                 "Weitere Antworten (eine pro Zeile: Frage = Antwort)",
                 value="\n".join(f"{k} = {v}" for k, v in a.weitere.items()), height=90,
@@ -92,9 +83,8 @@ with tab_ich:
         if st.form_submit_button("Speichern", type="primary", icon=":material/save:"):
             p.vorname, p.nachname, p.email, p.telefon, p.geburtsdatum = vorname, nachname, email, telefon, geburtsdatum
             p.strasse, p.plz, p.ort, p.land, p.linkedin, p.github = strasse, plz, ort, land, linkedin, github
-            profil.kurzprofil = kurzprofil
             a.anrede, a.verfuegbar_ab, a.kuendigungsfrist = anrede, verfuegbar_ab, kuendigungsfrist
-            a.gehaltsvorstellung, a.arbeitserlaubnis = gehaltsvorstellung, arbeitserlaubnis
+            a.arbeitserlaubnis = arbeitserlaubnis
             a.fuehrerschein, a.sprachen = fuehrerschein, sprachen
             a.titel, a.abschluss, a.nationalitaet = titel, abschluss, nationalitaet
             a.berufserfahrung_jahre, a.umzugsbereitschaft = erfahrung, umzug
@@ -103,44 +93,12 @@ with tab_ich:
             speichern("Gespeichert.")
 
     with st.container(border=True):
-        st.markdown("##### :material/description: Unterlagen")
-        st.caption("Gehen mit jeder Bewerbung mit. Am besten als PDF.")
-        ui_einstellungen.lebenslauf_hochladen(profil)
-        zeugnisse_upload = st.file_uploader(
-            "Zeugnisse & weitere Unterlagen", type=["pdf", "docx", "txt", "md", "png", "jpg", "jpeg"],
-            accept_multiple_files=True, key="zeugnisse_upload",
-        )
-        if zeugnisse_upload:
-            ordner = unterlagen_dir()
-            ordner.mkdir(parents=True, exist_ok=True)
-            neue = []
-            for datei in zeugnisse_upload:
-                ziel = ordner / datei.name
-                ziel.write_bytes(datei.getbuffer())
-                neue.append(str(ziel))
-            if profil.unterlagen.zeugnisse != neue:
-                profil.unterlagen.zeugnisse = neue
-                speichern(f"{len(neue)} Datei(en) gespeichert.")
-        for pfad in profil.unterlagen.zeugnisse:
-            datei = Path(pfad)
-            if datei.exists():
-                st.caption(f":material/attach_file: {datei.name} ({datei.stat().st_size / 1024:.0f} KB)")
-            else:
-                st.caption(f":orange[:material/warning:] {datei.name} fehlt – bitte erneut hochladen")
-        text = dokumente.lebenslauf_text(profil)
-        if text:
-            with st.expander(f"Was ich aus deinem Lebenslauf lese ({len(text)} Zeichen)"):
-                st.text(text[:5000])
-        elif profil.unterlagen.lebenslauf:
-            st.caption("Aus dem Lebenslauf ließ sich kein Text lesen (z. B. eingescanntes PDF). "
-                       "Dann nutze ich die Angaben „Kurz über dich“.")
-
-    with st.form("anschreiben_stil"):
-        st.markdown("##### :material/stylus: Wie deine Anschreiben klingen sollen")
-        stil = st.text_area("Stil", value=profil.unterlagen.anschreiben_stil, height=90, label_visibility="collapsed")
-        if st.form_submit_button("Speichern", icon=":material/save:"):
-            profil.unterlagen.anschreiben_stil = stil
-            speichern("Stil gespeichert.")
+        st.markdown("##### :material/description: Nachweis fürs Amt")
+        st.caption("Liste deiner Bewerbungen für Agentur für Arbeit oder Jobcenter – als PDF oder Excel.")
+        with st.container(horizontal=True):
+            if st.button("Nachweis erstellen", icon=":material/download:", key="einstellungen_nachweis"):
+                ui.nachweis_dialog()
+            st.page_link(ui.SEITE_LEBENSLAUF, label="Lebenslauf & Unterlagen", icon=":material/folder_open:")
 
 # --------------------------------------------------------------------------- #
 # Suche: Begriffe, Ort, Bewertung, Jobbörsen, Wunsch-Arbeitgeber
@@ -216,6 +174,10 @@ with tab_automatik:
             st.error(fehler)
         elif modus != "aus":
             st.caption(f"Nächstes Mal: **{zeitplan.beschreibe(zeitplan.naechster_termin(ausdruck))}**")
+        with ui.oeffne_db() as db:
+            letzte = db.letzte_laeufe("automatik", limit=1)
+        if letzte:
+            st.caption(f"Zuletzt: {ui.lauf_zusammenfassung(letzte[0])}")
         c1, c2, c3 = st.columns(3)
         max_pro_lauf = c1.number_input("Pro Lauf vorbereiten", 1, 20, int(au.max_pro_lauf),
                                        help="So viele der besten neuen Stellen lege ich dir pro Lauf vor.")

@@ -157,8 +157,21 @@ def _dateiname(ref: str) -> str:
 # Lebenslauf
 # --------------------------------------------------------------------------- #
 
+def _docx_text(pfad: Path) -> str:
+    """Text aus einer Word-Datei (ohne Zusatzpaket: DOCX ist ein ZIP mit XML)."""
+    import re
+    import zipfile
+    from html import unescape
+
+    with zipfile.ZipFile(pfad) as archiv:
+        xml = archiv.read("word/document.xml").decode("utf-8", errors="replace")
+    xml = re.sub(r"</w:p>|<w:br[^>]*/>", "\n", xml)
+    xml = re.sub(r"<w:tab[^>]*/>", " ", xml)
+    return unescape(re.sub(r"<[^>]+>", "", xml))
+
+
 def lebenslauf_text(profil: Profil, cache_dir: str | Path | None = None) -> str:
-    """Text des hinterlegten Lebenslaufs (PDF/TXT/MD), gecacht nach Aenderungszeit."""
+    """Text des hinterlegten Lebenslaufs (PDF/DOCX/TXT/MD), gecacht nach Aenderungszeit."""
     pfad = profil.lebenslauf_pfad()
     if not pfad:
         return ""
@@ -177,6 +190,8 @@ def lebenslauf_text(profil: Profil, cache_dir: str | Path | None = None) -> str:
             from pypdf import PdfReader
 
             text = "\n".join((seite.extract_text() or "") for seite in PdfReader(str(pfad)).pages)
+        elif pfad.suffix.lower() == ".docx":
+            text = _docx_text(pfad)
         elif pfad.suffix.lower() in (".txt", ".md"):
             text = pfad.read_text(encoding="utf-8", errors="replace")
     except Exception as e:  # kaputtes PDF darf nichts blockieren
