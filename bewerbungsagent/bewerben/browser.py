@@ -250,6 +250,29 @@ def _browser_llm(modell: str, ausser: tuple[str, ...] = ()):
 
 
 _MODELL_FEHLT = re.compile(r"model_not_found|model .{0,80}(does not exist|not found)", re.I)
+# Die KI selbst ist nicht nutzbar (Konto ohne Guthaben, Schluessel abgelehnt, ueberlastet)
+_KI_FEHLER = re.compile(
+    r"insufficient_quota|credit_balance_exhausted|no credits|exceeded your current quota|quota|"
+    r"rate.?limit|too many requests|error code: 429|\b429\b|invalid_api_key|incorrect api key|"
+    r"authentication|unauthorized|error code: 40[13]\b",
+    re.I,
+)
+
+
+def ki_fehler_text(fehler: str) -> str:
+    """Verstaendliche Ursache, wenn die KI nicht geantwortet hat."""
+    f = fehler.lower()
+    if any(w in f for w in ("insufficient_quota", "credit", "quota")):
+        grund = "das KI-Konto hat kein Guthaben mehr"
+    elif any(w in f for w in ("invalid_api_key", "incorrect api key", "unauthorized", "authentication", "401")):
+        grund = "der KI-Schlüssel wird abgelehnt"
+    elif any(w in f for w in ("rate", "429", "too many")):
+        grund = "die KI ist gerade überlastet"
+    elif _MODELL_FEHLT.search(fehler):
+        grund = "das KI-Modell gibt es bei deinem Zugang nicht"
+    else:
+        grund = "die KI hat nicht geantwortet"
+    return f"Nichts ausgefüllt oder abgeschickt – {grund}. Ich versuche es automatisch wieder."
 
 
 def _ergebnis_modell():
@@ -492,6 +515,7 @@ class BewerbungsLauf:
     schritte: int
     url: str | None
     rohdaten: dict[str, Any] | None = None
+    gearbeitet: bool | None = None  # hat die KI auf der Seite etwas getan? (None = unbekannt)
 
     def als_application(self, anschreiben: str | None) -> Application:
         if self.abgeschickt:
@@ -640,7 +664,7 @@ class BewerbungsBrowser:
         if getattr(history, "structured_output", None) is not None or _hat_gearbeitet(history):
             return False
         fehler = [f for f in history.errors() if f]
-        if not fehler or not _MODELL_FEHLT.search(fehler[-1]):
+        if not fehler or not (_MODELL_FEHLT.search(fehler[-1]) or _KI_FEHLER.search(fehler[-1])):
             return False
         genutzt = getattr(getattr(agent, "llm", None), "model", None)
         anbieter = llm_modul.provider(self.modell)
@@ -650,7 +674,8 @@ class BewerbungsBrowser:
         ersatz, _ = llm_modul.pruefe_modell(anbieter, self.modell, ausser=(genutzt,))
         if ersatz == genutzt:
             return False
-        log.warning("Browser-Agent: Modell %s nicht verfuegbar - neuer Versuch mit %s.", genutzt, ersatz)
+        log.warning("Browser-Agent: Modell %s nicht nutzbar (%s) - neuer Versuch mit %s.", genutzt,
+                    fehler[-1][:120], ersatz)
         self._modell_ausser = (genutzt,)
         return True
 
@@ -682,7 +707,7 @@ class BewerbungsBrowser:
                 dry_run=dry_run,
                 abgeschickt=False,
                 zusammenfassung=(
-                    "Kein Lebenslauf hinterlegt – bitte unter Einstellungen → Über mich hochladen. "
+                    "Kein Lebenslauf hinterlegt – bitte unter „Lebenslauf“ hochladen. "
                     "Bewerbung nicht gestartet."
                 ),
                 schritte=0,
@@ -751,6 +776,10 @@ class BewerbungsBrowser:
                     # Der Browser kam nie hoch - nichts wurde ausgefuellt oder abgeschickt
                     zusammenfassung = startfehler_text(fehler[-1])
                     rohdaten = {**(rohdaten or {}), "browser_startfehler": True}
+                elif strukturiert is None and not _hat_gearbeitet(history):
+                    # Die KI hat nie geantwortet (z. B. Konto ohne Guthaben): auf der Seite ist nichts passiert
+                    zusammenfassung = ki_fehler_text(fehler[-1])
+                    rohdaten = {**(rohdaten or {}), "ki_fehler": True, "fehler": fehler[-1][:500]}
                 else:
                     zusammenfassung += f"\nFehler: {fehler[-1]}"
 
@@ -762,6 +791,7 @@ class BewerbungsBrowser:
             schritte=history.number_of_steps(),
             url=letzte_url,
             rohdaten=rohdaten,
+            gearbeitet=strukturiert is not None or _hat_gearbeitet(history),
         )
 
 

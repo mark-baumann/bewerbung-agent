@@ -116,8 +116,8 @@ def test_fehler_vor_der_seite_ist_nicht_nicht_sicher(umgebung):
     profil, db, _ = umgebung
     _freigegeben(db, profil)
     ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: Browser(schritte=0, text="Seite nicht erreichbar"))
-    v = db.vorgang("1")
-    assert v.status == "fehlgeschlagen" and not v.hinweis.startswith("Nicht sicher")
+    v = db.vorgang("1")  # nichts getan: als Karte „Selbst bewerben“, ohne Frage nach einer Bestaetigung
+    assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_SELBST)
 
 
 def test_fehler_nach_arbeit_auf_der_seite_warnt(umgebung):
@@ -125,7 +125,7 @@ def test_fehler_nach_arbeit_auf_der_seite_warnt(umgebung):
     _freigegeben(db, profil)
     ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: Browser(schritte=12, text="Captcha"))
     v = db.vorgang("1")
-    assert v.status == "fehlgeschlagen" and v.hinweis.startswith("Nicht sicher abgeschickt")
+    assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT)
 
 
 def test_fehlender_lebenslauf_stellt_zurueck(umgebung):
@@ -371,10 +371,12 @@ def test_ist_startfehler_ohne_fehlalarm():
 def test_timeout_mitten_im_formular_wird_nicht_erneut_gesendet(umgebung, monkeypatch):
     profil, db, _ = umgebung
     _freigegeben(db, profil)
-    b = _echter_browser(monkeypatch, profil, Verlauf(12, [None, NAV_TIMEOUT] + [None] * 10))
+    verlauf = Verlauf(12, [None, NAV_TIMEOUT] + [None] * 10)
+    verlauf.antworten = ["klick"] * 11  # die KI hat auf der Seite gearbeitet
+    b = _echter_browser(monkeypatch, profil, verlauf)
     ergebnis = ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b)
     v = db.vorgang("1")
-    assert v.status == "fehlgeschlagen" and v.hinweis.startswith("Nicht sicher abgeschickt")
+    assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT)
     assert ergebnis["zurueckgestellt"] == 0 and b.aufrufe == 1
 
 
@@ -407,7 +409,8 @@ def test_startfehler_markierung_nach_vielen_schritten_zaehlt_nicht(umgebung):
     _freigegeben(db, profil)
     b = Browser(schritte=12, rohdaten={"browser_startfehler": True}, text="Der Browser startet zu langsam.")
     ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b)
-    assert db.vorgang("1").status == "fehlgeschlagen"
+    v = db.vorgang("1")  # nach 12 Schritten nie einfach erneut senden
+    assert (v.status, v.hinweis) == ("wartet", ablauf.HINWEIS_VIELLEICHT)
 
 
 def test_probelauf_versehentlich_abgeschickt_geht_vor(umgebung):
@@ -442,3 +445,83 @@ def test_modell_ersatz_startet_nach_getaner_arbeit_nicht_neu(umgebung, monkeypat
 def _mit_modell(agent):
     agent.llm = __import__("types").SimpleNamespace(model="gpt-x")
     return agent
+
+
+# --------------------------------------------------------------------------- #
+# KI-Ausfall (Konto ohne Guthaben) ist kein Bewerbungsfehler
+# --------------------------------------------------------------------------- #
+
+QUOTA = ("Error code: 429 - {'error': {'message': 'You have no credits remaining.', 'type': 'insufficient_quota', "
+         "'param': None, 'code': 'credit_balance_exhausted'}}")
+
+
+def test_ki_ohne_guthaben_ist_nichts_passiert(umgebung, monkeypatch):
+    import asyncio
+
+    profil, db, _ = umgebung
+    b = _echter_browser(monkeypatch, profil, Verlauf(3, [QUOTA] * 3))
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert lauf.rohdaten["ki_fehler"] and lauf.gearbeitet is False and not lauf.abgeschickt
+    assert "kein Guthaben" in lauf.zusammenfassung and "Nicht sicher" not in lauf.zusammenfassung
+
+    _freigegeben(db, profil)
+    b = _echter_browser(monkeypatch, profil, Verlauf(3, [QUOTA] * 3))
+    ergebnis = ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b)
+    v = db.vorgang("1")
+    assert v.status == "freigegeben" and ergebnis["zurueckgestellt"] == 1 and "kein Guthaben" in v.hinweis
+
+
+def _agent_mit_modell(monkeypatch, profil, *laeufe):
+    from types import SimpleNamespace
+
+    b = _echter_browser(monkeypatch, profil, *laeufe)
+    folge, modelle = iter(laeufe), []
+
+    def baue_agent(*a, **k):
+        llm = browser._browser_llm(b.modell, b._modell_ausser)
+        modelle.append(llm.model)
+
+        class Agent:
+            async def run(self, max_steps):
+                b.aufrufe += 1
+                return next(folge)
+
+        agent = Agent()
+        agent.llm = SimpleNamespace(model=llm.model)
+        return agent
+
+    monkeypatch.setattr(b, "baue_agent", baue_agent)
+    return b, modelle
+
+
+def test_ki_fehler_wechselt_einmal_das_modell(umgebung, monkeypatch):
+    import asyncio
+
+    from bewerbungsagent.scoring import llm
+
+    profil, _, _ = umgebung
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    monkeypatch.setattr(llm, "_lade_modelle", lambda anbieter, transport=None: ["gpt-oss:120b", "glm-5.2"])
+    profil.bewertung.modell = "gpt-oss:120b"
+    gut = Verlauf(6, [None] * 6)
+    gut.antworten = ["klick"] * 6
+    b, modelle = _agent_mit_modell(monkeypatch, profil, Verlauf(2, [QUOTA, QUOTA]), gut)
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert modelle == ["gpt-oss:120b", "glm-5.2"] and b.aufrufe == 2
+    assert lauf.gearbeitet and not (lauf.rohdaten or {}).get("ki_fehler")
+
+
+def test_ki_fehler_nach_arbeit_startet_nie_neu(umgebung, monkeypatch):
+    import asyncio
+
+    from bewerbungsagent.scoring import llm
+
+    profil, _, _ = umgebung
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    monkeypatch.setattr(llm, "_lade_modelle", lambda anbieter, transport=None: ["gpt-oss:120b", "glm-5.2"])
+    profil.bewertung.modell = "gpt-oss:120b"
+    halb = Verlauf(5, [None] * 4 + [QUOTA])
+    halb.antworten = ["klick"] * 4
+    b, modelle = _agent_mit_modell(monkeypatch, profil, halb)
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert b.aufrufe == 1 and lauf.gearbeitet and not (lauf.rohdaten or {}).get("ki_fehler")

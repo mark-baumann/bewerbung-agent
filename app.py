@@ -1,4 +1,4 @@
-"""Einstieg der Web-UI: Heute (Entscheidungen), Suchen und Einstellungen."""
+"""Einstieg der Web-UI: Heute (Ja/Nein), Suchen, Lebenslauf und Einstellungen."""
 
 import sys
 from pathlib import Path
@@ -29,14 +29,30 @@ def _unterlagen_einmal_sichern() -> None:
 
 _unterlagen_einmal_sichern()
 
+
+@st.cache_resource
+def _ki_modell_einmal_festschreiben() -> None:
+    """Gibt es das Profil-Modell beim KI-Zugang nicht, den Ersatz (z. B. gpt-oss:120b) fest ins Profil schreiben."""
+    from bewerbungsagent.config import lade_profil
+    from bewerbungsagent.scoring import llm
+
+    try:
+        llm.modell_festschreiben(lade_profil(pruefen=False))
+    except Exception:
+        pass
+
+
+_ki_modell_einmal_festschreiben()
+
 st.set_page_config(page_title="Bewerbungsagent", page_icon=":material/work:", layout="centered")
 
 from bewerbungsagent import ui  # noqa: E402
 
-# Eigene Leiste oben statt Seitenleiste: am Handy immer sichtbar, nur drei Ziele.
+# Eigene Leiste oben statt Seitenleiste: am Handy immer sichtbar, nur vier Ziele.
 seiten = st.navigation([
     st.Page(ui.SEITE_HEUTE, title="Heute", icon=":material/today:", default=True),
     st.Page(ui.SEITE_SUCHEN, title="Suchen", icon=":material/search:", url_path="suchen"),
+    st.Page(ui.SEITE_LEBENSLAUF, title="Lebenslauf", icon=":material/description:", url_path="lebenslauf"),
     st.Page(ui.SEITE_EINSTELLUNGEN, title="Einstellungen", icon=":material/settings:", url_path="einstellungen"),
 ], position="hidden")
 ui.neuer_seitenlauf()

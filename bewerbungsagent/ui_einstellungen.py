@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import streamlit as st
 
@@ -111,7 +111,11 @@ def _ki_modell(profil: Profil, speichern: Callable[[str], None], *, im_dialog: b
     ziel, hinweis = llm_modul.pruefe_modell(anbieter, profil.bewertung.modell)
     st.markdown(f"**Verbunden mit {anbieter}** · Modell `{ziel}`")
     if hinweis:
-        st.warning(hinweis)
+        st.caption(f":material/info: {hinweis}")
+    from .ablauf import ki_pausiert
+
+    if pause := ki_pausiert():
+        st.caption(f":orange[:material/warning:] Zuletzt kam keine Antwort von der KI: {pause}")
     if not modelle:
         st.warning(llm_modul.modell_fehler.get(anbieter) or "Der KI-Server hat keine Modellliste geliefert.")
         with st.form("ki_modell_frei"):
@@ -227,16 +231,30 @@ def ki_einrichten(profil: Profil, *, im_dialog: bool = False) -> None:
     _ki_modell(profil, _speichern_fuer(profil), im_dialog=im_dialog)
 
 
+LEBENSLAUF_TYPEN = ["pdf", "docx", "txt", "md"]
+
+
+def lebenslauf_speichern(profil: Profil, upload: Any) -> tuple[Path, bool]:
+    """Hochgeladene Datei dauerhaft in daten/unterlagen/ ablegen und im Profil eintragen; (Ziel, neu?)."""
+    ziel = unterlagen_dir() / Path(upload.name).name
+    daten = upload.getvalue()
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    neu = not ziel.exists() or ziel.read_bytes() != daten
+    if neu:
+        ziel.write_bytes(daten)
+    if profil.unterlagen.lebenslauf != str(ziel):
+        profil.unterlagen.lebenslauf = str(ziel)
+        speichere_profil(profil, ermittle_profil_pfad())
+        neu = True
+    return ziel, neu
+
+
 def lebenslauf_hochladen(profil: Profil, *, schluessel: str = "lebenslauf_upload") -> bool:
     """Upload in den dauerhaften Datenordner; True, wenn danach ein Lebenslauf vorliegt."""
-    upload = st.file_uploader("Lebenslauf (am besten als PDF)", type=["pdf", "docx", "txt", "md"], key=schluessel)
+    upload = st.file_uploader("Lebenslauf (am besten als PDF)", type=LEBENSLAUF_TYPEN, key=schluessel)
     if upload is not None:
-        ziel = unterlagen_dir() / upload.name
-        ziel.parent.mkdir(parents=True, exist_ok=True)
-        ziel.write_bytes(upload.getbuffer())
-        if profil.unterlagen.lebenslauf != str(ziel):
-            profil.unterlagen.lebenslauf = str(ziel)
-            speichere_profil(profil, ermittle_profil_pfad())
+        ziel, neu = lebenslauf_speichern(profil, upload)
+        if neu:
             st.toast(f"Lebenslauf gespeichert: {ziel.name}", icon=":material/description:")
     datei = profil.lebenslauf_pfad()
     if datei is not None:

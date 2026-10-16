@@ -118,8 +118,9 @@ ghcr.io/mark-baumann/bewerbung-agent:latest
 ## 6. Sicherheitsnetze
 
 - **Freigabe:** Automatisch vorbereitete Bewerbungen gehen erst nach deinem
-  „Ja“ (Cockpit oder `freigeben`) raus; fehlgeschlagene Sendungen werden nie
-  automatisch wiederholt; `max_pro_tag` begrenzt die Sendungen pro Tag.
+  „Ja“ (Heute oder `freigeben`) raus; war der Agent schon im Formular, wird nie
+  automatisch wiederholt (die Karte fragt nach einer Bestätigung); `max_pro_tag` begrenzt
+  die Sendungen pro Tag.
 - **Probelauf-Standard:** `bewerben` schickt ohne `--absenden` nichts ab.
 - **Domain-Schranke:** Der Browser-Agent ist auf die Ziel-Domain, die
   Arbeitsagentur und gängige Bewerbermanagement-Systeme beschränkt

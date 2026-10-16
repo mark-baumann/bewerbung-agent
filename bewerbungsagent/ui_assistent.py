@@ -1,6 +1,7 @@
 """Erststart-Assistent: in fuenf kurzen Schritten startklar.
 
-Wer bist du → Was & wo → Lebenslauf → E-Mail-Konto → Los geht's. Das Profil
+Wer bist du → Lebenslauf → Was & wo → E-Mail-Konto → Los geht's. Aus dem Lebenslauf
+lese ich Jobtitel, Ort und Faehigkeiten, so ist „Was & wo“ schon vorbelegt. Das Profil
 entsteht leer (kein Beispielprofil) und wird nach jedem Schritt gespeichert;
 die Automatik startet erst, wenn der letzte Schritt bestaetigt ist.
 """
@@ -14,7 +15,7 @@ import streamlit as st
 
 from .config import Profil, Suche, daten_dir, ermittle_profil_pfad, lade_profil, speichere_profil
 
-SCHRITTE = ["Wer bist du?", "Was suchst du?", "Lebenslauf", "E-Mail-Konto", "Los geht's"]
+SCHRITTE = ["Wer bist du?", "Lebenslauf", "Was suchst du?", "E-Mail-Konto", "Los geht's"]
 SCHLUESSEL = "assistent"
 
 
@@ -112,7 +113,9 @@ def _schritt_person() -> None:
 def _schritt_suche() -> None:
     profil = _profil()
     s = profil.suche
-    st.markdown("Nenne ein paar Jobtitel – je mehr, desto mehr Treffer. Ich finde später selbst ähnliche dazu.")
+    st.markdown("Das habe ich aus deinem Lebenslauf gelesen – passe es gern an. Je mehr Jobtitel, desto mehr "
+                "Treffer; ähnliche finde ich später selbst dazu." if s.was else
+                "Nenne ein paar Jobtitel – je mehr, desto mehr Treffer. Ich finde später selbst ähnliche dazu.")
     with st.form("assistent_suche", border=False):
         was = st.text_area("Jobtitel (einer pro Zeile)", value="\n".join(s.was), height=120, key="assistent_was",
                            placeholder="z. B.\nSachbearbeiter Buchhaltung\nBuchhalter")
@@ -125,7 +128,7 @@ def _schritt_suche() -> None:
             zurueck = st.form_submit_button("Zurück", icon=":material/arrow_back:")
             los = st.form_submit_button("Weiter", type="primary", icon=":material/arrow_forward:")
     if zurueck:
-        _weiter(1)
+        _weiter(2)
         st.rerun()
     if los:
         begriffe = [z.strip() for z in was.splitlines() if z.strip()]
@@ -134,19 +137,28 @@ def _schritt_suche() -> None:
             return
         s.was, s.wo, s.umkreis, s.remote = begriffe, wo.strip(), int(umkreis), bool(remote)
         _speichern(profil)
-        _weiter(3)
+        _weiter(4)
         st.rerun()
 
 
 def _schritt_lebenslauf() -> None:
+    from . import lebenslauf
     from .ui_einstellungen import lebenslauf_hochladen
 
-    st.markdown("Dein Lebenslauf geht mit jeder Bewerbung mit. Außerdem lese ich daraus, was du kannst – "
-                "so schreibe ich keine Aussagen ins Anschreiben, die nicht stimmen.")
+    st.markdown("Dein Lebenslauf geht mit jeder Bewerbung mit. Ich lese daraus, wonach ich suchen soll und was du "
+                "kannst – so schreibe ich keine Aussagen ins Anschreiben, die nicht stimmen.")
     vorhanden = lebenslauf_hochladen(_profil(), schluessel="assistent_lebenslauf")
+    if vorhanden:
+        profil = _profil()
+        with st.spinner("Ich lese deinen Lebenslauf …"):
+            lebenslauf.aktualisieren(profil, ermittle_profil_pfad())
+        if profil.suche.was:
+            st.markdown(f"Ich suche nach **{' · '.join(profil.suche.was)}**"
+                        + (f" in **{profil.suche.wo}**" if profil.suche.wo else "") + " – im nächsten Schritt "
+                        "kannst du das anpassen.")
     with st.container(horizontal=True):
-        st.button("Zurück", on_click=_weiter, args=(2,), icon=":material/arrow_back:", key="assistent_z3")
-        st.button("Weiter" if vorhanden else "Später hochladen", on_click=_weiter, args=(4,),
+        st.button("Zurück", on_click=_weiter, args=(1,), icon=":material/arrow_back:", key="assistent_z3")
+        st.button("Weiter" if vorhanden else "Später hochladen", on_click=_weiter, args=(3,),
                   type="primary" if vorhanden else "secondary", icon=":material/arrow_forward:", key="assistent_w3")
 
 
@@ -200,7 +212,7 @@ def zeige() -> None:
     st.progress(schritt / len(SCHRITTE), text=f"Schritt {schritt} von {len(SCHRITTE)}: {SCHRITTE[schritt - 1]}")
     with st.container(border=True):
         st.subheader(SCHRITTE[schritt - 1])
-        [_schritt_person, _schritt_suche, _schritt_lebenslauf, _schritt_mail, _schritt_los][schritt - 1]()
-    if schritt > 2:  # Jobtitel stehen: man kann auch ohne Assistent weitermachen
+        [_schritt_person, _schritt_lebenslauf, _schritt_suche, _schritt_mail, _schritt_los][schritt - 1]()
+    if schritt > 3:  # Jobtitel stehen: man kann auch ohne Assistent weitermachen
         st.button("Assistent beenden – den Rest stelle ich unter Einstellungen ein", type="tertiary",
                   key="assistent_beenden", on_click=_abschliessen, icon=":material/close:")
