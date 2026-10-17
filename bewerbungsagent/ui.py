@@ -26,6 +26,7 @@ from .sources import QUELLEN, bekannte
 
 SEITE_HEUTE = "seiten/cockpit.py"
 SEITE_SUCHEN = "seiten/schritt_fuer_schritt.py"
+SEITE_JOBS = "seiten/jobs.py"
 SEITE_LEBENSLAUF = "seiten/lebenslauf.py"
 SEITE_EINSTELLUNGEN = "seiten/profil.py"
 
@@ -138,12 +139,14 @@ def zeitplan_text(cron: str) -> str:
 
 def navleiste() -> None:
     """Immer sichtbare Leiste oben – auch am Handy, wo die Seitenleiste versteckt waere."""
-    # Am Handy passen alle vier Ziele nur ohne Symbole in eine Zeile
-    st.html("<style>@media (max-width: 480px) {.st-key-navleiste {gap: 0.25rem !important;}"
+    # Am Handy passen alle fuenf Ziele nur ohne Symbole und mit wenig Rand in eine Zeile
+    st.html("<style>@media (max-width: 480px) {.st-key-navleiste {gap: 0.15rem !important;}"
+            ".st-key-navleiste a {padding-left: 0.3rem !important; padding-right: 0.3rem !important;}"
             ".st-key-navleiste a > span:has([data-testid='stIconMaterial']) {display: none;}}</style>")
     with st.container(horizontal=True, vertical_alignment="center", gap="small", key="navleiste"):
         st.page_link(SEITE_HEUTE, label="Heute", icon=":material/today:")
         st.page_link(SEITE_SUCHEN, label="Suchen", icon=":material/search:")
+        st.page_link(SEITE_JOBS, label="Jobs", icon=":material/work:")
         st.page_link(SEITE_LEBENSLAUF, label="Lebenslauf", icon=":material/description:")
         st.page_link(SEITE_EINSTELLUNGEN, label="Einstellungen", icon=":material/settings:")
 
@@ -155,6 +158,17 @@ def navleiste() -> None:
 def starte_hintergrund(*argumente: str, meldung: str) -> None:
     hintergrund.starte(*argumente)
     st.toast(meldung, icon=":material/hourglass_top:")
+
+
+def vorbereitung_starten(profil: Profil, refs: list[str]) -> None:
+    """Fuer ausgewaehlte Stellen Anschreiben schreiben lassen (im Hintergrund); entschieden wird auf „Heute“."""
+    with oeffne_db() as db:
+        for ref in refs:
+            db.setze_vorgang(Vorgang(ref=ref, status="vorbereitung", herkunft="manuell"))
+    argumente = ["vorbereiten", *refs, "--ausloeser", "knopf"]
+    if not (profil.automatisierung.probelauf_vorab and ablauf.browser_verfuegbar()):
+        argumente.append("--ohne-probelauf")
+    starte_hintergrund(*argumente, meldung=f"{len(refs)} Bewerbung(en) werden vorbereitet …")
 
 
 def auffrischen_alle(db: Speicher) -> int | None:

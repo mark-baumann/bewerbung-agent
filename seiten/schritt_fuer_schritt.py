@@ -4,7 +4,6 @@ import streamlit as st
 
 from bewerbungsagent import ablauf, ui, vorschlaege
 from bewerbungsagent.config import ermittle_profil_pfad, speichere_profil
-from bewerbungsagent.models import Vorgang
 from bewerbungsagent.scoring import llm as llm_modul
 
 TAGE = [7, 14, 30, 100]
@@ -152,13 +151,7 @@ def alle_markieren(refs: list[str], wert: bool) -> None:
 
 
 def vorbereiten_starten(refs: list[str]) -> None:
-    with ui.oeffne_db() as db_:
-        for ref in refs:
-            db_.setze_vorgang(Vorgang(ref=ref, status="vorbereitung", herkunft="manuell"))
-    argumente = ["vorbereiten", *refs, "--ausloeser", "knopf"]
-    if not (profil.automatisierung.probelauf_vorab and ablauf.browser_verfuegbar()):
-        argumente.append("--ohne-probelauf")
-    ui.starte_hintergrund(*argumente, meldung=f"{len(refs)} Bewerbung(en) werden vorbereitet …")
+    ui.vorbereitung_starten(profil, refs)
     for ref in refs:
         st.session_state.pop(f"sfs_sel_{ref}", None)
     st.session_state["sfs_zu_heute"] = True

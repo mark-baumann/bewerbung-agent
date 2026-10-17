@@ -15,7 +15,7 @@ from bewerbungsagent.db import Speicher  # noqa: E402
 from bewerbungsagent.models import Job, Score, Vorgang  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-SEITEN = ["seiten/schritt_fuer_schritt.py", "seiten/lebenslauf.py", "seiten/profil.py"]
+SEITEN = ["seiten/schritt_fuer_schritt.py", "seiten/jobs.py", "seiten/lebenslauf.py", "seiten/profil.py"]
 
 
 @pytest.fixture

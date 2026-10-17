@@ -1,4 +1,4 @@
-"""Einstieg der Web-UI: Heute (Ja/Nein), Suchen, Lebenslauf und Einstellungen."""
+"""Einstieg der Web-UI: Heute (Ja/Nein), Suchen, Jobs, Lebenslauf und Einstellungen."""
 
 import sys
 from pathlib import Path
@@ -48,10 +48,11 @@ st.set_page_config(page_title="Bewerbungsagent", page_icon=":material/work:", la
 
 from bewerbungsagent import ui  # noqa: E402
 
-# Eigene Leiste oben statt Seitenleiste: am Handy immer sichtbar, nur vier Ziele.
+# Eigene Leiste oben statt Seitenleiste: am Handy immer sichtbar, nur fuenf Ziele.
 seiten = st.navigation([
     st.Page(ui.SEITE_HEUTE, title="Heute", icon=":material/today:", default=True),
     st.Page(ui.SEITE_SUCHEN, title="Suchen", icon=":material/search:", url_path="suchen"),
+    st.Page(ui.SEITE_JOBS, title="Jobs", icon=":material/work:", url_path="jobs"),
     st.Page(ui.SEITE_LEBENSLAUF, title="Lebenslauf", icon=":material/description:", url_path="lebenslauf"),
     st.Page(ui.SEITE_EINSTELLUNGEN, title="Einstellungen", icon=":material/settings:", url_path="einstellungen"),
 ], position="hidden")
