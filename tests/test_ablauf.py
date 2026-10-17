@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import smtplib
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from bewerbungsagent import ablauf, dokumente
+from bewerbungsagent.bewerben import mail
 from bewerbungsagent.bewerben.browser import BewerbungsLauf
 from bewerbungsagent.bewerben.kanal import bestimme_kanal, finde_bewerbungs_email
 from bewerbungsagent.config import lade_profil, speichere_profil
@@ -534,7 +536,8 @@ def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, mo
     smtp_env(monkeypatch)
     sicher = "Ihre Bewerbung senden Sie bitte an hr@firma.de."
     db.speichere_jobs([job("ki", beschreibung=sicher), job("absturz", beschreibung=sicher),
-                       job("ohne_url", beschreibung=sicher), job("ohne"), job("mail")])
+                       job("ohne_url", beschreibung=sicher), job("ohne"), job("mail"), job("mail_abbruch"),
+                       job("mail_netz")])
     quota = ("Nicht sicher abgeschickt – bitte prüfen, ob eine Bestätigung kam, bevor du erneut sendest. Kein "
              "Ergebnis vom Agenten. Fehler: Error code: 429 - {'type': 'insufficient_quota'}")
     for ref, kanal, hinweis in (
@@ -542,12 +545,14 @@ def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, mo
         ("absturz", "formular", "CDP connection closed: Target page has been closed"),  # Absturz mitten im Lauf
         ("ohne_url", "formular", "Keine Bewerbungs-URL hinterlegt."),  # sicher nichts passiert
         ("ohne", "formular", "Kein Lebenslauf hinterlegt – bitte hochladen. Bewerbung nicht gestartet."),
-        ("mail", "email", "(535, b'Username and Password not accepted')"),
+        ("mail", "email", "(535, b'Username and Password not accepted')"),  # vor der Zustellung
+        ("mail_abbruch", "email", "Connection unexpectedly closed: timed out"),  # mitten im Versand
+        ("mail_netz", "email", "Connection unexpectedly closed: [Errno 113] No route to host"),  # ebenso
     ):
         db.setze_vorgang(Vorgang(ref=ref, status="fehlgeschlagen", kanal=kanal, anschreiben="Text",
                                  empfaenger="jobs@firma.de" if kanal == "email" else None,
                                  bewerbungs_url=f"https://karriere.firma-{ref}.de/job", hinweis=hinweis))
-    assert ablauf.fehlgeschlagene_umleiten(db, profil) == 5
+    assert ablauf.fehlgeschlagene_umleiten(db, profil) == 7
     assert not db.vorgaenge("fehlgeschlagen")
     for ref in ("ki", "absturz"):  # nie per E-Mail oder erneut per Formular, sondern nachfragen
         v = db.vorgang(ref)
@@ -556,6 +561,9 @@ def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, mo
     assert (db.vorgang("ohne").status, db.vorgang("ohne").hinweis) == ("wartet", ablauf.HINWEIS_SELBST)
     mail_karte = db.vorgang("mail")  # E-Mail-Fehler: Karte mit Weg E-Mail, „Ja“ versucht es erneut
     assert (mail_karte.status, mail_karte.kanal) == ("wartet", "email") and "ging nicht raus" in mail_karte.hinweis
+    for ref in ("mail_abbruch", "mail_netz"):  # vielleicht schon raus: nachfragen statt erneut senden
+        abbruch = db.vorgang(ref)
+        assert (abbruch.status, abbruch.kanal, abbruch.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT_MAIL)
 
 
 def test_email_fehler_kommt_als_email_karte_zurueck(umgebung, monkeypatch):
@@ -565,8 +573,8 @@ def test_email_fehler_kommt_als_email_karte_zurueck(umgebung, monkeypatch):
     ablauf.vorbereiten(db, profil, "1", mit_llm=False, link_aufloesen=False)
     ablauf.freigeben(db, profil, "1")
 
-    def kaputt(nachricht, konfig):
-        raise OSError("SMTP server temporarily unavailable (421)")
+    def kaputt(nachricht, konfig):  # so meldet mail.sende einen Fehler beim Verbinden
+        raise mail.NichtGesendet("SMTP server temporarily unavailable (421)")
 
     ergebnis = ablauf.sende_freigegebene(db, profil, mail_sender=kaputt)
     v = db.vorgang("1")
@@ -575,6 +583,101 @@ def test_email_fehler_kommt_als_email_karte_zurueck(umgebung, monkeypatch):
     # Mit „Ja“ geht es erneut raus
     ablauf.freigeben(db, profil, "1")
     assert ablauf.sende_freigegebene(db, profil, mail_sender=FakeSmtp())["abgeschickt"] == 1
+
+
+def _email_freigegeben(db, profil, monkeypatch):
+    smtp_env(monkeypatch)
+    db.speichere_jobs([job("1", beschreibung="Bewerbung an jobs@firma.de")])
+    ablauf.vorbereiten(db, profil, "1", mit_llm=False, link_aufloesen=False)
+    ablauf.freigeben(db, profil, "1")
+
+
+@pytest.mark.parametrize("fehler", [
+    smtplib.SMTPServerDisconnected("Connection unexpectedly closed"),  # Abbruch waehrend der Uebertragung
+    TimeoutError("timed out"),
+])
+def test_abgebrochener_email_versand_wird_nie_automatisch_wiederholt(umgebung, monkeypatch, fehler):
+    profil, db, _ = umgebung
+    _email_freigegeben(db, profil, monkeypatch)
+
+    def bricht_ab(nachricht, konfig):
+        raise fehler
+
+    ablauf.sende_freigegebene(db, profil, mail_sender=bricht_ab)
+    v = db.vorgang("1")
+    assert (v.status, v.kanal, v.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT_MAIL)
+    smtp = FakeSmtp()
+    ablauf.sende_freigegebene(db, profil, mail_sender=smtp)
+    assert not smtp.gesendet
+
+
+def test_vom_server_abgelehnte_email_kommt_als_email_karte(umgebung, monkeypatch):
+    profil, db, _ = umgebung
+    _email_freigegeben(db, profil, monkeypatch)
+
+    def lehnt_ab(nachricht, konfig):
+        raise smtplib.SMTPRecipientsRefused({"jobs@firma.de": (550, b"User unknown")})
+
+    ablauf.sende_freigegebene(db, profil, mail_sender=lehnt_ab)
+    v = db.vorgang("1")
+    assert (v.status, v.kanal) == ("wartet", "email") and "ging nicht raus" in v.hinweis
+
+
+def test_fehler_nach_dem_senden_fragt_nach_statt_neu_zu_senden(umgebung, monkeypatch):
+    import sqlite3
+
+    profil, db, _ = umgebung
+    _email_freigegeben(db, profil, monkeypatch)
+
+    def platt(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(db, "speichere_bewerbung", platt)
+    smtp = FakeSmtp()
+    ablauf.sende_freigegebene(db, profil, mail_sender=smtp)
+    v = db.vorgang("1")
+    assert len(smtp.gesendet) == 1 and (v.status, v.hinweis) == ("wartet", ablauf.HINWEIS_VIELLEICHT_MAIL)
+
+
+def test_mail_sende_unterscheidet_vorher_und_waehrenddessen(monkeypatch):
+    konfig = mail.SmtpKonfig(host="smtp.example.de", port=465, benutzer="ich", passwort="x", absender="ich@example.de")
+    nachricht = mail.baue_nachricht(absender="ich@example.de", absender_name="Ich", empfaenger="jobs@firma.de",
+                                    betreff="Bewerbung", text="Text", anhaenge=[])
+
+    def anmeldung_falsch(k):
+        raise smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+    monkeypatch.setattr(mail, "_verbinde", anmeldung_falsch)
+    with pytest.raises(mail.NichtGesendet):
+        mail.sende(nachricht, konfig)
+
+    class Server:
+        def __init__(self, fehler):
+            self.fehler = fehler
+
+        def send_message(self, n):
+            if isinstance(self.fehler, dict):  # einzelne Empfaenger abgelehnt, der Rest ging raus
+                return self.fehler
+            raise self.fehler
+
+        def quit(self):
+            raise smtplib.SMTPServerDisconnected("weg")
+
+    for fehler, vorher in ((smtplib.SMTPServerDisconnected("Connection unexpectedly closed"), False),
+                           (smtplib.SMTPSenderRefused(553, b"not allowed", "ich@example.de"), True),
+                           (smtplib.SMTPDataError(554, b"rejected as spam"), True)):
+        monkeypatch.setattr(mail, "_verbinde", lambda k, f=fehler: Server(f))
+        with pytest.raises(Exception) as info:
+            mail.sende(nachricht, konfig)
+        assert mail.vor_dem_senden(info.value) is vorher, fehler
+
+    # Nur die Kopie an dich (Bcc) kam an, die Firma wurde abgelehnt: nicht raus
+    monkeypatch.setattr(mail, "_verbinde", lambda k: Server({"jobs@firma.de": (550, b"5.1.1 User unknown")}))
+    with pytest.raises(mail.NichtGesendet):
+        mail.sende(nachricht, konfig)
+    # Nur die Kopie an dich wurde abgelehnt: die Bewerbung ist raus
+    monkeypatch.setattr(mail, "_verbinde", lambda k: Server({"ich@example.de": (552, b"Mailbox full")}))
+    assert mail.sende(nachricht, konfig) == nachricht["Message-ID"]
 
 
 def test_unterbrochener_email_versand_fragt_nach_einer_kopie(umgebung):

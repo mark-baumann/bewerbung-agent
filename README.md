@@ -272,7 +272,7 @@ Der Gesamtscore ist `Passung × 0,7 + Ton × 0,3`.
 ```
 bewerbung-agent/
 ├── app.py                        # Web-UI: Navigation
-├── seiten/                       # Heute (cockpit.py), Suchen, Einstellungen (profil.py)
+├── seiten/                       # Heute (cockpit.py), Suchen, Jobs, Lebenslauf, Einstellungen (profil.py)
 ├── bewerbungsagent/
 │   ├── ablauf.py                 # suchen → bewerten → vorbereiten → freigeben → senden
 │   ├── zeitplan.py               # Cron-Ausdrücke (Tick-Logik)

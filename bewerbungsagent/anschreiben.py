@@ -53,12 +53,12 @@ Mit freundlichen Grüßen
 """
 
 
-def _werdegang() -> str:
+def _werdegang(profil: Profil) -> str:
     """Satz zur letzten Station aus dem ausgelesenen Lebenslauf (nur Fakten von dort)."""
     from . import lebenslauf
 
     try:
-        satz = lebenslauf.stationssatz()
+        satz = lebenslauf.stationssatz(profil=profil)
     except Exception as e:  # die Vorlage darf nie scheitern
         log.info("Werdegang nicht lesbar: %s", e)
         return ""
@@ -79,7 +79,7 @@ def _vorlage(job: Job, profil: Profil, score: Score | None, dossier: Dossier | N
         anrede=anrede_fuer(dossier.ansprechpartner if dossier else None, "de"),
         titel=job.titel,
         arbeitgeber=job.arbeitgeber or "Ihrem Unternehmen",
-        werdegang=_werdegang(),
+        werdegang=_werdegang(profil),
         profilsatz=profil.kurzprofil.strip() or "Mein Profil entnehmen Sie bitte dem beigefügten Lebenslauf.",
         trefferblock=trefferblock,
         verfuegbar=profil.angaben.verfuegbar_ab or "ab sofort",

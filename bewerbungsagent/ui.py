@@ -26,6 +26,7 @@ from .sources import QUELLEN, bekannte
 
 SEITE_HEUTE = "seiten/cockpit.py"
 SEITE_SUCHEN = "seiten/schritt_fuer_schritt.py"
+SEITE_JOBS = "seiten/jobs.py"
 SEITE_LEBENSLAUF = "seiten/lebenslauf.py"
 SEITE_EINSTELLUNGEN = "seiten/profil.py"
 
@@ -138,12 +139,14 @@ def zeitplan_text(cron: str) -> str:
 
 def navleiste() -> None:
     """Immer sichtbare Leiste oben – auch am Handy, wo die Seitenleiste versteckt waere."""
-    # Am Handy passen alle vier Ziele nur ohne Symbole in eine Zeile
-    st.html("<style>@media (max-width: 480px) {.st-key-navleiste {gap: 0.25rem !important;}"
+    # Am Handy passen alle fuenf Ziele nur ohne Symbole und mit wenig Rand in eine Zeile
+    st.html("<style>@media (max-width: 480px) {.st-key-navleiste {gap: 0.15rem !important;}"
+            ".st-key-navleiste a {padding-left: 0.3rem !important; padding-right: 0.3rem !important;}"
             ".st-key-navleiste a > span:has([data-testid='stIconMaterial']) {display: none;}}</style>")
     with st.container(horizontal=True, vertical_alignment="center", gap="small", key="navleiste"):
         st.page_link(SEITE_HEUTE, label="Heute", icon=":material/today:")
         st.page_link(SEITE_SUCHEN, label="Suchen", icon=":material/search:")
+        st.page_link(SEITE_JOBS, label="Jobs", icon=":material/work:")
         st.page_link(SEITE_LEBENSLAUF, label="Lebenslauf", icon=":material/description:")
         st.page_link(SEITE_EINSTELLUNGEN, label="Einstellungen", icon=":material/settings:")
 
@@ -157,6 +160,25 @@ def starte_hintergrund(*argumente: str, meldung: str) -> None:
     st.toast(meldung, icon=":material/hourglass_top:")
 
 
+def vorbereitung_starten(profil: Profil, refs: list[str]) -> list[str]:
+    """Fuer ausgewaehlte Stellen Anschreiben schreiben lassen (im Hintergrund); entschieden wird auf „Heute“.
+
+    Nur Stellen ohne Vorgang und ohne Bewerbung: eine laufende, wartende oder abgeschickte wird nie ueberschrieben
+    (die Liste auf der Seite kann aelter sein als der Stand). Rueckgabe: die Stellen, die wirklich starten.
+    """
+    with oeffne_db() as db:
+        frei = [ref for ref in refs if db.vorgang(ref) is None and not db.schon_beworben(ref)]
+        for ref in frei:
+            db.setze_vorgang(Vorgang(ref=ref, status="vorbereitung", herkunft="manuell"))
+    if not frei:
+        return []
+    argumente = ["vorbereiten", *frei, "--ausloeser", "knopf"]
+    if not (profil.automatisierung.probelauf_vorab and ablauf.browser_verfuegbar()):
+        argumente.append("--ohne-probelauf")
+    starte_hintergrund(*argumente, meldung=f"{len(frei)} Bewerbung(en) werden vorbereitet …")
+    return frei
+
+
 def auffrischen_alle(db: Speicher) -> int | None:
     """Sekunden bis zum naechsten Blick auf den Stand: oft bei echter Arbeit, selten bei wartenden Freigaben."""
     if db.laufende_laeufe() or db.vorgaenge(("vorbereitung", "wird_gesendet")):
@@ -168,8 +190,13 @@ STAND_STATUS = ("vorbereitung", "wartet", "freigegeben", "wird_gesendet", "abges
 
 
 def stand(db: Speicher) -> tuple[int, ...]:
-    """Anzahl der Vorgaenge je Status – aendert sie sich, baut „Heute“ neu auf."""
-    return tuple(len(db.vorgaenge(status)) for status in STAND_STATUS)
+    """Vorgaenge je Status, laufende Laeufe und offene Ideen – aendert sich etwas, baut „Heute“ neu auf.
+
+    Auch das Ende eines Laufs zaehlt: dann stimmt der Takt des Nachsehens (`auffrischen_alle`) wieder, und
+    Ideen aus einer Suche ohne neue Karten erscheinen sofort.
+    """
+    return (*(len(db.vorgaenge(status)) for status in STAND_STATUS), len(db.laufende_laeufe()),
+            len(db.vorschlaege("offen")))
 
 
 def lauf_zusammenfassung(lauf: dict) -> str:
@@ -395,7 +422,9 @@ def _cb_neu_bewerben(ref: str, praefix: str) -> None:
     profil = lade_profil()
     with oeffne_db() as db:
         v = db.vorgang(ref)
-        kanal = "email" if v and v.empfaenger else "formular"
+        # Derselbe Weg wie beim abgebrochenen Versuch: nur eine unterbrochene E-Mail geht wieder per E-Mail
+        # (an dieselbe Adresse), sonst das Formular – eine nebenbei gespeicherte Adresse wird nie gewählt
+        kanal = "email" if v and v.empfaenger and v.hinweis == ablauf.HINWEIS_VIELLEICHT_MAIL else "formular"
         try:
             ablauf.freigeben(db, profil, ref, kanal=kanal)
         except ValueError as e:

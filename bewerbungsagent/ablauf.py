@@ -613,11 +613,14 @@ def _sende_email(db: Speicher, profil: Profil, job: Job, v: Vorgang, mail_sender
     if konfig is None:
         return False, "Dein E-Mail-Konto ist noch nicht verbunden (Einstellungen → Konten)."
     anhaenge = [p for p in [v.anschreiben_pdf, *profil.anhaenge()] if p and Path(p).exists()]
-    nachricht = mail.baue_nachricht(
-        absender=konfig.absender, absender_name=profil.person.name,
-        empfaenger=v.empfaenger or "", betreff=v.betreff or dokumente.betreff(job),
-        text=v.email_text or mail.begleittext(job, profil, anhaenge), anhaenge=anhaenge,
-    )
+    try:
+        nachricht = mail.baue_nachricht(
+            absender=konfig.absender, absender_name=profil.person.name,
+            empfaenger=v.empfaenger or "", betreff=v.betreff or dokumente.betreff(job),
+            text=v.email_text or mail.begleittext(job, profil, anhaenge), anhaenge=anhaenge,
+        )
+    except (OSError, ValueError) as e:  # z. B. Anhaenge zu gross: noch nichts gesendet
+        raise mail.NichtGesendet(str(e)) from e
     message_id = (mail_sender or mail.sende)(nachricht, konfig)
     db.aktualisiere_vorgang(v.ref, message_id=message_id or nachricht["Message-ID"])
     return True, f"E-Mail an {v.empfaenger} gesendet."
@@ -647,16 +650,16 @@ def _sende_formular(
         # Ohne KI startet der Agent gar nicht erst - nichts wurde ausgefuellt
         return FormularErgebnis(False, str(e), ki_fehler=True)
     except Exception as e:
-        from .bewerben.browser import ist_startfehler, startfehler_text
+        from .bewerben.browser import AbbruchNachArbeit, ist_startfehler, startfehler_text
 
-        if ist_startfehler(str(e)):
+        if ist_startfehler(str(e)) and not isinstance(e, AbbruchNachArbeit):
             # Auch nach den Wiederholungen kein Browser - nichts wurde abgeschickt
             return FormularErgebnis(False, startfehler_text(str(e)), startfehler=True)
         raise
     roh = lauf.rohdaten or {}
     gearbeitet = lauf.gearbeitet if lauf.gearbeitet is not None else lauf.schritte > 0
     # Nur wenn nie etwas auf der Seite passiert ist, darf die Freigabe stehen bleiben (sonst Doppelversand)
-    startfehler = bool(roh.get("browser_startfehler")) and lauf.schritte <= 1
+    startfehler = bool(roh.get("browser_startfehler")) and lauf.schritte <= 1 and not gearbeitet
     ki_fehler = bool(roh.get("ki_fehler")) and not gearbeitet and not lauf.abgeschickt
     if not (startfehler or ki_fehler):
         db.speichere_bewerbung(lauf.als_application(v.anschreiben))
@@ -684,6 +687,17 @@ _VIELLEICHT_FRUEHER = ("Nicht sicher abgeschickt", "Versand abgebrochen")
 _NICHTS_PASSIERT = re.compile(
     r"^(Keine Bewerbungs-URL hinterlegt|Kein Lebenslauf hinterlegt|(Der )?Browser-Agent \(browser-use\) ist nicht "
     r"installiert|Nichts ausgefüllt oder abgeschickt|Stelle nicht mehr in der Datenbank)"
+)
+# Fruehere E-Mail-Fehler, die sicher vor der Zustellung lagen (Konto, Anmeldung, Verbindung, Empfaenger abgelehnt) –
+# ausser die Verbindung brach mitten im Versand ab (dann steht z. B. „No route to host“ hinter „unexpectedly closed“)
+_MAIL_ABBRUCH = re.compile(r"unexpectedly closed|not connected|timed out|timeout|reset by peer|broken pipe|"
+                           r"disconnected", re.I)
+_MAIL_NICHT_RAUS = re.compile(
+    r"noch nicht verbunden|SMTP ist nicht eingerichtet|Stelle nicht mehr in der Datenbank|Anhänge sind zusammen|"
+    r"authenticat|Username and Password|\b53[045]\b|Connection refused|Name or service not known|"
+    r"name resolution|getaddrinfo|nodename nor servname|Network is unreachable|No route to host|CERTIFICATE_VERIFY|"
+    r"Recipient address rejected|\b55[0-4]\b",
+    re.I,
 )
 
 
@@ -740,7 +754,8 @@ def fehlgeschlagene_umleiten(db: Speicher, profil: Profil) -> int:
 
     Nie doppelt senden: Wer weiss, ob die Bewerbung schon raus ist, fragt nach („Ja, erledigt“?). Per
     E-Mail weiter geht es nur, wenn der fruehere Hinweis zeigt, dass auf der Bewerbungsseite nichts
-    passiert ist. Fehler beim E-Mail-Versand kommen als Karte zurueck, deren „Ja“ es erneut versucht.
+    passiert ist. E-Mail-Fehler vor der Zustellung (Anmeldung, Verbindung, Empfaenger) kommen als Karte
+    zurueck, deren „Ja“ es erneut versucht; bei allen anderen kann die E-Mail schon raus sein.
     """
     from .bewerben.browser import ist_startfehler
 
@@ -749,14 +764,14 @@ def fehlgeschlagene_umleiten(db: Speicher, profil: Profil) -> int:
         hinweis = (v.hinweis or "").strip()
         if hinweis.startswith(_VIELLEICHT_FRUEHER):
             _selbst_bewerben_lassen(db, v, vielleicht_raus=True)
-        elif v.kanal == "email":
+        elif v.kanal == "email" and _MAIL_NICHT_RAUS.search(hinweis) and not _MAIL_ABBRUCH.search(hinweis):
             _email_zurueck(db, v, hinweis)
         elif v.kanal == "formular" and (_NICHTS_PASSIERT.match(hinweis) or ist_startfehler(hinweis)):
             if not _auf_email_umstellen(db, profil, db.job(v.ref), v):
                 _selbst_bewerben_lassen(db, v)
         else:
-            # Unbekannt, wie weit das Formular kam (z. B. Absturz mitten im Lauf): lieber nachfragen
-            _selbst_bewerben_lassen(db, v, vielleicht_raus=v.kanal == "formular")
+            # Unbekannt, wie weit Formular oder E-Mail kamen (z. B. Abbruch mitten im Versand): lieber nachfragen
+            _selbst_bewerben_lassen(db, v, vielleicht_raus=v.kanal in ("formular", "email"))
         anzahl += 1
     return anzahl
 
@@ -894,9 +909,11 @@ def sende_freigegebene(
                 ok, text = False, "Kein automatischer Bewerbungsweg."
         except Exception as e:
             log.exception("Versand %s fehlgeschlagen", v.ref)
-            # Unbekannt, wie weit ein Formular kam: vorsichtshalber wie „gearbeitet“ behandeln
+            # Unbekannt, wie weit ein Formular oder eine E-Mail kam: vorsichtshalber wie „gearbeitet“ behandeln.
+            # Sicher nicht raus ist eine E-Mail nur bei Fehlern vor der Zustellung (Verbindung, Anmeldung, abgelehnt).
             ok, text = False, str(e)[:500]
-            f = FormularErgebnis(False, text, gearbeitet=v.kanal == "formular" and job is not None)
+            nicht_raus = job is None or (v.kanal == "email" and mail.vor_dem_senden(e))
+            f = FormularErgebnis(False, text, gearbeitet=v.kanal in ("formular", "email") and not nicht_raus)
         if ok:
             db.aktualisiere_vorgang(v.ref, status="abgeschickt", gesendet_am=_jetzt(), hinweis=text[:1000])
             zaehler["abgeschickt"] += 1
@@ -915,12 +932,13 @@ def sende_freigegebene(
             zaehler["zurueckgestellt"] += 1
         elif v.kanal == "formular" and not f.gearbeitet and _auf_email_umstellen(db, profil, job, v):
             bearbeitet.discard(v.ref)  # Formular ging nicht, nichts abgeschickt: per E-Mail
-        elif v.kanal == "email":
+        elif v.kanal == "email" and not f.gearbeitet:
             _email_zurueck(db, v, text)
             zaehler["fehlgeschlagen"] += 1
         else:
             # Kein Fehlerbildschirm: die Stelle kommt als Ja/Nein-Karte „Selbst bewerben“ zurueck
-            _selbst_bewerben_lassen(db, v, vielleicht_raus=v.kanal == "formular" and f.gearbeitet, text=text)
+            # (bei abgebrochenem Formular oder E-Mail-Versand mit der Frage, ob sie schon raus ist)
+            _selbst_bewerben_lassen(db, v, vielleicht_raus=f.gearbeitet, text=text)
             zaehler["fehlgeschlagen"] += 1
     return zaehler
 

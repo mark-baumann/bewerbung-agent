@@ -431,3 +431,24 @@ def test_ollama_gpt_oss_bekommt_denkaufwand_und_leere_antwort_ist_fehler(monkeyp
     assert gesendet[0]["reasoning_effort"] == "low"
     client.chat(modell="glm-5.2", system="S", messages=[], max_tokens=50, effort="low")
     assert "reasoning_effort" not in gesendet[-1]  # nur fuer Modelle, die es kennen
+
+
+@pytest.mark.parametrize("fehler, grund", [
+    ("Error code: 429 - {'error': 'Too Many Requests'}", "die KI ist gerade überlastet"),
+    ("Request used 4290 tokens", "die KI hat nicht geantwortet"),  # 429 nur als Statuscode
+    ("Error code: 403 - {'error': 'this model requires a subscription, upgrade for access'}",
+     "dein KI-Zugang erlaubt dieses Modell nicht"),
+    ("Error code: 403 - {'error': 'invalid api key'}", "der KI-Schlüssel wird abgelehnt"),
+    ("Error code: 400 - This model's maximum context length is 8192 tokens", "die Anfrage ist für das Modell zu lang"),
+    ("Error code: 400 - {'error': 'context_length_exceeded'}", "die Anfrage ist für das Modell zu lang"),
+])
+def test_ki_grund_unterscheidet_die_ursachen(fehler, grund):
+    assert llm.ki_grund(fehler) == grund
+
+
+def test_ki_grund_bei_kaputtem_json():
+    import json
+
+    with pytest.raises(json.JSONDecodeError) as fehler:
+        json.loads("Gerne!")
+    assert llm.ki_grund(fehler.value) == "die KI hat keine verwertbare Antwort geliefert"

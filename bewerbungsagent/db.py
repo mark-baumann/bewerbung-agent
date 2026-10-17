@@ -490,8 +490,9 @@ class Speicher:
         return [dict(r) for r in rows]
 
     def schon_beworben(self, ref: str) -> bool:
+        """Abgeschickt (auch frueher per Kommandozeile) oder selbst beworben."""
         row = self.con.execute(
-            "SELECT 1 FROM applications WHERE ref = ? AND status = 'abgeschickt'", (ref,)
+            "SELECT 1 FROM applications WHERE ref = ? AND status IN ('abgeschickt', 'manuell_beworben')", (ref,)
         ).fetchone()
         return row is not None
 
@@ -668,6 +669,53 @@ class Speicher:
             if len(ergebnis) >= limit:
                 break
         return ergebnis
+
+    def gefundene_jobs(self, limit: int = 3000) -> list[dict[str, Any]]:
+        """Alle Stellen aus deinen Suchen – mit Passung und Stand, Dubletten einmal, neueste zuerst.
+
+        Stand: offen | heute (Karte wartet) | unterwegs (wird vorbereitet/gesendet) | beworben | abgelehnt |
+        ausgeschlossen | unbewertet. Feed-Eintraege, die keine Suche getroffen hat, fehlen (wie bei `kandidaten`).
+        """
+        sql = f"""
+            SELECT j.ref, j.titel, j.arbeitgeber, j.ort, j.entfernung_km, j.quelle, j.externe_url, j.detail_url,
+                   j.geholt_am, j.veroeffentlicht, s.gesamt, s.ausgeschlossen, s.ausschlussgrund,
+                   v.status AS vorgang,
+                   (SELECT a.status FROM applications a WHERE a.ref = j.ref AND a.dry_run = 0
+                    ORDER BY a.id DESC LIMIT 1) AS bewerbung
+            FROM jobs j LEFT JOIN scores s ON s.ref = j.ref LEFT JOIN vorgaenge v ON v.ref = j.ref
+            WHERE {SUCHTREFFER}
+            ORDER BY (v.ref IS NOT NULL OR bewerbung IN ('abgeschickt', 'manuell_beworben')) DESC,
+                     COALESCE(s.gesamt, -1) DESC
+        """
+        stand_je_vorgang = {"vorbereitung": "unterwegs", "freigegeben": "unterwegs", "wird_gesendet": "unterwegs",
+                            "wartet": "heute", "abgeschickt": "beworben", "selbst_beworben": "beworben",
+                            "abgelehnt": "abgelehnt", "fehlgeschlagen": "heute"}
+        gesehen: set[str] = set()
+        ergebnis: list[dict[str, Any]] = []
+        for row in self.con.execute(sql):
+            # Dieselbe Stelle aus einer anderen Jobboerse einmal – die bearbeitete (Vorgang oder Bewerbung) gewinnt,
+            # damit eine schon beworbene Stelle nicht als „offen“ wieder auftaucht. Ohne Arbeitgeber zaehlt der Ort mit.
+            schluessel = dubletten_schluessel(row["arbeitgeber"], row["titel"])
+            if not (row["arbeitgeber"] or "").strip():
+                schluessel += "|" + (row["ort"] or "").casefold()
+            if schluessel in gesehen:
+                continue
+            gesehen.add(schluessel)
+            if row["vorgang"]:
+                stand = stand_je_vorgang.get(row["vorgang"], "heute")
+            elif row["bewerbung"] in ("abgeschickt", "manuell_beworben"):
+                stand = "beworben"
+            elif row["gesamt"] is None:
+                stand = "unbewertet"
+            elif row["ausgeschlossen"]:
+                stand = "ausgeschlossen"
+            else:
+                stand = "offen"
+            link = Job(ref=row["ref"], titel=row["titel"], arbeitgeber=row["arbeitgeber"] or "", quelle=row["quelle"] or "",
+                       externe_url=row["externe_url"], detail_url=row["detail_url"]).anzeige_url
+            ergebnis.append({**dict(row), "stand": stand, "anzeige": link})
+        ergebnis.sort(key=lambda r: r["geholt_am"] or "", reverse=True)
+        return ergebnis[:limit]
 
     def heuristisch_bewertet(self, min_gesamt: float = 0.0, limit: int = 20) -> list[str]:
         """Offene Stellen, die bisher nur per Stichworten bewertet wurden (neueste zuerst)."""

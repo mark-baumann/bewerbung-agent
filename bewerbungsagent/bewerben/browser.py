@@ -19,7 +19,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from ..config import Profil
@@ -317,12 +317,19 @@ BROWSER_START_RETRIES = 2          # zusaetzlich zum ersten Versuch
 BROWSER_START_BACKOFF_S = 10.0     # Wartezeit zwischen den Versuchen
 
 
-def _hat_gearbeitet(history: Any) -> bool:
-    """True, wenn das KI-Modell in mindestens einem Schritt geantwortet hat.
+def _hat_gearbeitet(history: Any, spur: list | None = None) -> bool:
+    """True, wenn das KI-Modell in mindestens einem Schritt geantwortet hat – dann kann auf der Seite etwas passiert sein.
 
     Schritt 0 zaehlt nicht: browser-use legt fuer die automatische Startnavigation (`initial_actions`)
     eine kuenstliche Modell-Antwort an ("Initial navigation"), auch wenn die KI nie geantwortet hat.
+    Bricht ein Schritt wegen Zeitueberschreitung ab, fehlt er oft im Verlauf, obwohl die KI schon geantwortet
+    und geklickt hat. Deshalb zaehlen auch die Beobachtung nach jedem Schritt (`spur`) und die Token-Abrechnung.
     """
+    if spur:
+        return True
+    antworten = getattr(getattr(history, "usage", None), "total_completion_tokens", None)
+    if isinstance(antworten, int) and antworten > 0:
+        return True
     eintraege = getattr(history, "history", None)
     if isinstance(eintraege, list):
         return any(
@@ -341,14 +348,20 @@ def _lebenslauf_vorhanden(profil: Profil) -> bool:
     return profil.lebenslauf_pfad() is not None
 
 
-async def _run_mit_retry(run_factory):
+class AbbruchNachArbeit(RuntimeError):
+    """Der Lauf brach ab, nachdem die KI schon auf der Seite gearbeitet hatte: nie wiederholen und nie als
+    Startfehler werten (auch wenn der Fehlertext danach klingt) – das Formular koennte schon abgeschickt sein."""
+
+
+async def _run_mit_retry(run_factory, gearbeitet: Callable[[], bool] | None = None):
     """Fuehrt `run_factory` aus, bei transientem Browser-Start-Fehler erneut.
 
     Kam Chromium nicht hoch (z. B. Timeout des `BrowserStartEvent`-Watchdogs),
     wird mit kurzem Backoff erneut versucht. Andere Fehler – auch Timeouts
     mitten im Lauf – werden nie wiederholt: das Formular koennte schon
     abgeschickt sein. `run_factory` ist async, baut pro Versuch einen neuen
-    Agenten und liefert das history-Objekt.
+    Agenten und liefert das history-Objekt. Hat die KI schon geantwortet
+    (`gearbeitet`), kommt jeder Fehler als `AbbruchNachArbeit`.
     """
     letzter_fehler: BaseException | None = None
     for versuch in range(1 + BROWSER_START_RETRIES):
@@ -356,6 +369,8 @@ async def _run_mit_retry(run_factory):
             return await run_factory()
         except Exception as e:
             letzter_fehler = e
+            if gearbeitet is not None and gearbeitet():
+                raise AbbruchNachArbeit(f"Abbruch, nachdem die KI schon gearbeitet hatte: {e}") from e
             if not ist_startfehler(str(e)):
                 raise
             log.warning(
@@ -655,7 +670,7 @@ class BewerbungsBrowser:
         fehler = [f for f in history.errors() if f]
         return bool(fehler) and ist_startfehler(fehler[-1])
 
-    def _modell_fehlte(self, history: Any, agent: Any) -> bool:
+    def _modell_fehlte(self, history: Any, agent: Any, spur: list | None = None) -> bool:
         """True, wenn der Lauf am unbekannten Modell scheiterte und ein Ersatz bereitsteht."""
         from ..scoring import llm as llm_modul
 
@@ -663,7 +678,7 @@ class BewerbungsBrowser:
             return False
         # Hat das Modell schon geantwortet (oder gar ein Ergebnis geliefert), wurde auf der Seite gearbeitet:
         # dann nie den ganzen Agenten neu starten – das Formular koennte schon abgeschickt sein.
-        if getattr(history, "structured_output", None) is not None or _hat_gearbeitet(history):
+        if getattr(history, "structured_output", None) is not None or _hat_gearbeitet(history, spur):
             return False
         fehler = [f for f in history.errors() if f]
         if not fehler or not (_MODELL_FEHLT.search(fehler[-1]) or _KI_FEHLER.search(fehler[-1])):
@@ -716,28 +731,37 @@ class BewerbungsBrowser:
                 url=url,
             )
 
+        # Schritte, in denen die KI geantwortet hat – auch solche, die danach wegen Zeitueberschreitung
+        # abbrachen und deshalb im Verlauf fehlen. Gilt fuer alle Versuche dieser Bewerbung.
+        spur: list[int] = []
+
+        async def _nach_schritt(agent: Any) -> None:
+            zustand = getattr(agent, "state", None)
+            if getattr(zustand, "last_model_output", None) is not None:
+                spur.append(getattr(zustand, "n_steps", 0))
+
         async def _starte_einmal():
             agent = self.baue_agent(
                 job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
             )
-            history = await agent.run(max_steps=self.max_schritte)
-            if self._startfehler(history):
+            history = await agent.run(max_steps=self.max_schritte, on_step_end=_nach_schritt)
+            if self._startfehler(history) and not spur:
                 # Chromium kam nicht hoch (langsamer Pi, Kaltstart) und browser-use hat den
                 # Fehler nur protokolliert statt ihn zu werfen: genau ein zweiter Versuch
                 log.warning("Browser-Start fehlgeschlagen - zweiter Versuch.")
                 agent = self.baue_agent(
                     job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
                 )
-                history = await agent.run(max_steps=self.max_schritte)
-            if self._modell_fehlte(history, agent):
+                history = await agent.run(max_steps=self.max_schritte, on_step_end=_nach_schritt)
+            if self._modell_fehlte(history, agent, spur):
                 # Das Modell gibt es beim Anbieter nicht: einmal mit einem verfuegbaren neu starten
                 agent = self.baue_agent(
                     job, anschreiben, dry_run=dry_run, start_url=url, anschreiben_pdf=anschreiben_pdf
                 )
-                history = await agent.run(max_steps=self.max_schritte)
+                history = await agent.run(max_steps=self.max_schritte, on_step_end=_nach_schritt)
             return history
 
-        history = await _run_mit_retry(_starte_einmal)
+        history = await _run_mit_retry(_starte_einmal, gearbeitet=lambda: bool(spur))
 
         strukturiert = None
         try:
@@ -774,11 +798,11 @@ class BewerbungsBrowser:
                         "\nDas KI-Modell ist bei deinem Zugang nicht verfügbar. Unter Einstellungen → Konten "
                         "ein verfügbares Modell wählen und erneut versuchen."
                     )
-                if strukturiert is None and self._startfehler(history):
+                if strukturiert is None and self._startfehler(history) and not spur:
                     # Der Browser kam nie hoch - nichts wurde ausgefuellt oder abgeschickt
                     zusammenfassung = startfehler_text(fehler[-1])
                     rohdaten = {**(rohdaten or {}), "browser_startfehler": True}
-                elif strukturiert is None and not _hat_gearbeitet(history):
+                elif strukturiert is None and not _hat_gearbeitet(history, spur):
                     # Die KI hat nie geantwortet (z. B. Konto ohne Guthaben): auf der Seite ist nichts passiert
                     zusammenfassung = ki_fehler_text(fehler[-1])
                     rohdaten = {**(rohdaten or {}), "ki_fehler": True, "fehler": fehler[-1][:500]}
@@ -793,7 +817,7 @@ class BewerbungsBrowser:
             schritte=history.number_of_steps(),
             url=letzte_url,
             rohdaten=rohdaten,
-            gearbeitet=strukturiert is not None or _hat_gearbeitet(history),
+            gearbeitet=strukturiert is not None or _hat_gearbeitet(history, spur),
         )
 
 

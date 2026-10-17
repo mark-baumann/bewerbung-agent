@@ -20,7 +20,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formataddr, make_msgid
+from email.utils import formataddr, getaddresses, make_msgid
 from pathlib import Path
 
 from ..config import Profil
@@ -128,6 +128,23 @@ def baue_nachricht(
     return msg
 
 
+class NichtGesendet(Exception):
+    """Die E-Mail hat den Server sicher nicht erreicht oder wurde abgelehnt – sie darf erneut gesendet werden."""
+
+
+# Antworten des Servers, mit denen er die Nachricht nicht angenommen hat (nichts ist beim Empfaenger angekommen)
+_ABGELEHNT = (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)
+
+
+def vor_dem_senden(fehler: BaseException) -> bool:
+    """True, wenn der Fehler sicher vor der Zustellung lag (Verbindung, Anmeldung, vom Server abgelehnt).
+
+    Alles andere – Abbruch oder Zeitueberschreitung waehrend der Uebertragung, Fehler danach – ist unklar:
+    die E-Mail kann schon raus sein und darf nicht automatisch noch einmal gehen.
+    """
+    return isinstance(fehler, (NichtGesendet, *_ABGELEHNT))
+
+
 def _verbinde(konfig: SmtpKonfig) -> smtplib.SMTP:
     kontext = ssl.create_default_context()
     if konfig.ssl:
@@ -143,15 +160,27 @@ def _verbinde(konfig: SmtpKonfig) -> smtplib.SMTP:
 
 
 def sende(nachricht: EmailMessage, konfig: SmtpKonfig) -> str:
-    """Verschickt die Nachricht und liefert ihre Message-ID."""
-    server = _verbinde(konfig)
+    """Verschickt die Nachricht und liefert ihre Message-ID.
+
+    Fehler beim Verbinden und Anmelden kommen als `NichtGesendet` – dann ist sicher nichts rausgegangen.
+    """
     try:
-        server.send_message(nachricht)
+        server = _verbinde(konfig)
+    except OSError as e:  # smtplib.SMTPException ist ein OSError
+        raise NichtGesendet(str(e) or type(e).__name__) from e
+    try:
+        abgelehnt = server.send_message(nachricht)
+    except _ABGELEHNT as e:
+        raise NichtGesendet(str(e) or type(e).__name__) from e
     finally:
         try:
             server.quit()
         except smtplib.SMTPException:
             pass
+    # Die Kopie an dich (Bcc) kam an, der Empfaenger wurde aber abgelehnt: die Bewerbung ist nicht raus
+    an = {adresse.lower() for _, adresse in getaddresses(nachricht.get_all("To", [])) if adresse}
+    if abgelehnt and an & {str(a).lower() for a in abgelehnt}:
+        raise NichtGesendet(f"Empfänger abgelehnt: {abgelehnt}")
     return str(nachricht["Message-ID"])
 
 
