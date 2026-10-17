@@ -396,6 +396,30 @@ def test_vielleicht_karte_kann_nach_pruefung_automatisch_neu_bewerben(app):
     assert (v.status, v.kanal) == ("freigegeben", "formular") and gestartet[-1][0] == "senden"
 
 
+def test_neu_bewerben_nimmt_den_weg_des_abgebrochenen_versuchs(app):
+    neue_app, profil, _ = app
+    with Speicher() as db:
+        db.speichere_jobs([
+            Job(ref="m", titel="Data Analyst", arbeitgeber="Firma M", ort="München", externe_url="https://m.de/job"),
+            Job(ref="f", titel="Data Engineer", arbeitgeber="Firma F", ort="München", externe_url="https://f.de/job"),
+        ])
+        # m: E-Mail-Versand unterbrochen; f: Formular abgebrochen, nebenbei eine (unsichere) Adresse gespeichert
+        db.setze_vorgang(Vorgang(ref="m", status="wartet", kanal="manuell", anschreiben="Text",
+                                 empfaenger="jobs@m.de", hinweis=ablauf.HINWEIS_VIELLEICHT_MAIL))
+        db.setze_vorgang(Vorgang(ref="f", status="wartet", kanal="manuell", anschreiben="Text",
+                                 empfaenger="info@f.de", bewerbungs_url="https://f.de/job",
+                                 hinweis=ablauf.HINWEIS_VIELLEICHT))
+    at = neue_app().run()
+    _ohne_fehler(at)
+    for ref in ("m", "f"):
+        at.button(key=f"cockpit_neu_bewerben_{ref}").click().run()
+        _ohne_fehler(at)
+    with Speicher() as db:
+        m, f = db.vorgang("m"), db.vorgang("f")
+    assert (m.status, m.kanal, m.empfaenger) == ("freigegeben", "email", "jobs@m.de")
+    assert (f.status, f.kanal) == ("freigegeben", "formular")
+
+
 def test_lebenslauf_seite_zeigt_den_ki_grund_und_eine_probe(app, monkeypatch):
     from bewerbungsagent.scoring import llm
 
@@ -425,3 +449,48 @@ def test_lebenslauf_seite_zeigt_den_ki_grund_und_eine_probe(app, monkeypatch):
     probe = at.session_state["lebenslauf_probe"]
     assert probe["titel"] == "Finanzbuchhalterin" and probe["quelle"] == "vorlage" and "kein Guthaben" in probe["grund"]
     assert "Zuletzt war ich als Buchhalterin bei Demo GmbH tätig." in probe["text"]
+
+
+def test_gescheitertes_neu_auslesen_nennt_den_grund(app, monkeypatch):
+    import json
+
+    from bewerbungsagent.scoring import llm
+
+    neue_app, profil, _ = app
+    Path("unterlagen/lebenslauf.txt").write_text(
+        "Über mich\nBuchhalterin mit DATEV-Erfahrung.\nFähigkeiten\nDATEV\nErfahrung\nDemo GmbH 01/2019 - 12/2023\n"
+        "Buchhalterin\n50667 Köln", encoding="utf-8")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test")
+    antwort = {"kurzprofil": "Ich bin Buchhalterin.", "jobtitel": ["Buchhalterin"], "ort": "Köln", "suchort": "Köln",
+               "faehigkeiten": ["DATEV"], "themen": [], "stationen": [], "kontakt": {}}
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: json.dumps(antwort))
+    at = neue_app().run()
+    at.switch_page("seiten/lebenslauf.py").run()
+    _ohne_fehler(at)
+    assert any("Mit KI gelesen" in c.value for c in at.caption)
+
+    def kaputt(*a, **k):
+        raise llm.LLMNichtVerfuegbar("Error code: 429 - insufficient_quota")
+
+    monkeypatch.setattr(llm, "chat", kaputt)
+    at.button(key="lebenslauf_neu_knopf").click().run()
+    _ohne_fehler(at)
+    assert any("Neu auslesen ging gerade nicht" in i.value and "kein Guthaben" in i.value for i in at.info)
+    at.switch_page("seiten/lebenslauf.py").run()  # beim naechsten Aufruf ohne Klick: keine alte Meldung mehr
+    _ohne_fehler(at)
+    assert not [i for i in at.info if "Neu auslesen" in i.value] and any("Mit KI gelesen" in c.value for c in at.caption)
+
+
+def test_heute_baut_neu_auf_wenn_ein_lauf_endet_oder_ideen_kommen(app):
+    from bewerbungsagent import ui
+
+    with Speicher() as db:
+        vorher = ui.stand(db)
+        lauf = db.starte_lauf("automatik", "knopf")
+        waehrend = ui.stand(db)
+        db.beende_lauf(lauf, {"gefunden": 3})  # nur Ideen, keine neuen Karten
+        nach_lauf = ui.stand(db)
+        db.lege_vorschlag_an("suchbegriff", "suchbegriff:data analyst", "Data Analyst")
+        mit_idee = ui.stand(db)
+        takt = ui.auffrischen_alle(db)  # nach dem Lauf: kein 5-Sekunden-Takt mehr
+    assert len({vorher, waehrend, mit_idee}) == 3 and nach_lauf == vorher and takt is None

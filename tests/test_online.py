@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -343,7 +344,7 @@ def _echter_browser(monkeypatch, profil, *laeufe):
     class Agent:
         llm = None
 
-        async def run(self, max_steps):
+        async def run(self, max_steps, on_step_end=None):
             b.aufrufe += 1
             naechster = next(folge)
             if isinstance(naechster, Exception):
@@ -482,7 +483,7 @@ def _agent_mit_modell(monkeypatch, profil, *laeufe):
         modelle.append(llm.model)
 
         class Agent:
-            async def run(self, max_steps):
+            async def run(self, max_steps, on_step_end=None):
                 b.aufrufe += 1
                 return next(folge)
 
@@ -575,3 +576,53 @@ def test_echte_antworten_der_ki_zaehlen_als_arbeit(umgebung, monkeypatch):
     b = _echter_browser(monkeypatch, profil, verlauf)
     lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
     assert lauf.gearbeitet and not (lauf.rohdaten or {}).get("ki_fehler") and b.aufrufe == 1
+
+
+def test_abgebrochener_schritt_nach_ki_antwort_zaehlt_als_arbeit(umgebung, monkeypatch):
+    """Schritt-Timeout: browser-use verliert den Schritt im Verlauf, obwohl die KI schon geantwortet und geklickt hat."""
+    import asyncio
+    from types import SimpleNamespace
+
+    profil, db, _ = umgebung
+    nur_429 = _echter_verlauf(*[(False, QUOTA)] * 2)
+    b = _echter_browser(monkeypatch, profil, nur_429)
+
+    class Agent:
+        llm = None
+
+        async def run(self, max_steps, on_step_end=None):
+            b.aufrufe += 1
+            # Schritt 1: Antwort kam, dann lief die Zeit ab (fehlt im Verlauf); danach nur noch 429
+            await on_step_end(SimpleNamespace(state=SimpleNamespace(last_model_output="klick", n_steps=2)))
+            await on_step_end(SimpleNamespace(state=SimpleNamespace(last_model_output=None, n_steps=3)))
+            return nur_429
+
+    monkeypatch.setattr(b, "baue_agent", lambda *a, **k: Agent())
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert b.aufrufe == 1 and lauf.gearbeitet and not (lauf.rohdaten or {}).get("ki_fehler")
+
+    _freigegeben(db, profil)
+    # Ausweg per E-Mail waere moeglich (sichere Adresse, Konto verbunden) – darf nach getaner Arbeit aber nie greifen
+    db.speichere_jobs([replace(job(), beschreibung="Ihre Bewerbung senden Sie bitte an jobs@firma.de.")])
+    for name, wert in (("SMTP_HOST", "smtp.example.de"), ("SMTP_BENUTZER", "ich@example.de"), ("SMTP_PASSWORT", "x")):
+        monkeypatch.setenv(name, wert)
+    smtp_versuche = []
+    b = _echter_browser(monkeypatch, profil, nur_429)
+    monkeypatch.setattr(b, "baue_agent", lambda *a, **k: Agent())
+    ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b, mail_sender=lambda *a: smtp_versuche.append(a))
+    v = db.vorgang("1")  # kein E-Mail-Ausweg, kein Neustart: nachfragen
+    assert (v.status, v.hinweis) == ("wartet", ablauf.HINWEIS_VIELLEICHT) and not smtp_versuche
+
+
+def test_token_abrechnung_zeigt_ki_antworten(umgebung):
+    """Fehlt ein Schritt im Verlauf, verraet die Token-Abrechnung trotzdem, dass die KI geantwortet hat."""
+    from browser_use.tokens.views import UsageSummary
+
+    nur_429 = _echter_verlauf(*[(False, QUOTA)] * 2)
+    assert not browser._hat_gearbeitet(nur_429)
+    nur_429.usage = UsageSummary(total_prompt_tokens=900, total_prompt_cost=0, total_prompt_cached_tokens=0,
+                                 total_prompt_cached_cost=0, total_completion_tokens=0, total_completion_cost=0,
+                                 total_tokens=900, total_cost=0, entry_count=0)
+    assert not browser._hat_gearbeitet(nur_429)  # keine Antwort-Tokens: die KI hat nie geantwortet
+    nur_429.usage = nur_429.usage.model_copy(update={"total_completion_tokens": 120, "entry_count": 1})
+    assert browser._hat_gearbeitet(nur_429)

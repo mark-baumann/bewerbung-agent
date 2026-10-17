@@ -182,8 +182,13 @@ STAND_STATUS = ("vorbereitung", "wartet", "freigegeben", "wird_gesendet", "abges
 
 
 def stand(db: Speicher) -> tuple[int, ...]:
-    """Anzahl der Vorgaenge je Status – aendert sie sich, baut „Heute“ neu auf."""
-    return tuple(len(db.vorgaenge(status)) for status in STAND_STATUS)
+    """Vorgaenge je Status, laufende Laeufe und offene Ideen – aendert sich etwas, baut „Heute“ neu auf.
+
+    Auch das Ende eines Laufs zaehlt: dann stimmt der Takt des Nachsehens (`auffrischen_alle`) wieder, und
+    Ideen aus einer Suche ohne neue Karten erscheinen sofort.
+    """
+    return (*(len(db.vorgaenge(status)) for status in STAND_STATUS), len(db.laufende_laeufe()),
+            len(db.vorschlaege("offen")))
 
 
 def lauf_zusammenfassung(lauf: dict) -> str:
@@ -409,7 +414,9 @@ def _cb_neu_bewerben(ref: str, praefix: str) -> None:
     profil = lade_profil()
     with oeffne_db() as db:
         v = db.vorgang(ref)
-        kanal = "email" if v and v.empfaenger else "formular"
+        # Derselbe Weg wie beim abgebrochenen Versuch: nur eine unterbrochene E-Mail geht wieder per E-Mail
+        # (an dieselbe Adresse), sonst das Formular – eine nebenbei gespeicherte Adresse wird nie gewählt
+        kanal = "email" if v and v.empfaenger and v.hinweis == ablauf.HINWEIS_VIELLEICHT_MAIL else "formular"
         try:
             ablauf.freigeben(db, profil, ref, kanal=kanal)
         except ValueError as e:

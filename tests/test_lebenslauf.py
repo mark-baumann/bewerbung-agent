@@ -107,9 +107,10 @@ def test_heuristik_liest_abschnitte_statt_nur_kontaktdaten():
     a = lebenslauf.heuristik(TEXT)
     assert a.kurzprofil.startswith("Mit umfassender Erfahrung in der Digitalisierung")
     assert a.faehigkeiten == ["SQL", "Python", "Projektmanagement", "IT-Projektmanagement", "Produktmanagement"]
-    assert a.jobtitel == ["Produktverantwortlicher", "Projektmanager", "IT-Projektmanager", "Produktmanager",
-                          "Programmierer"]
-    assert [s["arbeitgeber"] for s in a.stationen] == ["Augustinum", "Muster Software GmbH", "Micro Demo"]
+    # „Programmierer“ bei „Micro Demo“: ohne Rechtsform ist die Zuordnung nicht sicher – kein Jobtitel daraus
+    assert a.jobtitel == ["Produktverantwortlicher", "Projektmanager", "IT-Projektmanager", "Produktmanager"]
+    assert [(s["arbeitgeber"], s["sicher"]) for s in a.stationen] == [
+        ("Augustinum", False), ("Muster Software GmbH", True), ("Micro Demo", False)]
     assert a.kontakt == {"email": "max.beispiel@example.org", "plz": "85256", "ort": "Giebing",
                          "strasse": "Musterweg 13", "vorname": "Max", "nachname": "Beispiel"}
     assert "telefon" not in a.kontakt  # das Geburtsdatum ist keine Telefonnummer
@@ -125,6 +126,53 @@ def test_heuristik_liest_abschnitte_statt_nur_kontaktdaten():
 ])
 def test_kontaktmuster_ohne_fehlalarme(zeile, erwartet):
     assert lebenslauf.heuristik(zeile).kontakt == erwartet
+
+
+def test_rolle_und_arbeitgeber_werden_nicht_vertauscht():
+    text = ("Berufserfahrung\n03/2019 - heute Verkäuferin\nRossmann, Hannover\n"
+            "2015 - 2019 Deutsche Bahn\nZugbegleiter\n")
+    a = lebenslauf.heuristik(text)
+    assert [(s["rolle"], s["arbeitgeber"], s["sicher"]) for s in a.stationen] == [
+        ("Verkäuferin", "Rossmann, Hannover", True), ("Zugbegleiter", "Deutsche Bahn", False)]
+    assert a.jobtitel == ["Verkäuferin"]  # nie „Rossmann“ oder „Deutsche Bahn“ als Jobtitel
+    assert lebenslauf.stationssatz(a) == "Derzeit bin ich als Verkäuferin bei Rossmann in Hannover tätig."
+
+
+def test_aufsteigender_lebenslauf_und_offene_zeitraeume():
+    text = ("Berufserfahrung\nAlpha GmbH 2010 - 2014\nSachbearbeiter\nBeta AG seit 03/2019\nTeamleiter\n"
+            "Gamma GmbH 2014 - 2019\nReferent\n")
+    a = lebenslauf.heuristik(text)
+    assert [s["arbeitgeber"] for s in a.stationen] == ["Beta AG", "Gamma GmbH", "Alpha GmbH"]
+    assert a.jobtitel == ["Teamleiter", "Referent", "Sachbearbeiter"]
+    assert lebenslauf.stationssatz(a) == ("Derzeit bin ich als Teamleiter bei Beta AG tätig, davor war ich als "
+                                          "Referent bei Gamma GmbH.")
+    for offen in ("seit 2019", "since 2019", "03/2019 bis dato", "03/2019 – ", "ab 01/2024", "2019 - heute"):
+        assert lebenslauf._laeuft_noch(offen), offen
+    assert not lebenslauf._laeuft_noch("2019 - 2021")
+
+
+def test_soft_skills_werden_keine_jobtitel():
+    faehigkeiten = ["Zeitmanagement", "Selbstmanagement", "Konfliktmanagement", "Management", "Change Management",
+                    "Time Management", "Persönlichkeitsentwicklung", "Qualitätsmanagement", "Softwareentwicklung"]
+    assert lebenslauf._titel_aus([], faehigkeiten) == ["Qualitätsmanager", "Softwareentwickler"]
+
+
+def test_name_und_kontaktzeilen_sind_keine_faehigkeiten(umgebung):
+    profil, _, _ = umgebung
+    profil.person.vorname, profil.person.nachname = "Erika", "Probe"
+    text = "Fähigkeiten\nPython\nSoftware:\nExcel\nTelefon:\n0151 2345 6789\nErika\nProbe"
+    a = lebenslauf.ableiten(profil, text, mit_ki=False)
+    assert a.faehigkeiten == ["Python", "Excel"] and a.kontakt["telefon"] == "0151 2345 6789"
+
+
+@pytest.mark.parametrize("zeile", ["-" * 60, "A" + "-a" * 40, "Muster-" * 11 + "weg", "Ab " * 26 + "Ring",
+                                   "x" * 3000, "Mustermann-Schmidt-Müller-Lüdenscheid-" * 2 + "-" * 34 + " 1"])
+def test_strassenmuster_haengt_nicht(zeile):
+    import time
+
+    start = time.perf_counter()
+    lebenslauf.heuristik(f"Persönliche Infos\n{zeile}\nMusterweg 13\n85256 Giebing")
+    assert time.perf_counter() - start < 1
 
 
 def test_ueberschriften_sind_kein_name():
@@ -173,6 +221,32 @@ def test_erneutes_auslesen_laesst_aenderungen_des_nutzers_stehen(umgebung, monke
     # „Neu auslesen“ darf ueberschreiben
     lebenslauf.aktualisieren(profil, pfad, erzwingen=True)
     assert profil.suche.wo == "München"
+
+
+def test_umkreis_und_leerer_ort_des_nutzers_bleiben(umgebung, monkeypatch):
+    profil, pfad, datei = umgebung
+    _ki(monkeypatch)
+    lebenslauf.aktualisieren(profil, pfad)
+    assert (profil.suche.wo, profil.suche.umkreis) == ("München", lebenslauf.UMKREIS_SUCHORT)
+    profil.suche.umkreis = 80  # nur den Umkreis geaendert
+    datei.write_text(TEXT + "\nZertifikate\nScrum", encoding="utf-8")
+    lebenslauf.aktualisieren(profil, pfad)
+    assert (profil.suche.wo, profil.suche.umkreis) == ("München", 80)
+    profil.suche.wo = ""  # bewusst ganz Deutschland
+    datei.write_text(TEXT + "\nZertifikate\nScrum, Kanban", encoding="utf-8")
+    _, uebernommen = lebenslauf.aktualisieren(profil, pfad)
+    assert profil.suche.wo == "" and "Ort" not in uebernommen
+
+
+def test_eigene_jobtitel_werden_nie_abgeschnitten(umgebung, monkeypatch):
+    profil, pfad, datei = umgebung
+    _ki(monkeypatch)
+    lebenslauf.aktualisieren(profil, pfad)
+    eigene = [f"Eigener Titel {i}" for i in range(lebenslauf.MAX_JOBTITEL)]
+    profil.suche.was = [*profil.suche.was, *eigene]
+    datei.write_text(TEXT + "\nZertifikate\nScrum", encoding="utf-8")
+    lebenslauf.aktualisieren(profil, pfad)
+    assert profil.suche.was[:2] == ["Produktmanager", "IT-Projektmanager"] and profil.suche.was[-10:] == eigene
 
 
 def test_ohne_ki_wohnort_mit_grossem_umkreis_und_titel_aus_den_abschnitten(umgebung):
@@ -265,8 +339,9 @@ def test_vorlage_nutzt_werdegang_und_passende_faehigkeiten(umgebung):
     score = Score(ref="1", gesamt=80, passung=80, sentiment=50, treffer=["Python", "SQL", "Jira"])
     ergebnis = anschreiben.erzeuge_geprueft(job, profil, score, mit_llm=False)
     assert ergebnis.quelle == "vorlage"
-    assert ("Zuletzt war ich bei Augustinum im Bereich Digitalisierung von Geschäftsprozessen tätig, davor als "
-            "Produktverantwortlicher bei Muster Software GmbH.") in ergebnis.text
+    # Die neueste Station (Augustinum) ist ohne KI nicht sicher zugeordnet: nur die sichere, ohne „Zuletzt“
+    assert "Unter anderem war ich als Produktverantwortlicher bei Muster Software GmbH tätig." in ergebnis.text
+    assert "Augustinum" not in ergebnis.text
     assert "Python, SQL." in ergebnis.text and "Jira" not in ergebnis.text  # nur, was im Lebenslauf steht
 
 
@@ -283,10 +358,48 @@ def test_vorlage_nennt_den_ki_grund(umgebung, monkeypatch):
 
 
 def test_laufende_station_heisst_derzeit():
-    a = lebenslauf.Ableitung(stationen=[{"rolle": "Entwickler", "arbeitgeber": "Demo AG", "zeitraum": "2024 - heute"},
-                                        {"rolle": "Werkstudent", "arbeitgeber": "Uni X", "zeitraum": "2020 - 2023"}])
+    a = lebenslauf.Ableitung(stationen=[
+        {"rolle": "Werkstudent", "arbeitgeber": "Uni X", "zeitraum": "2020 - 2023", "sicher": True},
+        {"rolle": "Entwickler", "arbeitgeber": "Demo AG", "zeitraum": "seit 03/2024", "sicher": True}])
     assert lebenslauf.stationssatz(a) == ("Derzeit bin ich als Entwickler bei Demo AG tätig, davor war ich als "
                                           "Werkstudent bei Uni X.")
+
+
+def test_ki_vorlage_mit_ki_stationen(umgebung, monkeypatch):
+    profil, pfad, _ = umgebung
+    _ki(monkeypatch)
+    a, _ = lebenslauf.aktualisieren(profil, pfad)
+    assert all(s["sicher"] for s in a.stationen)  # steht so im Lebenslauf
+    assert lebenslauf.stationssatz(profil=profil) == (
+        "Zuletzt war ich bei Augustinum im Bereich Digitalisierung von Geschäftsprozessen tätig, davor als "
+        "Produktverantwortlicher bei Muster Software GmbH.")
+
+
+def test_erfundene_station_der_ki_ist_nicht_sicher(umgebung, monkeypatch):
+    profil, pfad, _ = umgebung
+    erfunden = {"rolle": "Head of Product", "arbeitgeber": "Weltkonzern AG", "zeitraum": "2026 - heute"}
+    _ki(monkeypatch, {**KI_ANTWORT, "stationen": [erfunden, *KI_ANTWORT["stationen"]]})
+    a, _ = lebenslauf.aktualisieren(profil, pfad)
+    assert [s["sicher"] for s in a.stationen] == [False, True, True]
+    satz = lebenslauf.stationssatz(profil=profil)
+    assert "Weltkonzern" not in satz and satz.startswith("Unter anderem war ich bei Augustinum")
+
+
+def test_ohne_ki_stationen_keine_geratenen_aus_der_heuristik(umgebung, monkeypatch):
+    profil, pfad, _ = umgebung
+    _ki(monkeypatch, {**KI_ANTWORT, "stationen": []})
+    a, _ = lebenslauf.aktualisieren(profil, pfad)
+    assert a.stationen == [] and lebenslauf.stationssatz(profil=profil) == ""
+
+
+def test_neuer_unlesbarer_lebenslauf_liefert_keinen_alten_werdegang(umgebung, monkeypatch):
+    profil, pfad, datei = umgebung
+    _ki(monkeypatch)
+    lebenslauf.aktualisieren(profil, pfad)
+    assert lebenslauf.stationssatz(profil=profil)
+    datei.write_text("", encoding="utf-8")  # z. B. ein eingescanntes PDF ohne Text
+    assert lebenslauf.aktualisieren(profil, pfad) == (None, [])
+    assert lebenslauf.stationssatz(profil=profil) == "" and anschreiben._werdegang(profil) == ""
 
 
 def test_themen_werden_wunschthemen_der_bewertung(umgebung, monkeypatch):

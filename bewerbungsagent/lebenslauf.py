@@ -25,7 +25,7 @@ from .scoring import llm as llm_modul
 log = logging.getLogger(__name__)
 
 # Hoeher setzen, wenn sich das Auslesen verbessert: aeltere Auswertungen werden dann einmal neu gelesen
-VERSION = 2
+VERSION = 3
 KONTAKT_FELDER = ("vorname", "nachname", "email", "telefon", "strasse", "plz", "ort")
 # Ohne KI ausgelesen: hoechstens so oft einen neuen KI-Versuch starten
 NEU_VERSUCHEN_STUNDEN = 6
@@ -44,7 +44,8 @@ class Ableitung:
     suchort: str = ""        # wo gesucht wird (bei kleinen Orten die naechste groessere Stadt)
     faehigkeiten: list[str] = field(default_factory=list)
     themen: list[str] = field(default_factory=list)  # Fachgebiete/Interessen fuer die Bewertung (Wunschthemen)
-    stationen: list[dict[str, str]] = field(default_factory=list)  # rolle, arbeitgeber, zeitraum (neueste zuerst)
+    # rolle, arbeitgeber, zeitraum, sicher (neueste zuerst). Nur sichere Stationen gehen in Anschreiben und Jobtitel
+    stationen: list[dict[str, Any]] = field(default_factory=list)
     kontakt: dict[str, str] = field(default_factory=dict)
     quelle: str = "heuristik"  # ki | heuristik
     fehler: str = ""           # warum die KI nicht geholfen hat (leer: KI ok oder kein KI-Zugang)
@@ -167,22 +168,34 @@ _DATUM = re.compile(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{1,2}[./]\d{4}|\d{4}")
 _PLZ_ORT = re.compile(r"(?:^|,\s*)(?:D-)?(\d{5})\s+([A-ZÄÖÜ][a-zäöüß]+(?:[ -](?:am|an|im|in|bei|der|ob|"
                       r"[A-ZÄÖÜ][a-zäöüß]+))*)\s*$", re.M)
 _KEIN_ORT = {"euro", "eur", "mitarbeiter", "mitarbeitende", "kunden", "stunden", "teilnehmer", "nutzer", "user"}
-_STRASSE = re.compile(
-    r"^([A-ZÄÖÜ][\wäöüß.\-]*(?:[ -][\wäöüß.\-]+)*?[ -]?(?i:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer|"
-    r"steig|pfad|chaussee))\s+(\d{1,3}\s?[a-zA-Z]?)\s*(?:,|$)",
-    re.M,
-)
+# Strasse mit Hausnummer am Zeilenanfang. Die Woerter sind eindeutig getrennt (der Trenner gehoert nie zum Wort) und
+# hoechstens sechs – so kann das Muster auch bei langen Strich- oder Punktlinien nicht haengen.
+_STRASSE = re.compile(r"([A-ZÄÖÜ][\w.]*(?:[ -][\w.]+){0,5})\s+(\d{1,3}\s?[a-zA-Z]?)\s*(?:,|$)")
+_STRASSEN_ENDE = re.compile(r"(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer|steig|pfad|chaussee)$",
+                            re.I)
 _WORT = re.compile(r"^[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?$")
 _ZEITRAUM = re.compile(
-    r"(?:\d{1,2}[./])?\d{4}\s*(?:-|–|—|bis)\s*(?:(?:\d{1,2}[./])?\d{4}|heute|jetzt|aktuell|laufend|today|present|now)",
+    r"\b(?:seit|since|ab)\s+(?:\d{1,2}[./])?\d{4}"
+    r"|(?:\d{1,2}[./])?\d{4}\s*(?:-|–|—|bis)\s*(?:(?:\d{1,2}[./])?\d{4}|bis\s+(?:dato|heute)|dato|heute|jetzt|"
+    r"aktuell|laufend|today|present|now|(?=\s*$))",
     re.I,
 )
+# Woran man eine laufende Station erkennt („seit 2019“, „2019 – heute“, „03/2019 –“ ohne Ende)
+_LAUFEND = re.compile(r"heute|jetzt|aktuell|laufend|dato|today|present|now|\b(?:seit|since|ab)\s|[-–—]\s*$|\bbis\s*$",
+                      re.I)
 _FIRMA = re.compile(r"\b(GmbH|AG|SE|KG|KGaA|e\.\s?V\.|Inc\.?|Ltd\.?|GbR|mbH|UG|OHG|Holding|Gruppe|Group|"
                     r"Universität|Hochschule|Klinik|Klinikum|Stadt|Landkreis|Bank)\b")
+# „Rossmann, Hannover“: Arbeitgeber mit Ort
+_FIRMA_ORT = re.compile(r"^[^,]{2,60},\s*[A-ZÄÖÜ][a-zäöüß]+(?:[ -][A-ZÄÖÜ][a-zäöüß]+)?$")
 # Endungen, an denen man eine Berufsbezeichnung erkennt ("als Programmierer" statt "im Bereich ...")
 _ROLLE = re.compile(r"(?:er|in|ent|ant|ist|or|eur|mann|frau|leiter|manager|owner|developer|engineer|consultant|"
                     r"analyst|architect|lead|berater|referent|assistent|assistenz|trainee|praktikant|werkstudent)$",
                     re.I)
+
+
+# Kontaktangaben als eigene Zeile („Telefon:“) – im Abschnitt Faehigkeiten beginnt damit der persoenliche Teil
+_KONTAKT_LABEL = re.compile(r"^(?:tel(?:efon)?|mobil|handy|e-?mail|adresse|anschrift|geburtsdatum|geboren|geburtsort|"
+                            r"nationalität|staatsangehörigkeit|familienstand|wohnort|führerschein)\.?\s*:$", re.I)
 
 
 def _abschnitte(text: str) -> dict[str, list[str]]:
@@ -195,6 +208,11 @@ def _abschnitte(text: str) -> dict[str, list[str]]:
         art = _UEBERSCHRIFT_ZU.get(zeile.lower().rstrip(":").strip())
         if art:
             aktuell = art
+            continue
+        if aktuell == "faehigkeiten" and zeile.endswith(":"):
+            # „Software:“ ist eine Unterueberschrift, keine Faehigkeit; „Telefon:“ beendet den Abschnitt
+            if _KONTAKT_LABEL.match(zeile):
+                aktuell = "persoenlich"
             continue
         teile.setdefault(aktuell, []).append(zeile)
     return teile
@@ -232,34 +250,77 @@ def _faehigkeiten(zeilen: list[str]) -> list[str]:
     ergebnis: list[str] = []
     for zeile in zeilen:
         for teil in re.split(r"[,;•·|]", zeile):
+            if ":" in teil:  # „Programmiersprachen: Python“ -> „Python“
+                teil = teil.split(":", 1)[1]
             teil = re.sub(r"\s+", " ", teil).strip(" -–:.")
+            if "@" in teil or "://" in teil or teil.lower().startswith("www."):
+                continue
             if 1 <= len(teil) <= 40 and len(teil.split()) <= 4 and not re.search(r"\d{4}", teil):
                 if teil.casefold() not in {e.casefold() for e in ergebnis}:
                     ergebnis.append(teil)
     return ergebnis[:15]
 
 
-def _stationen(zeilen: list[str]) -> list[dict[str, str]]:
+def _ist_firma(text: str) -> bool:
+    return bool(_FIRMA.search(text) or _FIRMA_ORT.match(text))
+
+
+def _zuordnen(neben: str, darunter: str) -> tuple[str, str, bool]:
+    """(Rolle, Arbeitgeber, sicher) aus der Angabe neben dem Zeitraum und der Zeile darunter.
+
+    Sicher nur, wenn eindeutig: eine Seite ist erkennbar ein Arbeitgeber (Rechtsform oder „Firma, Stadt“), die
+    andere eine Berufsbezeichnung. Sonst die uebliche Anordnung (Arbeitgeber neben dem Zeitraum), aber unsicher.
+    """
+    fn, fd = _ist_firma(neben), _ist_firma(darunter)
+    rn = ist_berufsbezeichnung(neben) and not fn
+    rd = ist_berufsbezeichnung(darunter) and not fd
+    if fn and rd and not fd:
+        return darunter, neben, True
+    if fd and rn and not fn:
+        return neben, darunter, True
+    if (fd and not fn) or (rn and not rd):
+        return neben, darunter, False
+    return darunter, neben, False
+
+
+def _stationen(zeilen: list[str]) -> list[dict[str, Any]]:
     """Stationen aus dem Abschnitt Erfahrung: Zeile mit Zeitraum (oft mit Arbeitgeber) und Rolle daneben."""
-    stationen: list[dict[str, str]] = []
+    stationen: list[dict[str, Any]] = []
     for i, zeile in enumerate(zeilen):
         m = _ZEITRAUM.search(zeile)
         if not m:
             continue
         rest = (zeile[:m.start()] + zeile[m.end():]).strip(" ,|–-·")
         folgende = [z for z in zeilen[i + 1:i + 3] if not _ZEITRAUM.search(z) and len(z.split()) <= 8]
-        rolle, arbeitgeber = "", ""
+        rolle, arbeitgeber, sicher = "", "", False
         if rest and folgende:
-            arbeitgeber, rolle = rest, folgende[0]
-            if _FIRMA.search(rolle) and not _FIRMA.search(arbeitgeber):
-                arbeitgeber, rolle = rolle, arbeitgeber
+            rolle, arbeitgeber, sicher = _zuordnen(rest, folgende[0])
         elif folgende:
             rolle = folgende[0]
-            if len(folgende) > 1 and _FIRMA.search(folgende[1]):
+            if len(folgende) > 1 and _ist_firma(folgende[1]):
                 arbeitgeber = folgende[1]
+                sicher = ist_berufsbezeichnung(rolle) and not _ist_firma(rolle)
         if rolle:
-            stationen.append({"rolle": rolle, "arbeitgeber": arbeitgeber, "zeitraum": m.group(0)})
-    return stationen[:8]
+            stationen.append({"rolle": rolle, "arbeitgeber": arbeitgeber, "zeitraum": m.group(0), "sicher": sicher})
+    return sortiert(stationen)[:8]
+
+
+def _datum_ende(zeitraum: str) -> tuple[tuple[int, int], tuple[int, int]]:
+    """((Jahr, Monat) des Endes, (Jahr, Monat) des Beginns); laufend endet jetzt, unbekannt = (0, 0)."""
+    daten = [(int(j), int(m or 12)) for m, j in re.findall(r"(?:(\d{1,2})[./])?(\d{4})", zeitraum or "")]
+    beginn = daten[0] if daten else (0, 0)
+    ende = daten[-1] if len(daten) > 1 else (0, 0)
+    if _LAUFEND.search((zeitraum or "").strip()):
+        heute = datetime.now(zeitplan.ZEITZONE)
+        ende = max(ende, (heute.year, heute.month))
+    elif len(daten) == 1:
+        ende = beginn  # nur ein Jahr angegeben
+    return ende, beginn
+
+
+def sortiert(stationen: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Neueste zuerst – nach dem Ende (laufend = jetzt), nicht nach der Reihenfolge im Lebenslauf."""
+    return sorted(stationen, key=lambda s: _datum_ende(s.get("zeitraum", "")), reverse=True)
 
 
 def ist_berufsbezeichnung(rolle: str) -> bool:
@@ -267,22 +328,49 @@ def ist_berufsbezeichnung(rolle: str) -> bool:
     return bool(_ROLLE.search(letztes)) or bool(re.search(r"\b(manager|entwickler|kaufmann|kauffrau)\b", rolle, re.I))
 
 
-def _titel_aus(stationen: list[dict[str, str]], faehigkeiten: list[str]) -> list[str]:
-    """Suchbegriffe: neueste Berufsbezeichnung, dann aus Faehigkeiten („…management“ -> „…manager“), dann aeltere."""
-    from .vorschlaege import titel_kern
+# „Zeitmanagement“ oder „Persönlichkeitsentwicklung“ sind Soft Skills, keine Berufe
+_KEIN_BERUF = {"zeit", "selbst", "konflikt", "stress", "team", "change", "termin", "aufgaben", "beschwerde",
+               "emotions", "energie", "persönlichkeits", "weiter", "time", "self", "conflict"}
 
-    rollen = [titel_kern(s["rolle"]) for s in stationen if ist_berufsbezeichnung(s["rolle"])]
-    aus_faehigkeiten = []
-    for f in faehigkeiten:
-        if re.search(r"management$", f, re.I):
-            aus_faehigkeiten.append(re.sub(r"management$", "manager", f, flags=re.I))
-        elif re.search(r"entwicklung$", f, re.I) and len(f.split()) <= 2:
-            aus_faehigkeiten.append(re.sub(r"entwicklung$", "entwickler", f, flags=re.I))
+
+def _beruf_aus(faehigkeit: str) -> str:
+    """„IT-Projektmanagement“ -> „IT-Projektmanager“; Soft Skills und ein bloßes „Management“ nicht."""
+    if len(faehigkeit.split()) > 2:
+        return ""
+    for endung, beruf in (("management", "manager"), ("entwicklung", "entwickler")):
+        if not faehigkeit.casefold().endswith(endung):
+            continue
+        praefix = faehigkeit[:-len(endung)]
+        kern = re.split(r"[\s-]", praefix.strip(" -"))[-1].casefold()
+        if not kern or kern in _KEIN_BERUF:
+            return ""
+        return praefix + (beruf.capitalize() if faehigkeit[-len(endung)].isupper() else beruf)
+    return ""
+
+
+def _titel_aus(stationen: list[dict[str, Any]], faehigkeiten: list[str]) -> list[str]:
+    """Suchbegriffe: neueste Berufsbezeichnung, dann aus Faehigkeiten („…management“ -> „…manager“), dann aeltere.
+
+    Nur aus sicher zugeordneten Stationen – sonst koennte ein Arbeitgeber („Rossmann“) zum Jobtitel werden.
+    """
+    from .vorschlaege import titel_kern, zu_allgemein
+
+    rollen = [titel_kern(s["rolle"]) for s in sortiert(stationen)
+              if s.get("sicher") is True and ist_berufsbezeichnung(s["rolle"])]
+    aus_faehigkeiten = [t for t in map(_beruf_aus, faehigkeiten) if t]
     titel: list[str] = []
     for t in [*rollen[:1], *aus_faehigkeiten, *rollen[1:]]:
-        if t and t.casefold() not in {x.casefold() for x in titel}:
+        if t and not zu_allgemein(t) and t.casefold() not in {x.casefold() for x in titel}:
             titel.append(t)
     return titel[:8]
+
+
+def _strasse(text: str) -> str:
+    for zeile in text.splitlines():
+        zeile = zeile.strip()
+        if len(zeile) <= 80 and (m := _STRASSE.match(zeile)) and _STRASSEN_ENDE.search(m.group(1)):
+            return f"{m.group(1).strip()} {m.group(2).strip()}"
+    return ""
 
 
 def heuristik(text: str) -> Ableitung:
@@ -298,8 +386,8 @@ def heuristik(text: str) -> Ableitung:
         if m.group(2).split()[0].lower() not in _KEIN_ORT:
             kontakt["plz"], kontakt["ort"] = m.group(1), m.group(2).strip()
             break
-    if m := _STRASSE.search(text):
-        kontakt["strasse"] = f"{m.group(1).strip()} {m.group(2).strip()}"
+    if strasse := _strasse(text):
+        kontakt["strasse"] = strasse
     faehigkeiten = _faehigkeiten(teile.get("faehigkeiten", []))
     stationen = _stationen(teile.get("erfahrung", []))
     # Kein Name aus Faehigkeiten oder Werdegang („Programmierer“ / „Python“)
@@ -331,6 +419,12 @@ def _liste(werte: Any, grenze: int, *, titel: bool = False) -> list[str]:
     return ergebnis[:grenze]
 
 
+def _steht_da(wert: str, im_text: str) -> bool:
+    """Alle laengeren Woerter von `wert` kommen im (kleingeschriebenen) Lebenslauf vor."""
+    worte = re.findall(r"\w{3,}", wert.casefold())
+    return bool(worte) and all(w in im_text for w in worte)
+
+
 def _ortsname(wert: Any) -> str:
     return re.sub(r"^\d{5}\s*", "", str(wert or "")).strip()
 
@@ -353,14 +447,19 @@ def per_ki(profil: Profil, text: str) -> Ableitung:
     if _ist_datum(kontakt.get("telefon", "")):
         kontakt["telefon"] = ""
     stationen = []
+    im_text = text.casefold()
     for s in daten.get("stationen") if isinstance(daten.get("stationen"), list) else []:
         if isinstance(s, dict) and str(s.get("rolle") or "").strip():
-            stationen.append({k: str(s.get(k) or "").strip()[:120] for k in ("rolle", "arbeitgeber", "zeitraum")})
+            station: dict[str, Any] = {k: str(s.get(k) or "").strip()[:120] for k in ("rolle", "arbeitgeber", "zeitraum")}
+            # Sicher nur, was so im Lebenslauf steht (die KI darf keine Station erfinden oder umdeuten)
+            station["sicher"] = bool(station["arbeitgeber"]) and all(
+                _steht_da(station[k], im_text) for k in ("rolle", "arbeitgeber"))
+            stationen.append(station)
     ort = _ortsname(daten.get("ort")) or kontakt.get("ort", "")
     return Ableitung(
         kurzprofil=kurzprofil, jobtitel=jobtitel, ort=ort, suchort=_ortsname(daten.get("suchort")),
         faehigkeiten=_liste(daten.get("faehigkeiten"), 15), themen=_liste(daten.get("themen"), 6),
-        stationen=stationen[:8],
+        stationen=sortiert(stationen)[:8],
         kontakt={k: v for k, v in kontakt.items() if v}, quelle="ki",
     )
 
@@ -379,8 +478,12 @@ def ableiten(profil: Profil, text: str, *, mit_ki: bool = True) -> Ableitung:
         ohne = heuristik(text)
         if ohne.kontakt.get("email"):
             ergebnis.kontakt.setdefault("email", ohne.kontakt["email"])  # sonst nichts mischen
-        ergebnis.stationen = ergebnis.stationen or ohne.stationen
     ergebnis = ergebnis or heuristik(text)
+    # Der eigene Name ist nie eine Faehigkeit (zweispaltige PDFs: der Name rutscht unter „Fähigkeiten“)
+    p = profil.person
+    namen = {w.casefold() for teil in (p.vorname, p.nachname, ergebnis.kontakt.get("vorname"),
+                                        ergebnis.kontakt.get("nachname")) for w in (teil or "").split()}
+    ergebnis.faehigkeiten = [f for f in ergebnis.faehigkeiten if f.casefold() not in namen]
     ergebnis.fehler = fehler
     ergebnis.pruefsumme = pruefsumme(text)
     ergebnis.zeit = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -403,13 +506,17 @@ def _vorher(alt: Ableitung | None) -> dict[str, Any]:
 
 
 def _zusammen(neu: list[str], aktuell: list[str], frueher: list[str], grenze: int) -> list[str]:
-    """Neue Werte aus dem Lebenslauf zuerst, eigene Eintraege des Nutzers bleiben dahinter."""
-    weg = {x.casefold() for x in frueher} - {x.casefold() for x in neu}
+    """Neue Werte aus dem Lebenslauf zuerst, eigene Eintraege des Nutzers bleiben dahinter.
+
+    Begrenzt wird nur der Teil aus dem Lebenslauf – eigene Eintraege werden nie abgeschnitten.
+    """
+    aus_lebenslauf = neu[:grenze]
+    schon = {x.casefold() for x in [*frueher, *aus_lebenslauf]}
     ergebnis: list[str] = []
-    for x in [*neu, *(a for a in aktuell if a.casefold() not in weg)]:
+    for x in [*aus_lebenslauf, *(a for a in aktuell if a.casefold() not in schon)]:
         if x.casefold() not in {e.casefold() for e in ergebnis}:
             ergebnis.append(x)
-    return ergebnis[:grenze]
+    return ergebnis
 
 
 def uebernehmen(profil: Profil, a: Ableitung, alt: Ableitung | None = None, *, erzwingen: bool = False) -> list[str]:
@@ -423,8 +530,9 @@ def uebernehmen(profil: Profil, a: Ableitung, alt: Ableitung | None = None, *, e
     aenderungen: list[str] = []
 
     def frei(schluessel: str, aktuell: Any) -> bool:
-        # Beim ersten Auslesen ist der Lebenslauf die Quelle; danach nur, was der Nutzer nicht geaendert hat
-        return erzwingen or alt is None or not aktuell or (schluessel in vorher and aktuell == vorher[schluessel])
+        # Beim ersten Auslesen ist der Lebenslauf die Quelle; danach nur, was der Nutzer seitdem nicht geaendert
+        # hat – auch ein leerer Ort (ganz Deutschland) oder der eigene Wohnort kann Absicht sein
+        return erzwingen or alt is None or (schluessel in vorher and aktuell == vorher[schluessel])
 
     # Das Kurzprofil gehoert dem Lebenslauf (es ist in den Einstellungen nicht mehr einzeln bearbeitbar)
     if a.kurzprofil:
@@ -451,9 +559,12 @@ def uebernehmen(profil: Profil, a: Ableitung, alt: Ableitung | None = None, *, e
             profil.bewertung.wunsch = wunsch
             aenderungen.append("Themen")
     suchort = a.suchort or a.ort  # nie person.ort als Ersatz: nur, was im Lebenslauf steht
-    # Ein automatisch aus den Kontaktdaten gesetzter Ort (Assistent) darf dem Suchort weichen
-    if suchort and (frei("wo", profil.suche.wo) or profil.suche.wo == profil.person.ort):
-        umkreis = UMKREIS_SUCHORT if a.suchort and a.quelle == "ki" else max(int(profil.suche.umkreis), UMKREIS_WOHNORT)
+    if suchort and frei("wo", profil.suche.wo):
+        umkreis = int(profil.suche.umkreis)
+        # Der Umkreis gehoert dem Nutzer, sobald er ihn geaendert hat (aeltere Auswertungen kannten ihn nicht)
+        if "umkreis" not in vorher or frei("umkreis", umkreis):
+            umkreis = UMKREIS_SUCHORT if a.suchort and a.quelle == "ki" else max(umkreis, UMKREIS_WOHNORT)
+            uebernommen["umkreis"] = umkreis
         uebernommen["wo"] = suchort
         if (suchort, umkreis) != (profil.suche.wo, int(profil.suche.umkreis)):
             profil.suche.wo, profil.suche.umkreis = suchort, umkreis
@@ -521,7 +632,7 @@ def aktualisieren(
 # --------------------------------------------------------------------------- #
 
 def _laeuft_noch(zeitraum: str) -> bool:
-    if re.search(r"heute|jetzt|aktuell|laufend|today|present|now", zeitraum, re.I):
+    if _LAUFEND.search(zeitraum.strip()):
         return True
     ende = re.findall(r"(?:(\d{1,2})[./])?(\d{4})", zeitraum)
     if not ende:
@@ -531,21 +642,35 @@ def _laeuft_noch(zeitraum: str) -> bool:
     return (int(jahr), int(monat or 12)) >= (heute.year, heute.month)
 
 
-def _als(station: dict[str, str]) -> str:
+def _als(station: dict[str, Any]) -> str:
     rolle, arbeitgeber = station.get("rolle", ""), station.get("arbeitgeber", "")
+    if _FIRMA_ORT.match(arbeitgeber) and not _FIRMA.search(arbeitgeber):
+        arbeitgeber = " in ".join(t.strip() for t in arbeitgeber.rsplit(",", 1))  # „Rossmann in Hannover“
     bei = f" bei {arbeitgeber}" if arbeitgeber else ""
     return f"als {rolle}{bei}" if ist_berufsbezeichnung(rolle) else f"{bei.strip()} im Bereich {rolle}".strip()
 
 
-def stationssatz(ableitung: Ableitung | None = None) -> str:
-    """Ein Satz zum Werdegang, nur aus dem Lebenslauf (leer, wenn nichts Belastbares da ist)."""
+def stationssatz(ableitung: Ableitung | None = None, *, profil: Profil | None = None) -> str:
+    """Ein Satz zum Werdegang, nur aus dem Lebenslauf (leer, wenn nichts Belastbares da ist).
+
+    Nur sicher zugeordnete Stationen. „Derzeit“/„Zuletzt“ nur, wenn es wirklich die neueste Station ist – sonst
+    neutral „Unter anderem …“. Mit `profil` nur, wenn die Auswertung zum aktuellen Lebenslauf gehoert (ein neuer,
+    unlesbarer Lebenslauf liefert keine Fakten aus dem alten).
+    """
     a = ableitung if ableitung is not None else gespeichert()
-    stationen = [s for s in (a.stationen if a else []) if s.get("rolle") and s.get("arbeitgeber")]
-    if not stationen:
+    if a is None:
         return ""
-    erste = stationen[0]
+    if profil is not None and a.pruefsumme != pruefsumme(dokumente.lebenslauf_text(profil)):
+        return ""
+    alle = sortiert([s for s in a.stationen if s.get("rolle")])
+    sicher = [s for s in alle if s.get("sicher") is True and s.get("arbeitgeber")]
+    if not sicher:
+        return ""
+    erste = sicher[0]
+    if erste is not alle[0]:
+        return f"Unter anderem war ich {_als(erste)} tätig."
     aktuell = _laeuft_noch(erste.get("zeitraum", ""))
     satz = ("Derzeit bin ich " if aktuell else "Zuletzt war ich ") + _als(erste) + " tätig"
-    if len(stationen) > 1:
-        satz += (", davor war ich " if aktuell else ", davor ") + _als(stationen[1])
+    if len(alle) > 1 and len(sicher) > 1 and alle[1] is sicher[1]:
+        satz += (", davor war ich " if aktuell else ", davor ") + _als(sicher[1])
     return satz + "."

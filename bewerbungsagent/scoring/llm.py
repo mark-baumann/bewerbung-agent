@@ -197,19 +197,32 @@ def provider(modell: str | None = None) -> str | None:
 
 
 _MODELL_FEHLT_TEXT = re.compile(r"model_not_found|model .{0,80}(does not exist|not found)", re.I)
+# 429 nur als Statuscode – nicht jede Zahl mit 429 (z. B. „4290 Tokens“)
+_UEBERLASTET = re.compile(r"error code:?\s*429\b|\b429 too many|too many requests|rate[ _-]?limit", re.I)
+_VERBOTEN = re.compile(r"error code:?\s*403\b|\b403 forbidden|forbidden", re.I)
+_ABO = re.compile(r"subscription|upgrade|\bplan\b|\bpro\b|premium|not (?:allowed|permitted)|no access|access to (?:this )?"
+                  r"model|abo", re.I)
+_ZU_LANG = re.compile(r"context[ _]length|context window|maximum context|too many tokens|prompt is too long|"
+                      r"input is too long|reduce the length", re.I)
 
 
 def ki_grund(fehler: str | BaseException) -> str:
     """Verstaendliche Ursache, warum die KI nicht geantwortet hat (fuer Hinweise in der Oberflaeche)."""
     text = str(fehler)
     k = text.lower()
+    if isinstance(fehler, json.JSONDecodeError):
+        return "die KI hat keine verwertbare Antwort geliefert"
     if any(w in k for w in ("insufficient_quota", "credit", "quota")):
         return "das KI-Konto hat kein Guthaben mehr"
+    if _VERBOTEN.search(text) and _ABO.search(text):
+        return "dein KI-Zugang erlaubt dieses Modell nicht"
     if any(w in k for w in ("invalid_api_key", "incorrect api key", "unauthorized", "authentication", "error code: 401",
                             "error code: 403", " 401 ", " 403 ")):
         return "der KI-Schlüssel wird abgelehnt"
-    if any(w in k for w in ("rate limit", "rate_limit", "ratelimit", "429", "too many requests")):
+    if _UEBERLASTET.search(text):
         return "die KI ist gerade überlastet"
+    if _ZU_LANG.search(text):
+        return "die Anfrage ist für das Modell zu lang"
     if isinstance(fehler, ModellNichtGefunden) or _MODELL_FEHLT_TEXT.search(text):
         return "das KI-Modell gibt es bei deinem Zugang nicht"
     if any(w in k for w in ("timed out", "timeout", "zeitüberschreitung")):

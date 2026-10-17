@@ -43,6 +43,12 @@ def _datum(pfad: Path) -> str:
     return datetime.fromtimestamp(pfad.stat().st_mtime, zeitplan.ZEITZONE).strftime("%d.%m.%Y")
 
 
+def _station(station: dict) -> str:
+    text = station["rolle"] + (f" ({station['arbeitgeber']})" if station.get("arbeitgeber") else "")
+    # Unsicher zugeordnet (Rolle oder Arbeitgeber?): grau – die nutze ich nicht im Anschreiben
+    return text if station.get("sicher") is True else f":gray[{text}]"
+
+
 # --------------------------------------------------------------------------- #
 # Die Datei
 # --------------------------------------------------------------------------- #
@@ -107,10 +113,12 @@ if datei is not None:
                 zeilen.append(f"**Themen:** {', '.join(ableitung.themen)}")
             if ableitung.stationen:
                 zeilen.append("**Werdegang:** " + " · ".join(
-                    f"{x['rolle']}" + (f" ({x['arbeitgeber']})" if x.get("arbeitgeber") else "")
-                    for x in ableitung.stationen[:4]))
+                    _station(x) for x in lebenslauf.sortiert(ableitung.stationen)[:4]))
             st.markdown("  \n".join(zeilen))
-            if ableitung.quelle == "ki":
+            if neu_auslesen and ableitung.quelle == "ki" and ableitung.fehler:  # die KI-Auswertung blieb stehen
+                st.info(f"Neu auslesen ging gerade nicht – {ableitung.fehler}. Es gilt weiter die letzte Auswertung "
+                        "mit KI.", icon=":material/info:")
+            elif ableitung.quelle == "ki":
                 st.caption("Mit KI gelesen. Gilt für Suche, Bewertung und Anschreiben – Jobtitel und Ort kannst du "
                            "unter „Suchen“ jederzeit ändern.")
             elif ableitung.fehler:
