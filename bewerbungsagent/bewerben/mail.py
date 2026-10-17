@@ -20,7 +20,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formataddr, make_msgid
+from email.utils import formataddr, getaddresses, make_msgid
 from pathlib import Path
 
 from ..config import Profil
@@ -169,7 +169,7 @@ def sende(nachricht: EmailMessage, konfig: SmtpKonfig) -> str:
     except OSError as e:  # smtplib.SMTPException ist ein OSError
         raise NichtGesendet(str(e) or type(e).__name__) from e
     try:
-        server.send_message(nachricht)
+        abgelehnt = server.send_message(nachricht)
     except _ABGELEHNT as e:
         raise NichtGesendet(str(e) or type(e).__name__) from e
     finally:
@@ -177,6 +177,10 @@ def sende(nachricht: EmailMessage, konfig: SmtpKonfig) -> str:
             server.quit()
         except smtplib.SMTPException:
             pass
+    # Die Kopie an dich (Bcc) kam an, der Empfaenger wurde aber abgelehnt: die Bewerbung ist nicht raus
+    an = {adresse.lower() for _, adresse in getaddresses(nachricht.get_all("To", [])) if adresse}
+    if abgelehnt and an & {str(a).lower() for a in abgelehnt}:
+        raise NichtGesendet(f"Empfänger abgelehnt: {abgelehnt}")
     return str(nachricht["Message-ID"])
 
 

@@ -536,7 +536,8 @@ def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, mo
     smtp_env(monkeypatch)
     sicher = "Ihre Bewerbung senden Sie bitte an hr@firma.de."
     db.speichere_jobs([job("ki", beschreibung=sicher), job("absturz", beschreibung=sicher),
-                       job("ohne_url", beschreibung=sicher), job("ohne"), job("mail"), job("mail_abbruch")])
+                       job("ohne_url", beschreibung=sicher), job("ohne"), job("mail"), job("mail_abbruch"),
+                       job("mail_netz")])
     quota = ("Nicht sicher abgeschickt – bitte prüfen, ob eine Bestätigung kam, bevor du erneut sendest. Kein "
              "Ergebnis vom Agenten. Fehler: Error code: 429 - {'type': 'insufficient_quota'}")
     for ref, kanal, hinweis in (
@@ -546,11 +547,12 @@ def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, mo
         ("ohne", "formular", "Kein Lebenslauf hinterlegt – bitte hochladen. Bewerbung nicht gestartet."),
         ("mail", "email", "(535, b'Username and Password not accepted')"),  # vor der Zustellung
         ("mail_abbruch", "email", "Connection unexpectedly closed: timed out"),  # mitten im Versand
+        ("mail_netz", "email", "Connection unexpectedly closed: [Errno 113] No route to host"),  # ebenso
     ):
         db.setze_vorgang(Vorgang(ref=ref, status="fehlgeschlagen", kanal=kanal, anschreiben="Text",
                                  empfaenger="jobs@firma.de" if kanal == "email" else None,
                                  bewerbungs_url=f"https://karriere.firma-{ref}.de/job", hinweis=hinweis))
-    assert ablauf.fehlgeschlagene_umleiten(db, profil) == 6
+    assert ablauf.fehlgeschlagene_umleiten(db, profil) == 7
     assert not db.vorgaenge("fehlgeschlagen")
     for ref in ("ki", "absturz"):  # nie per E-Mail oder erneut per Formular, sondern nachfragen
         v = db.vorgang(ref)
@@ -559,8 +561,9 @@ def test_alte_fehlerkarten_werden_umgeleitet_ohne_doppelt_zu_senden(umgebung, mo
     assert (db.vorgang("ohne").status, db.vorgang("ohne").hinweis) == ("wartet", ablauf.HINWEIS_SELBST)
     mail_karte = db.vorgang("mail")  # E-Mail-Fehler: Karte mit Weg E-Mail, „Ja“ versucht es erneut
     assert (mail_karte.status, mail_karte.kanal) == ("wartet", "email") and "ging nicht raus" in mail_karte.hinweis
-    abbruch = db.vorgang("mail_abbruch")  # vielleicht schon raus: nachfragen statt erneut senden
-    assert (abbruch.status, abbruch.kanal, abbruch.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT_MAIL)
+    for ref in ("mail_abbruch", "mail_netz"):  # vielleicht schon raus: nachfragen statt erneut senden
+        abbruch = db.vorgang(ref)
+        assert (abbruch.status, abbruch.kanal, abbruch.hinweis) == ("wartet", "manuell", ablauf.HINWEIS_VIELLEICHT_MAIL)
 
 
 def test_email_fehler_kommt_als_email_karte_zurueck(umgebung, monkeypatch):
@@ -653,6 +656,8 @@ def test_mail_sende_unterscheidet_vorher_und_waehrenddessen(monkeypatch):
             self.fehler = fehler
 
         def send_message(self, n):
+            if isinstance(self.fehler, dict):  # einzelne Empfaenger abgelehnt, der Rest ging raus
+                return self.fehler
             raise self.fehler
 
         def quit(self):
@@ -665,6 +670,14 @@ def test_mail_sende_unterscheidet_vorher_und_waehrenddessen(monkeypatch):
         with pytest.raises(Exception) as info:
             mail.sende(nachricht, konfig)
         assert mail.vor_dem_senden(info.value) is vorher, fehler
+
+    # Nur die Kopie an dich (Bcc) kam an, die Firma wurde abgelehnt: nicht raus
+    monkeypatch.setattr(mail, "_verbinde", lambda k: Server({"jobs@firma.de": (550, b"5.1.1 User unknown")}))
+    with pytest.raises(mail.NichtGesendet):
+        mail.sende(nachricht, konfig)
+    # Nur die Kopie an dich wurde abgelehnt: die Bewerbung ist raus
+    monkeypatch.setattr(mail, "_verbinde", lambda k: Server({"ich@example.de": (552, b"Mailbox full")}))
+    assert mail.sende(nachricht, konfig) == nachricht["Message-ID"]
 
 
 def test_unterbrochener_email_versand_fragt_nach_einer_kopie(umgebung):

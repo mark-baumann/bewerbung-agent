@@ -626,3 +626,59 @@ def test_token_abrechnung_zeigt_ki_antworten(umgebung):
     assert not browser._hat_gearbeitet(nur_429)  # keine Antwort-Tokens: die KI hat nie geantwortet
     nur_429.usage = nur_429.usage.model_copy(update={"total_completion_tokens": 120, "entry_count": 1})
     assert browser._hat_gearbeitet(nur_429)
+
+
+def _agent_nach_ki_antwort(b, verlauf=None, fehler=None):
+    """Agent, dessen KI geantwortet hat (Schritt danach per Timeout verloren); liefert `verlauf` oder wirft `fehler`."""
+    from types import SimpleNamespace
+
+    class Agent:
+        llm = None
+
+        async def run(self, max_steps, on_step_end=None):
+            b.aufrufe += 1
+            await on_step_end(SimpleNamespace(state=SimpleNamespace(last_model_output="klick", n_steps=2)))
+            if fehler:
+                raise fehler
+            return verlauf
+
+    return Agent()
+
+
+def test_startfehler_im_verlauf_nach_ki_antwort_ist_kein_startfehler(umgebung, monkeypatch):
+    """Startnavigation mit Startfehler, danach hat die KI geklickt: weder E-Mail-Ausweg noch erneutes Formular."""
+    import asyncio
+
+    profil, db, _ = umgebung
+    verlauf = Verlauf(1, [START_TIMEOUT])
+    b = _echter_browser(monkeypatch, profil, verlauf)
+    monkeypatch.setattr(b, "baue_agent", lambda *a, **k: _agent_nach_ki_antwort(b, verlauf))
+    lauf = asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert b.aufrufe == 1 and lauf.gearbeitet and not (lauf.rohdaten or {}).get("browser_startfehler")
+
+    _freigegeben(db, profil)
+    db.speichere_jobs([replace(job(), beschreibung="Ihre Bewerbung senden Sie bitte an jobs@firma.de.")])
+    for name, wert in (("SMTP_HOST", "smtp.example.de"), ("SMTP_BENUTZER", "ich@example.de"), ("SMTP_PASSWORT", "x")):
+        monkeypatch.setenv(name, wert)
+    mails = []
+    ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b, mail_sender=lambda *a: mails.append(a))
+    v = db.vorgang("1")
+    assert (v.status, v.hinweis) == ("wartet", ablauf.HINWEIS_VIELLEICHT) and not mails
+
+
+def test_ausnahme_nach_ki_antwort_wird_nie_wiederholt(umgebung, monkeypatch):
+    """Wirft der Lauf nach einer KI-Antwort einen Fehler, der wie ein Startfehler klingt: kein zweiter Versuch."""
+    import asyncio
+
+    profil, db, _ = umgebung
+    b = _echter_browser(monkeypatch, profil)
+    monkeypatch.setattr(b, "baue_agent", lambda *a, **k: _agent_nach_ki_antwort(b, fehler=RuntimeError(START_TIMEOUT)))
+    with pytest.raises(browser.AbbruchNachArbeit):
+        asyncio.run(b.bewerbe(job(), "Text", dry_run=False, start_url="https://karriere.firma.de/1"))
+    assert b.aufrufe == 1
+
+    _freigegeben(db, profil)
+    b.aufrufe = 0
+    ablauf.sende_freigegebene(db, profil, browser_fabrik=lambda p: b)
+    v = db.vorgang("1")  # nicht „freigegeben“ (der naechste Lauf wuerde erneut senden), sondern nachfragen
+    assert (v.status, v.hinweis) == ("wartet", ablauf.HINWEIS_VIELLEICHT) and b.aufrufe == 1

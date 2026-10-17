@@ -650,16 +650,16 @@ def _sende_formular(
         # Ohne KI startet der Agent gar nicht erst - nichts wurde ausgefuellt
         return FormularErgebnis(False, str(e), ki_fehler=True)
     except Exception as e:
-        from .bewerben.browser import ist_startfehler, startfehler_text
+        from .bewerben.browser import AbbruchNachArbeit, ist_startfehler, startfehler_text
 
-        if ist_startfehler(str(e)):
+        if ist_startfehler(str(e)) and not isinstance(e, AbbruchNachArbeit):
             # Auch nach den Wiederholungen kein Browser - nichts wurde abgeschickt
             return FormularErgebnis(False, startfehler_text(str(e)), startfehler=True)
         raise
     roh = lauf.rohdaten or {}
     gearbeitet = lauf.gearbeitet if lauf.gearbeitet is not None else lauf.schritte > 0
     # Nur wenn nie etwas auf der Seite passiert ist, darf die Freigabe stehen bleiben (sonst Doppelversand)
-    startfehler = bool(roh.get("browser_startfehler")) and lauf.schritte <= 1
+    startfehler = bool(roh.get("browser_startfehler")) and lauf.schritte <= 1 and not gearbeitet
     ki_fehler = bool(roh.get("ki_fehler")) and not gearbeitet and not lauf.abgeschickt
     if not (startfehler or ki_fehler):
         db.speichere_bewerbung(lauf.als_application(v.anschreiben))
@@ -688,7 +688,10 @@ _NICHTS_PASSIERT = re.compile(
     r"^(Keine Bewerbungs-URL hinterlegt|Kein Lebenslauf hinterlegt|(Der )?Browser-Agent \(browser-use\) ist nicht "
     r"installiert|Nichts ausgefüllt oder abgeschickt|Stelle nicht mehr in der Datenbank)"
 )
-# Fruehere E-Mail-Fehler, die sicher vor der Zustellung lagen (Konto, Anmeldung, Verbindung, Empfaenger abgelehnt)
+# Fruehere E-Mail-Fehler, die sicher vor der Zustellung lagen (Konto, Anmeldung, Verbindung, Empfaenger abgelehnt) –
+# ausser die Verbindung brach mitten im Versand ab (dann steht z. B. „No route to host“ hinter „unexpectedly closed“)
+_MAIL_ABBRUCH = re.compile(r"unexpectedly closed|not connected|timed out|timeout|reset by peer|broken pipe|"
+                           r"disconnected", re.I)
 _MAIL_NICHT_RAUS = re.compile(
     r"noch nicht verbunden|SMTP ist nicht eingerichtet|Stelle nicht mehr in der Datenbank|Anhänge sind zusammen|"
     r"authenticat|Username and Password|\b53[045]\b|Connection refused|Name or service not known|"
@@ -761,7 +764,7 @@ def fehlgeschlagene_umleiten(db: Speicher, profil: Profil) -> int:
         hinweis = (v.hinweis or "").strip()
         if hinweis.startswith(_VIELLEICHT_FRUEHER):
             _selbst_bewerben_lassen(db, v, vielleicht_raus=True)
-        elif v.kanal == "email" and _MAIL_NICHT_RAUS.search(hinweis):
+        elif v.kanal == "email" and _MAIL_NICHT_RAUS.search(hinweis) and not _MAIL_ABBRUCH.search(hinweis):
             _email_zurueck(db, v, hinweis)
         elif v.kanal == "formular" and (_NICHTS_PASSIERT.match(hinweis) or ist_startfehler(hinweis)):
             if not _auf_email_umstellen(db, profil, db.job(v.ref), v):
