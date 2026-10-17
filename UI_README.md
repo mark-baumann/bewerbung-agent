@@ -2,8 +2,8 @@
 
 Streamlit-Oberfläche für den kompletten Bewerbungsablauf. Ziel: Der Agent erledigt
 Suche, Bewertung, Anschreiben und Versand – du entscheidest nur noch **Ja** oder **Nein**.
-Gebaut für Desktop **und** Handy: vier Ziele in einer Leiste oben (Heute · Suchen · Lebenslauf ·
-Einstellungen), Karten mit fester
+Gebaut für Desktop **und** Handy: fünf Ziele in einer Leiste oben (Heute · Suchen · Jobs · Lebenslauf ·
+Einstellungen; am Handy ohne Symbole, damit alle in eine Zeile passen), Karten mit fester
 Anatomie, Material-Icons, ein ruhiges Teal-Farbschema (`.streamlit/config.toml`).
 
 ## 🚀 Start
@@ -55,6 +55,14 @@ Oben Jobtitel (aus dem Lebenslauf vorbelegt, ähnliche Jobtitel zum Antippen), W
 Mindest-Passung, zeigt die Seite die besten darunter. **„Weiter: N Bewerbung(en) vorbereiten“**
 startet die Anschreiben im Hintergrund und springt nach **Heute**.
 
+### Jobs (`/jobs`)
+Alle Stellen, die deine Suchen gefunden haben – ohne Dubletten und ohne reine Feed-Einträge, mit Passung,
+Arbeitgeber, Ort (mit Entfernung), Jobbörse, Funddatum und Link zur Anzeige. Oben Suche (Titel, Arbeitgeber,
+Ort), Sortierung (Neueste · Beste Passung) und der Stand: offen, auf „Heute“, beworben, Nein gesagt, passt
+nicht. Zeilen auswählen → **„Für N Stelle(n) Bewerbung vorbereiten“** schreibt die Anschreiben im
+Hintergrund und springt nach **Heute** (nur für Stellen, die noch nicht bearbeitet sind). Von hier geht nie
+etwas raus – abgeschickt wird erst mit deinem Ja.
+
 ### Lebenslauf
 Die gespeicherte Datei (Name, Größe, Datum, Herunterladen, „Anderen Lebenslauf hochladen“; PDF, Word
 oder Text, gespeichert im Datenordner). Darunter **„Das lese ich aus deinem Lebenslauf“** – daraus entstehen
@@ -69,8 +77,11 @@ So wird ausgelesen und übernommen:
 - Mit KI (bei Ollama bevorzugt `gpt-oss:120b`) einmal je neuem Inhalt; ohne KI nach Abschnitten (Über mich,
   Fähigkeiten, Erfahrung).
 - Antwortet die KI nicht, steht der Grund da (z. B. „kein Guthaben“), und es folgt später ein neuer Versuch.
-- Übernommen wird, ohne deine Änderungen zu überschreiben: eigene Jobtitel und Fähigkeiten bleiben dahinter
-  erhalten, ein von dir geänderter Ort bleibt (außer bei „Neu auslesen“).
+- Übernommen wird, ohne deine Änderungen zu überschreiben: eigene Jobtitel, Fähigkeiten und Themen bleiben
+  dahinter erhalten (und werden nie abgeschnitten); ein von dir geänderter Ort oder Umkreis bleibt, auch ein
+  bewusst leerer Ort (ganz Deutschland) – außer bei „Neu auslesen“.
+- Werdegang: Rolle und Arbeitgeber werden nur genutzt, wenn die Zuordnung sicher ist (und bei der KI so im
+  Lebenslauf steht); unsichere Stationen erscheinen grau und kommen nicht ins Anschreiben.
 - Danach werden offene Stellen neu bewertet.
 
 Knöpfe:
@@ -108,6 +119,7 @@ app.py                       # Navigation (versteckt) + eigene Leiste oben
 seiten/
 ├── cockpit.py               # Heute: Ja/Nein-Karten, Ideen, deine Bewerbungen
 ├── schritt_fuer_schritt.py  # Suchen: Formular und Treffer auf einer Seite
+├── jobs.py                  # Jobs: alle gefundenen Stellen mit Passung und Stand
 ├── lebenslauf.py            # Lebenslauf: Datei, was daraus gelesen wird, Zeugnisse
 └── profil.py                # Einstellungen: Über mich · Suche · Automatik · Konten
 bewerbungsagent/ui.py              # gemeinsame Bausteine (Karten, Dialoge, Laufstatus)
