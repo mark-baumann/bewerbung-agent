@@ -160,15 +160,23 @@ def starte_hintergrund(*argumente: str, meldung: str) -> None:
     st.toast(meldung, icon=":material/hourglass_top:")
 
 
-def vorbereitung_starten(profil: Profil, refs: list[str]) -> None:
-    """Fuer ausgewaehlte Stellen Anschreiben schreiben lassen (im Hintergrund); entschieden wird auf „Heute“."""
+def vorbereitung_starten(profil: Profil, refs: list[str]) -> list[str]:
+    """Fuer ausgewaehlte Stellen Anschreiben schreiben lassen (im Hintergrund); entschieden wird auf „Heute“.
+
+    Nur Stellen ohne Vorgang und ohne Bewerbung: eine laufende, wartende oder abgeschickte wird nie ueberschrieben
+    (die Liste auf der Seite kann aelter sein als der Stand). Rueckgabe: die Stellen, die wirklich starten.
+    """
     with oeffne_db() as db:
-        for ref in refs:
+        frei = [ref for ref in refs if db.vorgang(ref) is None and not db.schon_beworben(ref)]
+        for ref in frei:
             db.setze_vorgang(Vorgang(ref=ref, status="vorbereitung", herkunft="manuell"))
-    argumente = ["vorbereiten", *refs, "--ausloeser", "knopf"]
+    if not frei:
+        return []
+    argumente = ["vorbereiten", *frei, "--ausloeser", "knopf"]
     if not (profil.automatisierung.probelauf_vorab and ablauf.browser_verfuegbar()):
         argumente.append("--ohne-probelauf")
-    starte_hintergrund(*argumente, meldung=f"{len(refs)} Bewerbung(en) werden vorbereitet …")
+    starte_hintergrund(*argumente, meldung=f"{len(frei)} Bewerbung(en) werden vorbereitet …")
+    return frei
 
 
 def auffrischen_alle(db: Speicher) -> int | None:

@@ -100,13 +100,57 @@ def test_seite_jobs_zeigt_alle_filtert_und_bereitet_vor(app):
     assert set(stellen) == {"Produktmanager", "IT-Projektmanager", "Prozessmanager"}
     auswahl = {"selection": {"rows": [stellen.index("Produktmanager"), stellen.index("IT-Projektmanager")],
                              "columns": [], "cells": []}}
-    at.session_state["jobs_tabelle"] = auswahl
+    at.session_state[at.session_state["jobs_tabelle_key"]] = auswahl
     at.run()
     knopf = at.button(key="jobs_vorbereiten")
     assert knopf.label == "Für 1 Stelle(n) Bewerbung vorbereiten"
-    at.session_state["jobs_tabelle"] = auswahl  # im Browser bleibt die Auswahl beim Klick bestehen
+    at.session_state[at.session_state["jobs_tabelle_key"]] = auswahl  # im Browser bleibt die Auswahl beim Klick
     knopf.click().run()
     assert not at.exception
     assert app[-1][:2] == ("vorbereiten", "offen")
     with Speicher() as db:
         assert db.vorgang("offen").status == "vorbereitung" and db.vorgang("heute").status == "wartet"
+
+
+def test_auswahl_beginnt_neu_wenn_sich_die_liste_aendert(app):
+    """Kommt zwischen Auswahl und Klick eine neue Stelle dazu, darf die Auswahl nicht auf eine andere rutschen."""
+    with Speicher() as db:
+        _stellen(db)
+    at = _seite()
+    stellen = list(at.dataframe[0].value["Stelle"])
+    alter_key = at.session_state["jobs_tabelle_key"]
+    at.session_state[alter_key] = {"selection": {"rows": [stellen.index("Prozessmanager")], "columns": [],
+                                                 "cells": []}}
+    with Speicher() as db:  # im Hintergrund gefunden – steht als neueste ganz oben
+        db.speichere_jobs([Job(ref="spaet", titel="Data Analyst", arbeitgeber="Sieben AG", ort="München")])
+    at.run()
+    assert at.session_state["jobs_tabelle_key"] != alter_key
+    assert not [b for b in at.button if b.key == "jobs_vorbereiten"] and not app  # nichts gewaehlt, nichts gestartet
+
+
+def test_bereits_bearbeitete_stelle_wird_nie_neu_vorbereitet(app):
+    from bewerbungsagent import ui
+    from bewerbungsagent.config import lade_profil
+
+    with Speicher() as db:
+        _stellen(db)
+        db.setze_vorgang(Vorgang(ref="neu", status="freigegeben", kanal="email", anschreiben="Text"))
+    gestartet = ui.vorbereitung_starten(lade_profil("config/profil.yaml"), ["offen", "neu", "beworben", "heute"])
+    with Speicher() as db:
+        assert gestartet == ["offen"] and db.vorgang("neu").status == "freigegeben"
+        assert db.vorgang("heute").status == "wartet" and db.vorgang("beworben") is None
+
+
+def test_dublette_einer_beworbenen_stelle_ist_nicht_offen(tmp_path):
+    with Speicher(tmp_path / "db.sqlite3") as db:
+        db.speichere_jobs([
+            Job(ref="cli", titel="Data Engineer", arbeitgeber="Acht AG", quelle="arbeitsagentur", ort="Köln"),
+            Job(ref="kopie", titel="Data Engineer (m/w/d)", arbeitgeber="Acht AG", quelle="get-in-it", ort="Köln"),
+            Job(ref="o1", titel="Sachbearbeiter", arbeitgeber="", quelle="arbeitsagentur", ort="Köln"),
+            Job(ref="o2", titel="Sachbearbeiter", arbeitgeber="", quelle="arbeitsagentur", ort="Bonn"),
+        ])
+        db.speichere_score(Score(ref="cli", gesamt=60, passung=60, sentiment=50))
+        db.speichere_score(Score(ref="kopie", gesamt=82, passung=82, sentiment=50))
+        db.speichere_bewerbung(Application(ref="cli", status="abgeschickt", dry_run=False))  # per Kommandozeile
+        jobs = {j["ref"]: j["stand"] for j in db.gefundene_jobs()}
+    assert jobs == {"cli": "beworben", "o1": "unbewertet", "o2": "unbewertet"}

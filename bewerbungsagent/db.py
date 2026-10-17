@@ -490,8 +490,9 @@ class Speicher:
         return [dict(r) for r in rows]
 
     def schon_beworben(self, ref: str) -> bool:
+        """Abgeschickt (auch frueher per Kommandozeile) oder selbst beworben."""
         row = self.con.execute(
-            "SELECT 1 FROM applications WHERE ref = ? AND status = 'abgeschickt'", (ref,)
+            "SELECT 1 FROM applications WHERE ref = ? AND status IN ('abgeschickt', 'manuell_beworben')", (ref,)
         ).fetchone()
         return row is not None
 
@@ -683,7 +684,8 @@ class Speicher:
                     ORDER BY a.id DESC LIMIT 1) AS bewerbung
             FROM jobs j LEFT JOIN scores s ON s.ref = j.ref LEFT JOIN vorgaenge v ON v.ref = j.ref
             WHERE {SUCHTREFFER}
-            ORDER BY (v.ref IS NOT NULL) DESC, COALESCE(s.gesamt, -1) DESC
+            ORDER BY (v.ref IS NOT NULL OR bewerbung IN ('abgeschickt', 'manuell_beworben')) DESC,
+                     COALESCE(s.gesamt, -1) DESC
         """
         stand_je_vorgang = {"vorbereitung": "unterwegs", "freigegeben": "unterwegs", "wird_gesendet": "unterwegs",
                             "wartet": "heute", "abgeschickt": "beworben", "selbst_beworben": "beworben",
@@ -691,9 +693,13 @@ class Speicher:
         gesehen: set[str] = set()
         ergebnis: list[dict[str, Any]] = []
         for row in self.con.execute(sql):
+            # Dieselbe Stelle aus einer anderen Jobboerse einmal – die bearbeitete (Vorgang oder Bewerbung) gewinnt,
+            # damit eine schon beworbene Stelle nicht als „offen“ wieder auftaucht. Ohne Arbeitgeber zaehlt der Ort mit.
             schluessel = dubletten_schluessel(row["arbeitgeber"], row["titel"])
+            if not (row["arbeitgeber"] or "").strip():
+                schluessel += "|" + (row["ort"] or "").casefold()
             if schluessel in gesehen:
-                continue  # dieselbe Stelle aus einer anderen Jobboerse
+                continue
             gesehen.add(schluessel)
             if row["vorgang"]:
                 stand = stand_je_vorgang.get(row["vorgang"], "heute")

@@ -1,5 +1,6 @@
 """Jobs: alle Stellen, die ich für dich gefunden habe – mit Passung und Stand. Auswählen und vorbereiten lassen."""
 
+import hashlib
 from collections import Counter
 
 import streamlit as st
@@ -98,8 +99,12 @@ zeilen = [{
     "Gefunden": _datum(j["geholt_am"]),
     "Anzeige": j["anzeige"],
 } for j in auswahl]
+# Die Auswahl merkt sich Streamlit als Zeilennummern: aendert sich die Liste (Filter, Sortierung, neue Funde),
+# beginnt sie neu – sonst saessen die Haken danach auf anderen Stellen
+tabelle = "jobs_tabelle_" + hashlib.sha1("|".join(j["ref"] for j in auswahl).encode()).hexdigest()[:12]
+s["jobs_tabelle_key"] = tabelle
 ereignis = st.dataframe(
-    zeilen, hide_index=True, width="stretch", height=min(38 * len(zeilen) + 40, 600), key="jobs_tabelle",
+    zeilen, hide_index=True, width="stretch", height=min(38 * len(zeilen) + 40, 600), key=tabelle,
     on_select="rerun", selection_mode="multi-row",
     column_config={
         "Passung": st.column_config.ProgressColumn("Passung", min_value=0, max_value=100, format="%d",
@@ -117,8 +122,8 @@ if gewaehlt:
                    "oder Nein) – die lasse ich aus.")
     if st.button(f"Für {len(moeglich)} Stelle(n) Bewerbung vorbereiten", type="primary", width="stretch",
                  disabled=not moeglich, icon=":material/arrow_forward:", icon_position="right", key="jobs_vorbereiten"):
-        ui.vorbereitung_starten(profil, [j["ref"] for j in moeglich])
-        s["jobs_zu_heute"] = True
+        if ui.vorbereitung_starten(profil, [j["ref"] for j in moeglich]):
+            s["jobs_zu_heute"] = True
         st.rerun()
 else:
     st.caption("Tippe links auf Zeilen, um Stellen auszuwählen – ich schreibe dann die Anschreiben, und du "
